@@ -44,36 +44,37 @@ try:
 except:
 
     try:
+        response = (
+            supabase
+            .table("broker_account")
+            .select("*")
+            .eq("id", 1)
+            .execute()
+        )
 
-    response = (
-        supabase
-        .table("broker_account")
-        .select("*")
-        .eq("id", 1)
-        .execute()
-    )
+        broker = pd.DataFrame(response.data)
 
-    broker = pd.DataFrame(response.data)
+    except Exception:
 
-except Exception:
+        broker = load_csv("broker_account.csv")
 
     try:
 
-    response = (
-        supabase
-        .table("broker_account")
-        .select("*")
-        .eq("id", 1)
-        .execute()
-    )
+        response = (
+            supabase
+            .table("broker_account")
+            .select("*")
+            .eq("id", 1)
+            .execute()
+        )
 
-    broker = pd.DataFrame(response.data)
+        broker = pd.DataFrame(response.data)
 
-except Exception:
+    except Exception:
 
-    broker = load_csv(
-        "broker_account.csv"
-    )
+        broker = load_csv(
+            "broker_account.csv"
+        )
 paper_30 = load_csv("paper_30_day_tracker.csv")
 holdings = load_csv("holdings_report.csv")
 portfolio = load_csv("portfolio_v2.csv")
