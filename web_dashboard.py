@@ -15,7 +15,7 @@ st.subheader(
 
 st.metric(
     "Day",
-    f"{days_tracked}/30"
+    "1/30"
 )
 
 st.metric(
