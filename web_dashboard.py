@@ -9,9 +9,51 @@ st.set_page_config(
 
 st.title("📈 Garner Quant")
 st.caption("Personal investment research and paper trading dashboard.")
+st.subheader(
+    "🚀 30 Day Paper Trading Challenge"
+)
+
+st.metric(
+    "Day",
+    f"{days_tracked}/30"
+)
+
+st.metric(
+    "Starting Balance",
+    f"£{start_balance:,.2f}"
+)
+
+st.metric(
+    "Current Balance",
+    f"£{current_balance:,.2f}"
+)
+
+st.metric(
+    "Return",
+    f"{return_pct:.2%}"
+)
+
+st.metric(
+    "Realised PnL",
+    f"£{paper_row['realised_pnl']:,.2f}"
+)
+
+st.metric(
+    "Unrealised PnL",
+    f"£{paper_row['unrealised_pnl']:,.2f}"
+)
+
+st.line_chart(
+    paper_30["portfolio_value"]
+)
+
+st.divider()
 
 # Load files
 broker = pd.read_csv("broker_account.csv")
+paper_30 = pd.read_csv(
+    "paper_30_day_tracker.csv"
+)
 holdings = pd.read_csv("holdings_report.csv")
 portfolio = pd.read_csv("portfolio_v2.csv")
 signals = pd.read_csv("signal_report_v2.csv")
@@ -19,6 +61,23 @@ trades = pd.read_csv("trade_journal_v3.csv")
 analytics = pd.read_csv("trade_analytics_v3.csv")
 
 broker_row = broker.iloc[0]
+paper_row = paper_30.iloc[-1]
+
+start_balance = paper_30[
+    "portfolio_value"
+].iloc[0]
+
+current_balance = paper_row[
+    "portfolio_value"
+]
+
+return_pct = (
+    current_balance /
+    start_balance
+    - 1
+)
+
+days_tracked = len(paper_30)
 
 st.subheader("Portfolio")
 
