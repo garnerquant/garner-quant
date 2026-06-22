@@ -1,5 +1,8 @@
 import pandas as pd
 import streamlit as st
+import os
+from dotenv import load_dotenv
+from supabase import create_client
 
 
 st.set_page_config(
@@ -9,7 +12,15 @@ st.set_page_config(
 
 st.title("📈 Garner Quant")
 st.caption("Personal investment research and paper trading dashboard.")
+load_dotenv()
 
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_KEY
+)
 
 def load_csv(filename):
     try:
@@ -18,7 +29,51 @@ def load_csv(filename):
         return pd.DataFrame()
 
 
-broker = load_csv("broker_account.csv")
+try:
+
+    response = (
+        supabase
+        .table("broker_account")
+        .select("*")
+        .eq("id", 1)
+        .execute()
+    )
+
+    broker = pd.DataFrame(response.data)
+
+except:
+
+    try:
+
+    response = (
+        supabase
+        .table("broker_account")
+        .select("*")
+        .eq("id", 1)
+        .execute()
+    )
+
+    broker = pd.DataFrame(response.data)
+
+except Exception:
+
+    try:
+
+    response = (
+        supabase
+        .table("broker_account")
+        .select("*")
+        .eq("id", 1)
+        .execute()
+    )
+
+    broker = pd.DataFrame(response.data)
+
+except Exception:
+
+    broker = load_csv(
+        "broker_account.csv"
+    )
 paper_30 = load_csv("paper_30_day_tracker.csv")
 holdings = load_csv("holdings_report.csv")
 portfolio = load_csv("portfolio_v2.csv")
