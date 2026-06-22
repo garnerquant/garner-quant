@@ -9,75 +9,55 @@ st.set_page_config(
 
 st.title("📈 Garner Quant")
 st.caption("Personal investment research and paper trading dashboard.")
-st.subheader(
-    "🚀 30 Day Paper Trading Challenge"
-)
 
-st.metric(
-    "Day",
-    "1/30"
-)
 
-st.metric(
-    "Starting Balance",
-    f"£{start_balance:,.2f}"
-)
+def load_csv(filename):
+    try:
+        return pd.read_csv(filename)
+    except FileNotFoundError:
+        return pd.DataFrame()
 
-st.metric(
-    "Current Balance",
-    f"£{current_balance:,.2f}"
-)
 
-st.metric(
-    "Return",
-    f"{return_pct:.2%}"
-)
+broker = load_csv("broker_account.csv")
+paper_30 = load_csv("paper_30_day_tracker.csv")
+holdings = load_csv("holdings_report.csv")
+portfolio = load_csv("portfolio_v2.csv")
+signals = load_csv("signal_report_v2.csv")
+trades = load_csv("trade_journal_v3.csv")
+analytics = load_csv("trade_analytics_v3.csv")
 
-st.metric(
-    "Realised PnL",
-    f"£{paper_row['realised_pnl']:,.2f}"
-)
 
-st.metric(
-    "Unrealised PnL",
-    f"£{paper_row['unrealised_pnl']:,.2f}"
-)
+if broker.empty:
+    st.error("broker_account.csv not found. Run main_v2.py first, then push the updated CSV files.")
+    st.stop()
 
-st.line_chart(
-    paper_30["portfolio_value"]
-)
+
+broker_row = broker.iloc[0]
+
+
+st.subheader("🚀 30 Day Paper Trading Challenge")
+
+if paper_30.empty:
+    st.info("30 day tracker has not started yet.")
+else:
+    paper_row = paper_30.iloc[-1]
+
+    start_balance = paper_30["portfolio_value"].iloc[0]
+    current_balance = paper_row["portfolio_value"]
+    return_pct = (current_balance / start_balance) - 1
+    days_tracked = len(paper_30)
+
+    st.metric("Day", f"{days_tracked}/30")
+    st.metric("Starting Balance", f"£{start_balance:,.2f}")
+    st.metric("Current Balance", f"£{current_balance:,.2f}")
+    st.metric("Return", f"{return_pct:.2%}")
+    st.metric("Realised PnL", f"£{paper_row['realised_pnl']:,.2f}")
+    st.metric("Unrealised PnL", f"£{paper_row['unrealised_pnl']:,.2f}")
+
+    st.line_chart(paper_30["portfolio_value"])
 
 st.divider()
 
-# Load files
-broker = pd.read_csv("broker_account.csv")
-paper_30 = pd.read_csv(
-    "paper_30_day_tracker.csv"
-)
-holdings = pd.read_csv("holdings_report.csv")
-portfolio = pd.read_csv("portfolio_v2.csv")
-signals = pd.read_csv("signal_report_v2.csv")
-trades = pd.read_csv("trade_journal_v3.csv")
-analytics = pd.read_csv("trade_analytics_v3.csv")
-
-broker_row = broker.iloc[0]
-paper_row = paper_30.iloc[-1]
-
-start_balance = paper_30[
-    "portfolio_value"
-].iloc[0]
-
-current_balance = paper_row[
-    "portfolio_value"
-]
-
-return_pct = (
-    current_balance /
-    start_balance
-    - 1
-)
-
-days_tracked = len(paper_30)
 
 st.subheader("Portfolio")
 
@@ -103,9 +83,10 @@ st.metric(
 
 st.divider()
 
+
 st.subheader("Current Holdings")
 
-if len(holdings) == 0:
+if holdings.empty:
     st.info("No open holdings.")
 else:
     for _, row in holdings.iterrows():
@@ -130,30 +111,43 @@ else:
 
         st.divider()
 
+
 st.subheader("Equity Curve")
 
-if "equity" in portfolio.columns:
+if portfolio.empty or "equity" not in portfolio.columns:
+    st.info("No equity curve data available.")
+else:
     st.line_chart(portfolio["equity"])
+
 
 st.subheader("Drawdown")
 
-if "drawdown" in portfolio.columns:
+if portfolio.empty or "drawdown" not in portfolio.columns:
+    st.info("No drawdown data available.")
+else:
     st.line_chart(portfolio["drawdown"])
 
 st.divider()
 
+
 st.subheader("Current Signals")
 
-st.dataframe(
-    signals,
-    use_container_width=True
-)
+if signals.empty:
+    st.info("No signal report available.")
+else:
+    st.dataframe(
+        signals,
+        use_container_width=True
+    )
 
 st.divider()
 
+
 st.subheader("Trade Analytics")
 
-if len(analytics) > 0:
+if analytics.empty:
+    st.info("No trade analytics available.")
+else:
     analytics_row = analytics.iloc[0]
 
     st.metric("Total Trades", int(analytics_row["total_trades"]))
@@ -163,14 +157,16 @@ if len(analytics) > 0:
 
 st.divider()
 
+
 st.subheader("Trade Journal")
 
-if len(trades) == 0:
+if trades.empty:
     st.info("No closed trades yet.")
 else:
     st.dataframe(
         trades,
         use_container_width=True
     )
+
 
 st.caption("Garner Quant V2.1 | Paper Trading Only")
