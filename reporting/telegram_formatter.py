@@ -1,4 +1,4 @@
-def build_telegram_message(report, signal_rows, fundamental_scores, summary, v3_trades, trade_stats, broker):
+def build_telegram_message(report, signal_rows, fundamental_scores, summary, v3_trades, trade_stats, broker, holdings_report):
     message = "📈 Garner Quant V2.1 Update\n\n"
 
     message += (
@@ -37,6 +37,19 @@ def build_telegram_message(report, signal_rows, fundamental_scores, summary, v3_
     message += f"Win Rate: {trade_stats['win_rate']:.2%}\n"
     message += f"Profit Factor: {trade_stats['profit_factor']:.2f}\n"
     message += f"Realised PnL: £{trade_stats['realised_pnl']:,.2f}\n"
+
+    message += "\nHoldings:\n"
+
+    if len(holdings_report) == 0:
+        message += "No open holdings.\n"
+    else:
+        for _, row in holdings_report.iterrows():
+            message += (
+                f"{row['ticker']}: "
+                f"£{row['market_value']:,.2f} "
+                f"PnL £{row['unrealised_pnl']:,.2f} "
+                f"({row['unrealised_pnl_percent']:.2%})\n"
+            )
 
     message += "\nBroker Account:\n"
     message += f"Portfolio Value: £{broker['portfolio_value']:,.2f}\n"

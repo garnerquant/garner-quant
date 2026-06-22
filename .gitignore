@@ -4,3 +4,4 @@ __pycache__/
 *.png
 *.pyc
 old_files/
+.streamlit/secrets.toml

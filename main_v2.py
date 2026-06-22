@@ -17,6 +17,13 @@ from reporting.telegram_formatter import build_telegram_message
 from execution.portfolio_manager import update_portfolio, portfolio_summary
 from reporting.trade_analytics import analyse_trade_journal, print_trade_analytics
 from execution.broker_account import broker_summary
+from reporting.holdings_report import create_holdings_report, print_holdings_report
+from reporting.paper_performance import (
+    update_30_day_tracker,
+    calculate_30_day_performance,
+    print_30_day_performance
+)
+
 
 def main(show_charts=True, send_telegram=True):
     tickers = list(ASSETS.keys())
@@ -51,6 +58,11 @@ def main(show_charts=True, send_telegram=True):
 
     summary = portfolio_summary(paper_portfolio, prices)
 
+    holdings_report = create_holdings_report(
+        paper_portfolio,
+        prices
+    )
+
     print("Saving CSV files...")
     prices.to_csv("prices_v2.csv")
     signals.to_csv("signals_v2.csv")
@@ -60,6 +72,7 @@ def main(show_charts=True, send_telegram=True):
     paper_portfolio.to_csv("paper_portfolio_v3.csv", index=False)
     trade_journal.to_csv("trade_journal_v3.csv", index=False)
     v3_trades.to_csv("v3_trades.csv", index=False)
+    holdings_report.to_csv("holdings_report.csv", index=False)
 
     fundamental_scores = pd.read_csv("fundamental_scores.csv")
 
@@ -75,6 +88,7 @@ def main(show_charts=True, send_telegram=True):
 
     signal_rows = create_signal_report(signals, weights)
     print_signal_report(signal_rows)
+    print_holdings_report(holdings_report)
 
     pd.DataFrame(signal_rows).to_csv(
         "signal_report_v2.csv",
@@ -82,6 +96,9 @@ def main(show_charts=True, send_telegram=True):
     )
 
     broker = broker_summary()
+    tracker = update_30_day_tracker(broker)
+    paper_30_day = calculate_30_day_performance(tracker)
+    print_30_day_performance(paper_30_day)
 
     telegram_message = build_telegram_message(
         report,
@@ -90,7 +107,8 @@ def main(show_charts=True, send_telegram=True):
         summary,
         v3_trades,
         trade_stats,
-        broker
+        broker,
+        holdings_report
     )
 
     if send_telegram:

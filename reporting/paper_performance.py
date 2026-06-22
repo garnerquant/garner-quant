@@ -1,0 +1,83 @@
+import pandas as pd
+from pathlib import Path
+from datetime import datetime
+
+
+TRACKER_FILE = "paper_30_day_tracker.csv"
+
+
+def update_30_day_tracker(broker):
+    today = datetime.now().date()
+
+    portfolio_value = broker["portfolio_value"]
+    cash = broker["cash"]
+    realised_pnl = broker["realised_pnl"]
+    unrealised_pnl = broker["unrealised_pnl"]
+
+    if Path(TRACKER_FILE).exists():
+        tracker = pd.read_csv(TRACKER_FILE)
+    else:
+        tracker = pd.DataFrame(
+            columns=[
+                "date",
+                "portfolio_value",
+                "cash",
+                "realised_pnl",
+                "unrealised_pnl"
+            ]
+        )
+
+    today_str = str(today)
+
+    tracker = tracker[tracker["date"] != today_str]
+
+    tracker.loc[len(tracker)] = [
+        today_str,
+        portfolio_value,
+        cash,
+        realised_pnl,
+        unrealised_pnl
+    ]
+
+    tracker.to_csv(TRACKER_FILE, index=False)
+
+    return tracker
+
+
+def calculate_30_day_performance(tracker):
+    if len(tracker) == 0:
+        return {}
+
+    tracker["date"] = pd.to_datetime(tracker["date"])
+    tracker = tracker.sort_values("date")
+
+    start_value = tracker["portfolio_value"].iloc[0]
+    current_value = tracker["portfolio_value"].iloc[-1]
+
+    total_return = (current_value / start_value) - 1
+
+    days_tracked = len(tracker)
+
+    return {
+        "start_date": tracker["date"].iloc[0].date(),
+        "current_date": tracker["date"].iloc[-1].date(),
+        "days_tracked": days_tracked,
+        "start_value": start_value,
+        "current_value": current_value,
+        "total_return": total_return,
+        "realised_pnl": tracker["realised_pnl"].iloc[-1],
+        "unrealised_pnl": tracker["unrealised_pnl"].iloc[-1]
+    }
+
+
+def print_30_day_performance(performance):
+    print("\n===== 30 DAY PAPER TRADING PERFORMANCE =====")
+
+    print(f"Start Date: {performance['start_date']}")
+    print(f"Current Date: {performance['current_date']}")
+    print(f"Days Tracked: {performance['days_tracked']}/30")
+    print(f"Start Value: £{performance['start_value']:,.2f}")
+    print(f"Current Value: £{performance['current_value']:,.2f}")
+    print(f"Return: {performance['total_return']:.2%}")
+    print(f"Realised PnL: £{performance['realised_pnl']:,.2f}")
+    print(f"Unrealised PnL: £{performance['unrealised_pnl']:,.2f}")
