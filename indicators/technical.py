@@ -1,5 +1,10 @@
 import pandas as pd
-
+from config import (
+    ETF_MA_THRESHOLD,
+    STOCK_MA_THRESHOLD,
+    CRYPTO_MA_THRESHOLD,
+    DEFAULT_MA_THRESHOLD
+)
 
 def sma(series, period):
     return series.rolling(period).mean()
@@ -52,23 +57,33 @@ def atr(high, low, close, period=14):
 
     return true_range.rolling(period).mean()
 
+def get_ma_threshold(ticker):
+    if ticker.endswith(".L"):
+        return ETF_MA_THRESHOLD
 
-def technical_score(price, volume=None):
+    if ticker in ["AAPL", "MSFT", "NVDA"]:
+        return STOCK_MA_THRESHOLD
+
+    if "BTC" in ticker or "ETH" in ticker:
+        return CRYPTO_MA_THRESHOLD
+
+    return DEFAULT_MA_THRESHOLD
+
+def technical_score(ticker, price, volume=None):
     ema20 = ema(price, 20)
     ema50 = ema(price, 50)
     rsi14 = rsi(price)
     macd_line, signal_line = macd(price)
 
     score = pd.Series(0, index=price.index)
-
-    MA_THRESHOLD = 0.02
+    threshold = get_ma_threshold(ticker)
 
     price_above_ema20 = (
-        price > ema20 * (1 + MA_THRESHOLD)
+        price > ema20 * (1 + threshold)
     )
 
     ema20_above_ema50 = (
-        ema20 > ema50 * (1 + MA_THRESHOLD)
+        ema20 > ema50 * (1 + threshold)
     )
 
     score += price_above_ema20.astype(int)

@@ -10,6 +10,7 @@ def build_signals(prices, volumes=None):
     fundamental_scores = {}
 
     for ticker in prices.columns:
+        price = prices[ticker]
         asset_type = ASSETS[ticker]["type"]
 
         fund_ok = fundamental_pass(ticker, asset_type)
@@ -24,7 +25,8 @@ def build_signals(prices, volumes=None):
             volume = volumes[ticker]
 
         score = technical_score(
-            prices[ticker],
+            ticker,
+            price,
             volume
         )
 

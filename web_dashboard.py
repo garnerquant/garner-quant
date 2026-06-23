@@ -225,13 +225,40 @@ else:
         for col in holdings.columns
     ]
 
-    total_market_value = holdings["market_value"].sum()
+    portfolio_value = broker_row["portfolio_value"]
 
-    if total_market_value > 0:
+    holdings["portfolio_weight"] = (
+        holdings["market_value"] / portfolio_value * 100
+    ).round(2)
+
+    cash_row = pd.DataFrame([{
+        "ticker": "CASH",
+        "shares": 0,
+        "entry_price": 0,
+        "current_price": 0,
+        "market_value": broker_row["cash"],
+        "portfolio_weight": round(
+            broker_row["cash"] / broker_row["portfolio_value"] * 100,
+            2
+        ),
+        "unrealised_pnl": 0
+    }])
+
+    holdings = pd.concat(
+        [holdings, cash_row],
+        ignore_index=True
+    )
+
+    portfolio_value = broker_row["portfolio_value"]
+
+    if portfolio_value > 0:
+
         holdings["portfolio_weight"] = (
-            holdings["market_value"] / total_market_value * 100
+            holdings["market_value"] / portfolio_value * 100
         ).round(2)
+
     else:
+
         holdings["portfolio_weight"] = 0
 
     holdings = holdings.sort_values(
