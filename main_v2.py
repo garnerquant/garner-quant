@@ -17,7 +17,7 @@ from reporting.telegram_formatter import build_telegram_message
 from execution.portfolio_manager import update_portfolio, portfolio_summary
 from reporting.trade_analytics import analyse_trade_journal, print_trade_analytics
 from execution.broker_account import broker_summary
-from execution.supabase_sync import sync_broker_account, sync_holdings, sync_30_day_tracker, sync_holdings_history, sync_trade_journal
+from execution.supabase_sync import sync_broker_account, sync_holdings, sync_30_day_tracker, sync_holdings_history, sync_trade_journal, sync_signals
 from reporting.holdings_report import create_holdings_report, print_holdings_report
 from reporting.paper_performance import (
     update_30_day_tracker,
@@ -106,6 +106,7 @@ def main(show_charts=True, send_telegram=True):
     sync_30_day_tracker()
     sync_holdings_history()
     sync_trade_journal()
+    sync_signals()
 
     telegram_message = build_telegram_message(
         report,

@@ -135,3 +135,34 @@ def sync_trade_journal():
         supabase.table("trade_journal").insert(data).execute()
 
     print("Supabase trade journal synced.")
+
+def sync_signals():
+
+    signals = pd.read_csv(
+        "signal_report_v2.csv"
+    )
+
+    supabase.table(
+        "signals"
+    ).delete().neq(
+        "id",
+        0
+    ).execute()
+
+    for _, row in signals.iterrows():
+
+        data = {
+            "date": str(row["date"]),
+            "ticker": row["ticker"],
+            "signal": row["signal"],
+            "weight": float(row["weight"]),
+            "status": row["status"],
+            "updated_at":
+                datetime.utcnow().isoformat()
+        }
+
+        supabase.table(
+            "signals"
+        ).insert(data).execute()
+
+    print("Supabase signals synced.")

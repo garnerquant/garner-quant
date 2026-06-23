@@ -378,6 +378,56 @@ else:
 
 st.divider()
 
+st.subheader("Signals")
+
+try:
+    response = (
+        supabase
+        .table("signals")
+        .select("*")
+        .execute()
+    )
+
+    signals = pd.DataFrame(response.data)
+
+except Exception:
+    signals = load_csv("signal_report_v2.csv")
+
+
+if signals.empty:
+    st.info("No signals available yet.")
+
+else:
+    signals.columns = [
+        col.lower().replace(" ", "_")
+        for col in signals.columns
+    ]
+
+    display_signals = signals[
+        [
+            "date",
+            "ticker",
+            "signal",
+            "weight",
+            "status"
+        ]
+    ].rename(
+        columns={
+            "date": "Date",
+            "ticker": "Ticker",
+            "signal": "Signal",
+            "weight": "Weight",
+            "status": "Status"
+        }
+    )
+
+    st.dataframe(
+        display_signals.style.format({
+            "Weight": "{:.2%}"
+        }),
+        use_container_width=True,
+        hide_index=True
+    )
 
 st.subheader("Trade Journal")
 
