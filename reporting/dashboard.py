@@ -2,6 +2,11 @@ import matplotlib.pyplot as plt
 
 
 def show_dashboard(portfolio, weights, report):
+
+    if portfolio.empty:
+        print("No portfolio data to chart.")
+        return
+
     fig, axes = plt.subplots(3, 1, figsize=(14, 10))
 
     fig.suptitle(
@@ -10,47 +15,46 @@ def show_dashboard(portfolio, weights, report):
         fontweight="bold"
     )
 
-    portfolio["equity"].plot(
-        ax=axes[0],
-        title="Equity Curve"
-    )
+    if "equity" in portfolio.columns and not portfolio["equity"].empty:
+        portfolio["equity"].plot(
+            ax=axes[0],
+            title="Equity Curve"
+        )
+    else:
+        axes[0].text(0.5, 0.5, "No equity data", ha="center")
+
     axes[0].set_ylabel("Portfolio Value £")
     axes[0].grid(True)
 
-    portfolio["drawdown"].plot(
-        ax=axes[1],
-        title="Drawdown"
-    )
+    if "drawdown" in portfolio.columns and not portfolio["drawdown"].empty:
+        portfolio["drawdown"].plot(
+            ax=axes[1],
+            title="Drawdown"
+        )
+    else:
+        axes[1].text(0.5, 0.5, "No drawdown data", ha="center")
+
     axes[1].set_ylabel("Drawdown")
     axes[1].grid(True)
 
-    final_weights = weights.iloc[-1]
-    final_weights = final_weights[final_weights > 0]
-    final_weights = final_weights.sort_values(ascending=True)
+    if not weights.empty:
+        final_weights = weights.iloc[-1]
+        final_weights = final_weights[final_weights > 0]
+        final_weights = final_weights.sort_values(ascending=True)
 
-    final_weights.plot(
-        kind="barh",
-        ax=axes[2],
-        title="Current Portfolio Allocation"
-    )
+        if not final_weights.empty:
+            final_weights.plot(
+                kind="barh",
+                ax=axes[2],
+                title="Final Portfolio Weights"
+            )
+        else:
+            axes[2].text(0.5, 0.5, "No active weights", ha="center")
+    else:
+        axes[2].text(0.5, 0.5, "No weights data", ha="center")
+
     axes[2].set_xlabel("Weight")
     axes[2].grid(True)
-
-    metrics_text = (
-        f"Starting Cash: £{report['starting_cash']:,.2f}\n"
-        f"Final Value: £{report['final_value']:,.2f}\n"
-        f"Total Return: {report['total_return']:.2%}\n"
-        f"Max Drawdown: {report['max_drawdown']:.2%}\n"
-        f"Sharpe Ratio: {report['sharpe_ratio']:.2f}"
-    )
-
-    fig.text(
-        0.78,
-        0.82,
-        metrics_text,
-        fontsize=10,
-        bbox=dict(facecolor="white", alpha=0.9)
-    )
 
     plt.tight_layout()
     plt.show()

@@ -61,8 +61,18 @@ def technical_score(price, volume=None):
 
     score = pd.Series(0, index=price.index)
 
-    score += (price > ema20).astype(int)
-    score += (ema20 > ema50).astype(int)
+    MA_THRESHOLD = 0.02
+
+    price_above_ema20 = (
+        price > ema20 * (1 + MA_THRESHOLD)
+    )
+
+    ema20_above_ema50 = (
+        ema20 > ema50 * (1 + MA_THRESHOLD)
+    )
+
+    score += price_above_ema20.astype(int)
+    score += ema20_above_ema50.astype(int)
     score += ((rsi14 > 45) & (rsi14 < 70)).astype(int)
     score += (macd_line > signal_line).astype(int)
 

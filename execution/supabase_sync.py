@@ -37,7 +37,12 @@ def sync_broker_account():
 
 def sync_holdings():
 
-    holdings = pd.read_csv("holdings_report.csv")
+    try:
+        holdings = pd.read_csv("holdings_report.csv")
+    except pd.errors.EmptyDataError:
+        supabase.table("holdings").delete().neq("id", 0).execute()
+        print("No holdings to sync.")
+        return
 
     supabase.table("holdings").delete().neq("id", 0).execute()
 
@@ -82,16 +87,15 @@ def sync_30_day_tracker():
 
 def sync_holdings_history():
 
-    holdings = pd.read_csv("holdings_report.csv")
+    try:
+        holdings = pd.read_csv("holdings_report.csv")
+    except pd.errors.EmptyDataError:
+        print("No holdings history to sync.")
+        return
 
     today = datetime.utcnow().date().isoformat()
 
-    supabase.table(
-        "holdings_history"
-    ).delete().eq(
-        "date",
-        today
-    ).execute()
+    supabase.table("holdings_history").delete().eq("date", today).execute()
 
     for _, row in holdings.iterrows():
 
@@ -106,12 +110,10 @@ def sync_holdings_history():
             "unrealised_pnl_percent": float(row["unrealised_pnl_percent"])
         }
 
-        supabase.table(
-            "holdings_history"
-        ).insert(data).execute()
+        supabase.table("holdings_history").insert(data).execute()
 
     print("Supabase holdings history synced.")
-
+    
 def sync_trade_journal():
 
     trades = pd.read_csv("trade_journal_v3.csv")

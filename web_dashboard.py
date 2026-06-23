@@ -155,6 +155,21 @@ else:
 
 st.divider()
 
+st.subheader("📊 Strategy Analytics")
+
+cash_value = broker_row["cash"]
+portfolio_value = broker_row["portfolio_value"]
+
+cash_percent = cash_value / portfolio_value if portfolio_value > 0 else 0
+
+total_return = (
+    current_balance / start_balance - 1
+) if start_balance > 0 else 0
+
+st.metric("Total Return", f"{total_return:.2%}")
+st.metric("Cash %", f"{cash_percent:.2%}")
+st.metric("Open Holdings", len(holdings))
+st.metric("Unrealised PnL", f"£{broker_row['unrealised_pnl']:,.2f}")
 
 st.subheader("Portfolio")
 

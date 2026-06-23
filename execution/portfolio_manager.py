@@ -72,6 +72,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
     take_profits = risk_levels["take_profit"].loc[latest_date]
 
     trades = []
+    exited_tickers = set()
 
     held_tickers = set(portfolio["ticker"])
 
@@ -128,6 +129,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
             portfolio = portfolio[
                 portfolio["ticker"] != ticker
             ]
+            exited_tickers.add(ticker)
 
     held_tickers = set(portfolio["ticker"])
     cash = calculate_cash(portfolio)
@@ -138,7 +140,12 @@ def update_portfolio(signals, prices, weights, risk_levels):
         weight = latest_weights[ticker]
         price = latest_prices[ticker]
 
-        if signal == 1 and ticker not in held_tickers and weight > 0:
+        if (
+            signal == 1
+            and ticker not in held_tickers
+            and ticker not in exited_tickers
+            and weight > 0
+        ):
             position_value = STARTING_CASH * weight
 
             if position_value > cash:
