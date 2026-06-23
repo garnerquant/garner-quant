@@ -140,6 +140,16 @@ else:
     st.metric("Return", f"{return_pct:.2%}")
     st.metric("Realised PnL", f"£{paper_row['realised_pnl']:,.2f}")
     st.metric("Unrealised PnL", f"£{paper_row['unrealised_pnl']:,.2f}")
+    st.subheader("📈 30 Day Equity Curve")
+
+    chart_data = paper_30.copy()
+    chart_data["date"] = pd.to_datetime(chart_data["date"])
+    chart_data = chart_data.sort_values("date")
+    chart_data = chart_data.set_index("date")
+
+    st.line_chart(
+        chart_data["portfolio_value"]
+    )
 
     st.line_chart(paper_30["portfolio_value"])
 
@@ -176,27 +186,52 @@ st.subheader("Current Holdings")
 if holdings.empty:
     st.info("No open holdings.")
 else:
-    for _, row in holdings.iterrows():
-        pnl = row["unrealised_pnl"]
-        pnl_pct = row["unrealised_pnl_percent"]
+    holdings = holdings.copy()
 
-        if pnl >= 0:
-            pnl_text = f"🟢 +£{pnl:,.2f} ({pnl_pct:.2%})"
-        else:
-            pnl_text = f"🔴 -£{abs(pnl):,.2f} ({pnl_pct:.2%})"
+    total_market_value = holdings["market_value"].sum()
 
-        st.markdown(
-            f"""
-            ### {row['ticker']}
-            **Market Value:** £{row['market_value']:,.2f}  
-            **Shares:** {row['shares']:.4f}  
-            **Entry:** £{row['entry_price']:,.2f}  
-            **Current:** £{row['current_price']:,.2f}  
-            **PnL:** {pnl_text}
-            """
+    if total_market_value > 0:
+        holdings["portfolio_weight"] = (
+            holdings["market_value"] / total_market_value
         )
+    else:
+        holdings["portfolio_weight"] = 0
 
-        st.divider()
+    holdings = holdings.sort_values(
+        "market_value",
+        ascending=False
+    )
+
+    cols_per_row = 2
+
+    for i in range(0, len(holdings), cols_per_row):
+        cols = st.columns(cols_per_row)
+
+        for col, (_, row) in zip(
+            cols,
+            holdings.iloc[i:i + cols_per_row].iterrows()
+        ):
+            pnl = row["unrealised_pnl"]
+            pnl_pct = row["unrealised_pnl_percent"]
+            weight = row["portfolio_weight"]
+
+            if pnl >= 0:
+                pnl_text = f"🟢 +£{pnl:,.2f} ({pnl_pct:.2%})"
+            else:
+                pnl_text = f"🔴 -£{abs(pnl):,.2f} ({pnl_pct:.2%})"
+
+            with col:
+                st.markdown(
+                    f"""
+                    ### {row['ticker']}
+                    **Market Value:** £{row['market_value']:,.2f}  
+                    **Portfolio Weight:** {weight:.2%}  
+                    **Shares:** {row['shares']:.4f}  
+                    **Entry:** £{row['entry_price']:,.2f}  
+                    **Current:** £{row['current_price']:,.2f}  
+                    **PnL:** {pnl_text}
+                    """
+                )
 
 
 st.subheader("Equity Curve")
