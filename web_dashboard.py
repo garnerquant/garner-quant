@@ -195,6 +195,22 @@ st.metric(
 
 st.divider()
 
+if not paper_30.empty and len(paper_30) > 1:
+    paper_30["daily_return"] = paper_30["portfolio_value"].pct_change()
+
+    best_day = paper_30["daily_return"].max()
+    worst_day = paper_30["daily_return"].min()
+
+    rolling_peak = paper_30["portfolio_value"].cummax()
+    drawdown = (paper_30["portfolio_value"] / rolling_peak) - 1
+    max_drawdown = drawdown.min()
+
+    st.metric("Best Day", f"{best_day:.2%}")
+    st.metric("Worst Day", f"{worst_day:.2%}")
+    st.metric("Max Drawdown", f"{max_drawdown:.2%}")
+else:
+    st.info("Need at least 2 days of data for daily return analytics.")
+
 
 st.subheader("Current Holdings")
 
