@@ -185,15 +185,21 @@ st.subheader("Current Holdings")
 
 if holdings.empty:
     st.info("No open holdings.")
+
 else:
     holdings = holdings.copy()
+
+    holdings.columns = [
+        col.lower().replace(" ", "_")
+        for col in holdings.columns
+    ]
 
     total_market_value = holdings["market_value"].sum()
 
     if total_market_value > 0:
         holdings["portfolio_weight"] = (
-            holdings["market_value"] / total_market_value
-        )
+            holdings["market_value"] / total_market_value * 100
+        ).round(2)
     else:
         holdings["portfolio_weight"] = 0
 
@@ -202,37 +208,40 @@ else:
         ascending=False
     )
 
-    cols_per_row = 2
+    display_holdings = holdings[
+        [
+            "ticker",
+            "shares",
+            "entry_price",
+            "current_price",
+            "market_value",
+            "portfolio_weight",
+            "unrealised_pnl"
+        ]
+    ].rename(
+        columns={
+            "ticker": "Ticker",
+            "shares": "Shares",
+            "entry_price": "Entry Price",
+            "current_price": "Current Price",
+            "market_value": "Market Value",
+            "portfolio_weight": "Weight %",
+            "unrealised_pnl": "PnL"
+        }
+    )
 
-    for i in range(0, len(holdings), cols_per_row):
-        cols = st.columns(cols_per_row)
-
-        for col, (_, row) in zip(
-            cols,
-            holdings.iloc[i:i + cols_per_row].iterrows()
-        ):
-            pnl = row["unrealised_pnl"]
-            pnl_pct = row["unrealised_pnl_percent"]
-            weight = row["portfolio_weight"]
-
-            if pnl >= 0:
-                pnl_text = f"🟢 +£{pnl:,.2f} ({pnl_pct:.2%})"
-            else:
-                pnl_text = f"🔴 -£{abs(pnl):,.2f} ({pnl_pct:.2%})"
-
-            with col:
-                st.markdown(
-                    f"""
-                    ### {row['ticker']}
-                    **Market Value:** £{row['market_value']:,.2f}  
-                    **Portfolio Weight:** {weight:.2%}  
-                    **Shares:** {row['shares']:.4f}  
-                    **Entry:** £{row['entry_price']:,.2f}  
-                    **Current:** £{row['current_price']:,.2f}  
-                    **PnL:** {pnl_text}
-                    """
-                )
-
+    st.dataframe(
+        display_holdings.style.format({
+            "Shares": "{:.2f}",
+            "Entry Price": "£{:,.2f}",
+            "Current Price": "£{:,.2f}",
+            "Market Value": "£{:,.2f}",
+            "Weight %": "{:.2f}%",
+            "PnL": "£{:,.2f}"
+        }),
+        use_container_width=True,
+        hide_index=True
+    )
 
 st.subheader("Equity Curve")
 
