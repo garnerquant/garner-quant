@@ -132,7 +132,9 @@ else:
     start_balance = paper_30["portfolio_value"].iloc[0]
     current_balance = paper_row["portfolio_value"]
     return_pct = (current_balance / start_balance) - 1
-    days_tracked = len(paper_30)
+    paper_30["date"] = pd.to_datetime(paper_30["date"])
+
+    days_tracked = paper_30["date"].dt.date.nunique()
 
     st.metric("Day", f"{days_tracked}/30")
     st.metric("Starting Balance", f"£{start_balance:,.2f}")
