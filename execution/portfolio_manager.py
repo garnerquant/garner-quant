@@ -5,6 +5,7 @@ from execution.broker_account import load_account, update_account
 
 PORTFOLIO_FILE = "paper_portfolio_v3.csv"
 TRADE_JOURNAL_FILE = "trade_journal_v3.csv"
+TRANSACTION_LOG_FILE = "trade_transactions_v1.csv"
 
 
 def load_portfolio():
@@ -47,9 +48,50 @@ def load_trade_journal():
     )
 
 
+def load_transaction_log():
+    if Path(TRANSACTION_LOG_FILE).exists():
+        return pd.read_csv(TRANSACTION_LOG_FILE)
+
+    return pd.DataFrame(
+        columns=[
+            "date",
+            "action",
+            "ticker",
+            "price",
+            "shares",
+            "value",
+            "reason"
+        ]
+    )
+
+
+def save_transaction_log(log):
+    log.to_csv(TRANSACTION_LOG_FILE, index=False)  
+
+    if Path(TRADE_JOURNAL_FILE).exists():
+        return pd.read_csv(TRADE_JOURNAL_FILE)
+
+    return pd.DataFrame(
+        columns=[
+            "date",
+            "action",
+            "ticker",
+            "price",
+            "shares",
+            "value",
+            "pnl",
+            "pnl_percent",
+            "reason"
+        ]
+    )
+
+
 def save_trade_journal(journal):
     journal.to_csv(TRADE_JOURNAL_FILE, index=False)
 
+
+def save_transaction_log(log):
+    log.to_csv(TRANSACTION_LOG_FILE, index=False)
 
 def calculate_cash(portfolio):
     invested = portfolio["position_value"].sum()
@@ -62,6 +104,7 @@ def calculate_cash(portfolio):
 def update_portfolio(signals, prices, weights, risk_levels):
     portfolio = load_portfolio()
     journal = load_trade_journal()
+    transaction_log = load_transaction_log()
 
     latest_date = signals.index[-1]
     latest_signals = signals.loc[latest_date]
@@ -105,14 +148,24 @@ def update_portfolio(signals, prices, weights, risk_levels):
             ) - 1
 
             journal.loc[len(journal)] = [
-                position["entry_date"],
                 latest_date,
+                "SELL",
                 ticker,
-                position["entry_price"],
                 current_price,
                 position["shares"],
+                current_price * position["shares"],
                 pnl,
                 pnl_percent,
+                sell_reason
+            ]
+
+            transaction_log.loc[len(transaction_log)] = [
+                latest_date,
+                "SELL",
+                ticker,
+                current_price,
+                position["shares"],
+                current_price * position["shares"],
                 sell_reason
             ]
 
@@ -166,6 +219,28 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 take_profits[ticker]
             ]
 
+            transaction_log.loc[len(transaction_log)] = [
+                latest_date,
+                "BUY",
+                ticker,
+                price,
+                shares,
+                position_value,
+                "SIGNAL ENTRY"
+            ]
+
+            journal.loc[len(journal)] = [
+                latest_date,
+                "BUY",
+                ticker,
+                price,
+                shares,
+                position_value,
+                0,
+                0,
+                "SIGNAL ENTRY"
+            ]
+
             cash -= position_value
 
             trades.append({
@@ -180,6 +255,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
 
     save_portfolio(portfolio)
     save_trade_journal(journal)
+    save_transaction_log(transaction_log)
 
     return portfolio, journal, pd.DataFrame(trades)
 

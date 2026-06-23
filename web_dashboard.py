@@ -492,7 +492,7 @@ st.subheader("Trade Journal")
 try:
     response = (
         supabase
-        .table("trade_journal")
+        .table("trade_transactions")
         .select("*")
         .execute()
     )
@@ -500,7 +500,7 @@ try:
     trades = pd.DataFrame(response.data)
 
 except Exception:
-    trades = load_csv("trade_journal_v3.csv")
+    trades = load_csv("trade_transactions_v1.csv")
 
 
 if trades.empty:
@@ -520,7 +520,6 @@ else:
             "shares",
             "price",
             "value",
-            "pnl",
             "reason"
         ]
     ].rename(
@@ -531,7 +530,6 @@ else:
             "shares": "Shares",
             "price": "Price",
             "value": "Value",
-            "pnl": "PnL",
             "reason": "Reason"
         }
     )
@@ -541,7 +539,6 @@ else:
             "Shares": "{:.2f}",
             "Price": "£{:,.2f}",
             "Value": "£{:,.2f}",
-            "PnL": "£{:,.2f}"
         }),
         use_container_width=True,
         hide_index=True
