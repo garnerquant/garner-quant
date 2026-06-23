@@ -381,12 +381,62 @@ st.divider()
 
 st.subheader("Trade Journal")
 
+try:
+    response = (
+        supabase
+        .table("trade_journal")
+        .select("*")
+        .execute()
+    )
+
+    trades = pd.DataFrame(response.data)
+
+except Exception:
+    trades = load_csv("trade_journal_v3.csv")
+
+
 if trades.empty:
-    st.info("No closed trades yet.")
+    st.info("No trades logged yet.")
+
 else:
+    trades.columns = [
+        col.lower().replace(" ", "_")
+        for col in trades.columns
+    ]
+
+    display_trades = trades[
+        [
+            "date",
+            "ticker",
+            "action",
+            "shares",
+            "price",
+            "value",
+            "pnl",
+            "reason"
+        ]
+    ].rename(
+        columns={
+            "date": "Date",
+            "ticker": "Ticker",
+            "action": "Action",
+            "shares": "Shares",
+            "price": "Price",
+            "value": "Value",
+            "pnl": "PnL",
+            "reason": "Reason"
+        }
+    )
+
     st.dataframe(
-        trades,
-        use_container_width=True
+        display_trades.style.format({
+            "Shares": "{:.2f}",
+            "Price": "£{:,.2f}",
+            "Value": "£{:,.2f}",
+            "PnL": "£{:,.2f}"
+        }),
+        use_container_width=True,
+        hide_index=True
     )
 
 
