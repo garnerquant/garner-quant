@@ -393,10 +393,21 @@ else:
 
 st.subheader("Equity Curve")
 
-if portfolio.empty or "equity" not in portfolio.columns:
+if paper_30.empty or "portfolio_value" not in paper_30.columns:
     st.info("No equity curve data available.")
+
 else:
-    st.line_chart(portfolio["equity"])
+    equity_curve = paper_30.copy()
+
+    equity_curve["date"] = pd.to_datetime(equity_curve["date"])
+
+    equity_curve = equity_curve.sort_values("date")
+
+    equity_curve = equity_curve.set_index("date")
+
+    st.line_chart(
+        equity_curve["portfolio_value"]
+    )
 
 
 st.subheader("Drawdown")

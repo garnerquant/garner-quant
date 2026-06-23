@@ -7,8 +7,9 @@ TRACKER_FILE = "paper_30_day_tracker.csv"
 
 
 def update_30_day_tracker(broker):
-    today = datetime.now().date()
-    today_str = str(today)
+    now = datetime.now()
+    timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    today_str = now.strftime("%Y-%m-%d")
 
     portfolio_value = broker["portfolio_value"]
     cash = broker["cash"]
@@ -28,10 +29,8 @@ def update_30_day_tracker(broker):
             ]
         )
 
-    tracker = tracker[tracker["date"] != today_str]
-
     tracker.loc[len(tracker)] = [
-        today_str,
+        timestamp,
         portfolio_value,
         cash,
         realised_pnl,
