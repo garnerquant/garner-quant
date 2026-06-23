@@ -243,6 +243,96 @@ else:
         hide_index=True
     )
 
+st.subheader("Day-over-Day Attribution")
+
+try:
+    response = (
+        supabase
+        .table("holdings_history")
+        .select("*")
+        .order("date")
+        .execute()
+    )
+
+    history = pd.DataFrame(response.data)
+
+except Exception:
+    history = pd.DataFrame()
+
+
+if history.empty:
+    st.info("No holdings history available yet.")
+
+else:
+    history["date"] = pd.to_datetime(history["date"])
+
+    dates = sorted(history["date"].dt.date.unique())
+
+    if len(dates) < 2:
+        st.info("Need at least 2 days of holdings history for attribution.")
+
+    else:
+        yesterday = dates[-2]
+        today = dates[-1]
+
+        yesterday_holdings = history[
+            history["date"].dt.date == yesterday
+        ][["ticker", "market_value"]].rename(
+            columns={
+                "market_value": "Yesterday Value"
+            }
+        )
+
+        today_holdings = history[
+            history["date"].dt.date == today
+        ][["ticker", "market_value"]].rename(
+            columns={
+                "market_value": "Today Value"
+            }
+        )
+
+        attribution = today_holdings.merge(
+            yesterday_holdings,
+            on="ticker",
+            how="outer"
+        ).fillna(0)
+
+        attribution["Daily PnL"] = (
+            attribution["Today Value"]
+            - attribution["Yesterday Value"]
+        )
+
+        total_yesterday = attribution["Yesterday Value"].sum()
+
+        if total_yesterday > 0:
+            attribution["Contribution %"] = (
+                attribution["Daily PnL"]
+                / total_yesterday
+                * 100
+            )
+        else:
+            attribution["Contribution %"] = 0
+
+        attribution = attribution.sort_values(
+            "Daily PnL",
+            ascending=False
+        )
+
+        st.caption(
+            f"Comparing {yesterday} → {today}"
+        )
+
+        st.dataframe(
+            attribution.style.format({
+                "Yesterday Value": "£{:,.2f}",
+                "Today Value": "£{:,.2f}",
+                "Daily PnL": "£{:,.2f}",
+                "Contribution %": "{:.2f}%"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )  
+
 st.subheader("Equity Curve")
 
 if portfolio.empty or "equity" not in portfolio.columns:

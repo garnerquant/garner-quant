@@ -79,3 +79,35 @@ def sync_30_day_tracker():
         supabase.table("paper_30_day_tracker").insert(data).execute()
 
     print("Supabase 30 day tracker synced.")
+
+def sync_holdings_history():
+
+    holdings = pd.read_csv("holdings_report.csv")
+
+    today = datetime.utcnow().date().isoformat()
+
+    supabase.table(
+        "holdings_history"
+    ).delete().eq(
+        "date",
+        today
+    ).execute()
+
+    for _, row in holdings.iterrows():
+
+        data = {
+            "date": today,
+            "ticker": row["ticker"],
+            "shares": float(row["shares"]),
+            "entry_price": float(row["entry_price"]),
+            "current_price": float(row["current_price"]),
+            "market_value": float(row["market_value"]),
+            "unrealised_pnl": float(row["unrealised_pnl"]),
+            "unrealised_pnl_percent": float(row["unrealised_pnl_percent"])
+        }
+
+        supabase.table(
+            "holdings_history"
+        ).insert(data).execute()
+
+    print("Supabase holdings history synced.")
