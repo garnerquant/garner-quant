@@ -54,8 +54,8 @@ except:
 
         broker = pd.DataFrame(response.data)
 
-    except Exception:
-
+    except Exception as e:
+        st.error(f"Supabase broker load failed: {e}")
         broker = load_csv("broker_account.csv")
 
     try:
@@ -75,7 +75,19 @@ except:
         broker = load_csv(
             "broker_account.csv"
         )
-paper_30 = load_csv("paper_30_day_tracker.csv")
+try:
+    response = (
+        supabase
+        .table("paper_30_day_tracker")
+        .select("*")
+        .order("date")
+        .execute()
+    )
+
+    paper_30 = pd.DataFrame(response.data)
+
+except Exception:
+    paper_30 = load_csv("paper_30_day_tracker.csv")
 holdings = load_csv("holdings_report.csv")
 portfolio = load_csv("portfolio_v2.csv")
 signals = load_csv("signal_report_v2.csv")
