@@ -88,7 +88,18 @@ try:
 
 except Exception:
     paper_30 = load_csv("paper_30_day_tracker.csv")
-holdings = load_csv("holdings_report.csv")
+try:
+    response = (
+        supabase
+        .table("holdings")
+        .select("*")
+        .execute()
+    )
+
+    holdings = pd.DataFrame(response.data)
+
+except Exception:
+    holdings = load_csv("holdings_report.csv")
 portfolio = load_csv("portfolio_v2.csv")
 signals = load_csv("signal_report_v2.csv")
 trades = load_csv("trade_journal_v3.csv")
@@ -101,6 +112,14 @@ if broker.empty:
 
 
 broker_row = broker.iloc[0]
+last_updated = broker_row.get(
+    "updated_at",
+    "Unknown"
+)
+
+st.success(
+    f"Live data connected ✅ Last updated: {last_updated}"
+)
 
 
 st.subheader("🚀 30 Day Paper Trading Challenge")
