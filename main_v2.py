@@ -92,7 +92,7 @@ def main(show_charts=True, send_telegram=True):
     portfolio_return = report["total_return"]
 
     benchmark_return = float(
-        (benchmark_prices.iloc[-1] / benchmark_prices.iloc[0]) - 1
+        ((benchmark_prices.iloc[-1] / benchmark_prices.iloc[0]) - 1) / 100
     )
 
     benchmark_stats = {
