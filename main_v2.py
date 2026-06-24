@@ -121,7 +121,6 @@ def main(show_charts=True, send_telegram=True):
     )
 
     broker = broker_summary()
-    print("DEBUG benchmark_stats =", benchmark_stats)
     tracker = update_30_day_tracker(broker, benchmark_stats)
     paper_30_day = calculate_30_day_performance(tracker)
     print_30_day_performance(paper_30_day)
