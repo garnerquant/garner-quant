@@ -103,9 +103,6 @@ def calculate_cash(portfolio):
 
 def update_portfolio(signals, prices, weights, risk_levels):
     portfolio = load_portfolio()
-    print("===== LOADED PORTFOLIO =====")
-    print(portfolio)
-    print("===========================")
     journal = load_trade_journal()
     transaction_log = load_transaction_log()
 

@@ -12,9 +12,6 @@ def create_holdings_report(portfolio, prices):
         shares = position["shares"]
         entry_price = position["entry_price"]
         current_price = latest_prices[ticker]
-        print(
-            f"{ticker} | Entry: {entry_price} | Current: {current_price}"
-        )
 
         market_value = shares * current_price
         cost_basis = shares * entry_price
