@@ -142,9 +142,6 @@ else:
     today = pd.Timestamp.now().date()
 
     days_tracked = (today - start_date).days + 1
-    st.write("Start Date:", start_date)
-    st.write("Today:", today)
-    st.write("Days Tracked:", days_tracked)
 
     st.metric("Day", f"{days_tracked}/30")
     st.metric("Starting Balance", f"£{start_balance:,.2f}")
