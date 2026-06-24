@@ -78,6 +78,8 @@ def sync_30_day_tracker():
             "cash": float(row["cash"]),
             "realised_pnl": float(row["realised_pnl"]),
             "unrealised_pnl": float(row["unrealised_pnl"]),
+            "benchmark_return": float(row.get("benchmark_return", 0)),
+            "alpha": float(row.get("alpha", 0)),
             "updated_at": datetime.utcnow().isoformat()
         }
 
