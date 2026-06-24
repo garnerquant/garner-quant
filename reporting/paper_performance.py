@@ -20,6 +20,13 @@ def update_30_day_tracker(broker, benchmark_stats=None):
 
     if Path(TRACKER_FILE).exists():
         tracker = pd.read_csv(TRACKER_FILE)
+
+        if "benchmark_return" not in tracker.columns:
+            tracker["benchmark_return"] = 0
+
+    if "alpha" not in tracker.columns:
+        tracker["alpha"] = 0
+        
     else:
         tracker = pd.DataFrame(
             columns=[
