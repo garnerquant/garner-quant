@@ -89,20 +89,20 @@ def main(show_charts=True, send_telegram=True):
     report = calculate_performance(portfolio)
     benchmark_prices = prices[BENCHMARK_TICKER].dropna()
 
-    portfolio_return = (
-        portfolio.iloc[-1] / portfolio.iloc[0]
-    ) - 1
+    portfolio_return = float(
+        (portfolio.iloc[-1] / portfolio.iloc[0]) - 1
+    )
 
-    benchmark_return = (
-        benchmark_prices.iloc[-1] / benchmark_prices.iloc[0]
-    ) - 1
+    benchmark_return = float(
+        (benchmark_prices.iloc[-1] / benchmark_prices.iloc[0]) - 1
+    )
 
     benchmark_stats = {
         "ticker": BENCHMARK_TICKER,
         "portfolio_return": portfolio_return,
         "benchmark_return": benchmark_return,
         "alpha": portfolio_return - benchmark_return
-    }  
+    }
 
     print_performance(report)
     trade_stats = analyse_trade_journal(trade_journal)
