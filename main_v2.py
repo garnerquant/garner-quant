@@ -28,9 +28,6 @@ from reporting.paper_performance import (
 
 def main(show_charts=True, send_telegram=True):
 
-    if send_telegram:
-        send_message("🤖 Garner Quant GitHub Action test")
-        
     tickers = list(ASSETS.keys())
 
     print("Downloading market data...")
