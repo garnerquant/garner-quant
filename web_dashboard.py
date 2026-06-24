@@ -185,6 +185,7 @@ st.subheader("📊 Benchmark")
 latest_tracker_row = paper_30.sort_values("date").iloc[-1]
 
 benchmark_return = float(latest_tracker_row.get("benchmark_return", 0))
+st.write("DEBUG benchmark:", benchmark_return)
 alpha = total_return - benchmark_return
 
 st.metric("Garner Quant", f"{total_return:.2%}")
