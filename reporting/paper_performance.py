@@ -9,46 +9,52 @@ TRACKER_FILE = "paper_30_day_tracker.csv"
 def update_30_day_tracker(broker, benchmark_stats=None):
     now = datetime.now()
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
-    today_str = now.strftime("%Y-%m-%d")
 
     portfolio_value = broker["portfolio_value"]
     cash = broker["cash"]
     realised_pnl = broker["realised_pnl"]
     unrealised_pnl = broker["unrealised_pnl"]
+
     benchmark_return = 0 if benchmark_stats is None else benchmark_stats.get("benchmark_return", 0)
     alpha = 0 if benchmark_stats is None else benchmark_stats.get("alpha", 0)
 
     if Path(TRACKER_FILE).exists():
         tracker = pd.read_csv(TRACKER_FILE)
+    else:
+        tracker = pd.DataFrame()
 
-        if "benchmark_return" not in tracker.columns:
-            tracker["benchmark_return"] = 0
+    if "date" not in tracker.columns:
+        tracker["date"] = []
+
+    if "portfolio_value" not in tracker.columns:
+        tracker["portfolio_value"] = []
+
+    if "cash" not in tracker.columns:
+        tracker["cash"] = []
+
+    if "realised_pnl" not in tracker.columns:
+        tracker["realised_pnl"] = []
+
+    if "unrealised_pnl" not in tracker.columns:
+        tracker["unrealised_pnl"] = []
+
+    if "benchmark_return" not in tracker.columns:
+        tracker["benchmark_return"] = 0
 
     if "alpha" not in tracker.columns:
         tracker["alpha"] = 0
-        
-    else:
-        tracker = pd.DataFrame(
-            columns=[
-                "date",
-                "portfolio_value",
-                "cash",
-                "realised_pnl",
-                "unrealised_pnl",
-                "benchmark_return",
-                "alpha"
-            ]
-        )
 
-    tracker.loc[len(tracker)] = [
-        timestamp,
-        portfolio_value,
-        cash,
-        realised_pnl,
-        unrealised_pnl,
-        benchmark_return,
-        alpha
-    ]
+    new_row = {
+        "date": timestamp,
+        "portfolio_value": portfolio_value,
+        "cash": cash,
+        "realised_pnl": realised_pnl,
+        "unrealised_pnl": unrealised_pnl,
+        "benchmark_return": benchmark_return,
+        "alpha": alpha,
+    }
+
+    tracker = pd.concat([tracker, pd.DataFrame([new_row])], ignore_index=True)
 
     tracker["date"] = pd.to_datetime(tracker["date"])
     tracker = tracker.sort_values("date")
