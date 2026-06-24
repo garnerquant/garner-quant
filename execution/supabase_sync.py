@@ -73,11 +73,11 @@ def sync_30_day_tracker():
 
     for _, row in tracker.iterrows():
 
-    benchmark_return = row.get("benchmark_return", 0)
-    alpha = row.get("alpha", 0)
+        benchmark_return = row.get("benchmark_return", 0)
+        alpha = row.get("alpha", 0)
 
-    benchmark_return = 0 if pd.isna(benchmark_return) or not math.isfinite(float(benchmark_return)) else float(benchmark_return)
-    alpha = 0 if pd.isna(alpha) or not math.isfinite(float(alpha)) else float(alpha)
+        benchmark_return = 0 if pd.isna(benchmark_return) or not math.isfinite(float(benchmark_return)) else float(benchmark_return)
+        alpha = 0 if pd.isna(alpha) or not math.isfinite(float(alpha)) else float(alpha)
 
         data = {
             "date": str(row["date"]),
