@@ -40,17 +40,23 @@ def main(show_charts=True, send_telegram=True):
     lows = get_price_field(market_data, "Low")
     volumes = get_price_field(market_data, "Volume")
 
-    print("Building signals...")
-    signals = build_signals(prices, volumes)
+    asset_tickers = list(ASSETS.keys())
 
+    asset_prices = prices[asset_tickers]
+    asset_highs = highs[asset_tickers]
+    asset_lows = lows[asset_tickers]
+    asset_volumes = volumes[asset_tickers]
+
+    print("Building signals...")
+    signals = build_signals(asset_prices, asset_volumes)
     print("Building risk levels...")
-    risk_levels = build_risk_levels(prices, highs, lows)
+    risk_levels = build_risk_levels(asset_prices, asset_highs, asset_lows)
 
     print("Building portfolio weights...")
     weights = build_weights(signals, prices, risk_levels)
 
     print("Running backtest...")
-    portfolio = run_backtest(prices, weights, risk_levels)
+    portfolio = run_backtest(asset_prices, weights, risk_levels)
 
     print("Updating Portfolio Manager V3...")
     paper_portfolio, trade_journal, v3_trades = update_portfolio(
