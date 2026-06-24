@@ -38,7 +38,9 @@ def update_30_day_tracker(broker, benchmark_stats=None):
         portfolio_value,
         cash,
         realised_pnl,
-        unrealised_pnl
+        unrealised_pnl,
+        benchmark_return,
+        alpha
     ]
 
     tracker["date"] = pd.to_datetime(tracker["date"])
