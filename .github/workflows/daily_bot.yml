@@ -1,5 +1,6 @@
 name: Daily Garner Quant Run
 
+# Runs Garner Quant every morning at 8am UK time
 on:
   schedule:
     - cron: "0 7 * * *"
