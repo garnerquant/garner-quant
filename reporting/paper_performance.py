@@ -6,7 +6,7 @@ from datetime import datetime
 TRACKER_FILE = "paper_30_day_tracker.csv"
 
 
-def update_30_day_tracker(broker):
+def update_30_day_tracker(broker, benchmark_stats=None):
     now = datetime.now()
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
     today_str = now.strftime("%Y-%m-%d")
@@ -15,6 +15,8 @@ def update_30_day_tracker(broker):
     cash = broker["cash"]
     realised_pnl = broker["realised_pnl"]
     unrealised_pnl = broker["unrealised_pnl"]
+    benchmark_return = 0 if benchmark_stats is None else benchmark_stats.get("benchmark_return", 0)
+    alpha = 0 if benchmark_stats is None else benchmark_stats.get("alpha", 0)
 
     if Path(TRACKER_FILE).exists():
         tracker = pd.read_csv(TRACKER_FILE)
@@ -25,7 +27,9 @@ def update_30_day_tracker(broker):
                 "portfolio_value",
                 "cash",
                 "realised_pnl",
-                "unrealised_pnl"
+                "unrealised_pnl",
+                "benchmark_return",
+                "alpha"
             ]
         )
 

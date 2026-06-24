@@ -92,7 +92,7 @@ def main(show_charts=True, send_telegram=True):
     portfolio_return = report["total_return"]
 
     benchmark_return = float(
-        ((benchmark_prices.iloc[-1] / benchmark_prices.iloc[0]) - 1) / 100
+        ((benchmark_prices.iloc[-1] / benchmark_prices.iloc[0]) - 1)
     )
 
     benchmark_stats = {
@@ -121,7 +121,7 @@ def main(show_charts=True, send_telegram=True):
     )
 
     broker = broker_summary()
-    tracker = update_30_day_tracker(broker)
+    tracker = update_30_day_tracker(broker, benchmark_stats)
     paper_30_day = calculate_30_day_performance(tracker)
     print_30_day_performance(paper_30_day)
 
