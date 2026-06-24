@@ -182,7 +182,9 @@ st.metric("Unrealised PnL", f"£{broker_row['unrealised_pnl']:,.2f}")
 
 st.subheader("📊 Benchmark")
 
-benchmark_return = broker_row.get("benchmark_return", 0)
+latest_tracker_row = paper_30.sort_values("date").iloc[-1]
+
+benchmark_return = float(latest_tracker_row.get("benchmark_return", 0))
 alpha = total_return - benchmark_return
 
 st.metric("Garner Quant", f"{total_return:.2%}")
