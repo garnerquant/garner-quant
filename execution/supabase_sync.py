@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import math
 from dotenv import load_dotenv
 from supabase import create_client
 from datetime import datetime
@@ -72,14 +73,20 @@ def sync_30_day_tracker():
 
     for _, row in tracker.iterrows():
 
+    benchmark_return = row.get("benchmark_return", 0)
+    alpha = row.get("alpha", 0)
+
+    benchmark_return = 0 if pd.isna(benchmark_return) or not math.isfinite(float(benchmark_return)) else float(benchmark_return)
+    alpha = 0 if pd.isna(alpha) or not math.isfinite(float(alpha)) else float(alpha)
+
         data = {
             "date": str(row["date"]),
             "portfolio_value": float(row["portfolio_value"]),
             "cash": float(row["cash"]),
             "realised_pnl": float(row["realised_pnl"]),
             "unrealised_pnl": float(row["unrealised_pnl"]),
-            "benchmark_return": float(row.get("benchmark_return", 0)),
-            "alpha": float(row.get("alpha", 0)),
+            "benchmark_return": benchmark_return,
+            "alpha": alpha,
             "updated_at": datetime.utcnow().isoformat()
         }
 
