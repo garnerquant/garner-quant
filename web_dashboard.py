@@ -180,6 +180,15 @@ st.metric("Cash %", f"{cash_percent:.2%}")
 st.metric("Open Holdings", len(holdings))
 st.metric("Unrealised PnL", f"£{broker_row['unrealised_pnl']:,.2f}")
 
+st.subheader("📊 Benchmark")
+
+benchmark_return = broker_row.get("benchmark_return", 0)
+alpha = total_return - benchmark_return
+
+st.metric("Garner Quant", f"{total_return:.2%}")
+st.metric("SPY", f"{benchmark_return:.2%}")
+st.metric("Alpha", f"{alpha:.2%}")
+
 st.subheader("Portfolio")
 
 st.metric(
