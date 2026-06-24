@@ -160,8 +160,6 @@ else:
         chart_data["portfolio_value"]
     )
 
-    st.line_chart(paper_30["portfolio_value"])
-
 st.divider()
 
 st.subheader("📊 Strategy Analytics")
