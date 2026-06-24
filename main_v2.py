@@ -89,8 +89,13 @@ def main(show_charts=True, send_telegram=True):
     report = calculate_performance(portfolio)
     benchmark_prices = prices[BENCHMARK_TICKER].dropna()
 
+    if hasattr(portfolio, "columns"):
+        portfolio_series = portfolio.iloc[:, 0]
+    else:
+        portfolio_series = portfolio
+
     portfolio_return = float(
-        (portfolio.iloc[-1] / portfolio.iloc[0]) - 1
+        (portfolio_series.iloc[-1] / portfolio_series.iloc[0]) - 1
     )
 
     benchmark_return = float(
