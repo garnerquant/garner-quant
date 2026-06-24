@@ -1,6 +1,6 @@
 import pandas as pd
 
-from config import ASSETS
+from config import ASSETS, BENCHMARK_TICKER
 
 from data.market_data import download_market_data, get_price_field
 from strategy.signals import build_signals
@@ -28,7 +28,9 @@ from reporting.paper_performance import (
 
 def main(show_charts=True, send_telegram=True):
 
-    tickers = list(ASSETS.keys())
+    from config import BENCHMARK_TICKER
+
+    tickers = list(ASSETS.keys()) + [BENCHMARK_TICKER]
 
     print("Downloading market data...")
     market_data = download_market_data(tickers)
@@ -79,6 +81,23 @@ def main(show_charts=True, send_telegram=True):
     fundamental_scores = pd.read_csv("fundamental_scores.csv")
 
     report = calculate_performance(portfolio)
+    benchmark_prices = prices[BENCHMARK_TICKER].dropna()
+
+    portfolio_return = (
+        portfolio.iloc[-1] / portfolio.iloc[0]
+    ) - 1
+
+    benchmark_return = (
+        benchmark_prices.iloc[-1] / benchmark_prices.iloc[0]
+    ) - 1
+
+    benchmark_stats = {
+        "ticker": BENCHMARK_TICKER,
+        "portfolio_return": portfolio_return,
+        "benchmark_return": benchmark_return,
+        "alpha": portfolio_return - benchmark_return
+    }  
+
     print_performance(report)
     trade_stats = analyse_trade_journal(trade_journal)
     print_trade_analytics(trade_stats)
@@ -117,7 +136,8 @@ def main(show_charts=True, send_telegram=True):
         v3_trades,
         trade_stats,
         broker,
-        holdings_report
+        holdings_report,
+        benchmark_stats
     )
 
     if send_telegram:

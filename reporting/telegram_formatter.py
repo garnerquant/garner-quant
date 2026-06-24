@@ -1,4 +1,4 @@
-def build_telegram_message(report, signal_rows, fundamental_scores, summary, v3_trades, trade_stats, broker, holdings_report):
+def build_telegram_message(report, signal_rows, fundamental_scores, summary, v3_trades, trade_stats, broker, holdings_report, benchmark_stats):
     message = "📈 Garner Quant Daily Update\n\n"
 
     message += "Live Paper Account:\n"
@@ -14,6 +14,13 @@ def build_telegram_message(report, signal_rows, fundamental_scores, summary, v3_
         f"Return: {report['total_return']:.2%}\n"
         f"Max Drawdown: {report['max_drawdown']:.2%}\n"
         f"Sharpe: {report['sharpe_ratio']:.2f}\n\n"
+    )
+
+    message += "📊 Benchmark:\n"
+    message += (
+        f"Garner Quant: {benchmark_stats['portfolio_return']:.2%}\n"
+        f"{benchmark_stats['ticker']}: {benchmark_stats['benchmark_return']:.2%}\n"
+        f"Alpha: {benchmark_stats['alpha']:.2%}\n\n"
     )
 
     message += "Current Signals:\n"
