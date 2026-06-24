@@ -1,11 +1,19 @@
 def build_telegram_message(report, signal_rows, fundamental_scores, summary, v3_trades, trade_stats, broker, holdings_report):
-    message = "📈 Garner Quant V2.1 Update\n\n"
+    message = "📈 Garner Quant Daily Update\n\n"
 
+    message += "Live Paper Account:\n"
+    message += f"Portfolio Value: £{broker['portfolio_value']:,.2f}\n"
+    message += f"Cash: £{broker['cash']:,.2f}\n"
+    message += f"Buying Power: £{broker['buying_power']:,.2f}\n"
+    message += f"Realised PnL: £{broker['realised_pnl']:,.2f}\n"
+    message += f"Unrealised PnL: £{broker['unrealised_pnl']:,.2f}\n\n"
+
+    message += "Backtest Snapshot:\n"
     message += (
-        f"Backtest Final Value: £{report['final_value']:,.2f}\n"
-        f"Backtest Return: {report['total_return']:.2%}\n"
+        f"Final Value: £{report['final_value']:,.2f}\n"
+        f"Return: {report['total_return']:.2%}\n"
         f"Max Drawdown: {report['max_drawdown']:.2%}\n"
-        f"Sharpe Ratio: {report['sharpe_ratio']:.2f}\n\n"
+        f"Sharpe: {report['sharpe_ratio']:.2f}\n\n"
     )
 
     message += "Current Signals:\n"
@@ -50,12 +58,5 @@ def build_telegram_message(report, signal_rows, fundamental_scores, summary, v3_
                 f"PnL £{row['unrealised_pnl']:,.2f} "
                 f"({row['unrealised_pnl_percent']:.2%})\n"
             )
-
-    message += "\nBroker Account:\n"
-    message += f"Portfolio Value: £{broker['portfolio_value']:,.2f}\n"
-    message += f"Cash: £{broker['cash']:,.2f}\n"
-    message += f"Buying Power: £{broker['buying_power']:,.2f}\n"
-    message += f"Realised PnL: £{broker['realised_pnl']:,.2f}\n"
-    message += f"Unrealised PnL: £{broker['unrealised_pnl']:,.2f}\n"
 
     return message
