@@ -132,9 +132,19 @@ else:
     start_balance = paper_30["portfolio_value"].iloc[0]
     current_balance = paper_row["portfolio_value"]
     return_pct = (current_balance / start_balance) - 1
-    paper_30["date"] = pd.to_datetime(paper_30["date"])
 
-    days_tracked = paper_30["date"].dt.date.nunique()
+    paper_30["date"] = pd.to_datetime(
+        paper_30["date"],
+        errors="coerce"
+    )
+
+    start_date = paper_30["date"].min().date()
+    today = pd.Timestamp.now().date()
+
+    days_tracked = (today - start_date).days + 1
+    st.write("Start Date:", start_date)
+    st.write("Today:", today)
+    st.write("Days Tracked:", days_tracked)
 
     st.metric("Day", f"{days_tracked}/30")
     st.metric("Starting Balance", f"£{start_balance:,.2f}")
