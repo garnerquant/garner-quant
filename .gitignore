@@ -1,8 +1,17 @@
 venv/
 __pycache__/
-*.csv
+
 *.png
 *.pyc
+
+# Ignore most CSVs
+*.csv
+
+# BUT keep portfolio state files
+!paper_portfolio_v3.csv
+!trade_journal_v3.csv
+!v3_trades.csv
+
 old_files/
 .streamlit/secrets.toml
 .env
