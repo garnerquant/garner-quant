@@ -505,7 +505,7 @@ st.subheader("Trade Journal")
 try:
     response = (
         supabase
-        .table("trade_transactions")
+        .table("trade_journal")
         .select("*")
         .execute()
     )
@@ -513,7 +513,7 @@ try:
     trades = pd.DataFrame(response.data)
 
 except Exception:
-    trades = load_csv("trade_transactions_v1.csv")
+    trades = load_csv("trade_journal_v3.csv")
 
 
 if trades.empty:
