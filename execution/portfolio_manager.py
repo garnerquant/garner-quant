@@ -33,7 +33,7 @@ def save_portfolio(portfolio):
 def load_trade_journal():
     columns = [
         "date",
-        "time"
+        "time",
         "action",
         "ticker",
         "price",
@@ -68,6 +68,7 @@ def load_trade_journal():
 
                 migrated_rows.append({
                     "date": date,
+                    "time": "",
                     "action": action,
                     "ticker": row.get("ticker", ""),
                     "price": price,
