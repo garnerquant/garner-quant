@@ -533,7 +533,8 @@ else:
             "shares",
             "price",
             "value",
-            "reason"
+            "pnl"
+            "reason".
         ]
     ].rename(
         columns={
@@ -543,8 +544,15 @@ else:
             "shares": "Shares",
             "price": "Price",
             "value": "Value",
+            "pnl": "PnL"
             "reason": "Reason"
         }
+    )
+
+    display_trades = (
+        display_trades
+        .sort_values("Date", ascending=False)
+        .head(20)
     )
 
     st.dataframe(
@@ -552,6 +560,7 @@ else:
             "Shares": "{:.2f}",
             "Price": "£{:,.2f}",
             "Value": "£{:,.2f}",
+            "PnL": "£{:,.2f}",
         }),
         use_container_width=True,
         hide_index=True
