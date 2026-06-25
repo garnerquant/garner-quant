@@ -533,8 +533,8 @@ else:
             "shares",
             "price",
             "value",
-            "pnl"
-            "reason".
+            "pnl",
+            "reason"
         ]
     ].rename(
         columns={
@@ -544,7 +544,7 @@ else:
             "shares": "Shares",
             "price": "Price",
             "value": "Value",
-            "pnl": "PnL"
+            "pnl": "PnL",
             "reason": "Reason"
         }
     )
