@@ -135,6 +135,7 @@ def sync_trade_journal():
 
         data = {
             "date": str(row.get("date", row.get("exit_date", ""))),
+            "time": str(row.get("time", "")),
             "ticker": str(row.get("ticker", "")),
             "action": str(row.get("action", "SELL")),
             "shares": float(row.get("shares", 0)),

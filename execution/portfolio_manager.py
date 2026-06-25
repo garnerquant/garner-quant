@@ -2,6 +2,7 @@ import pandas as pd
 from pathlib import Path
 from config import STARTING_CASH
 from execution.broker_account import load_account, update_account
+from datetime import datetime
 
 PORTFOLIO_FILE = "paper_portfolio_v3.csv"
 TRADE_JOURNAL_FILE = "trade_journal_v3.csv"
@@ -32,6 +33,7 @@ def save_portfolio(portfolio):
 def load_trade_journal():
     columns = [
         "date",
+        "time"
         "action",
         "ticker",
         "price",
@@ -184,6 +186,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
 
             journal.loc[len(journal)] = [
                 latest_date,
+                datetime.now().strftime("%H:%M:%S"),
                 "SELL",
                 ticker,
                 current_price,
@@ -266,6 +269,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
 
             journal.loc[len(journal)] = [
                 latest_date,
+                datetime.now().strftime("%H:%M:%S"),
                 "BUY",
                 ticker,
                 price,

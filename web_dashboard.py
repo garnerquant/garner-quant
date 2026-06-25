@@ -528,6 +528,7 @@ else:
     display_trades = trades[
         [
             "date",
+            "time"
             "ticker",
             "action",
             "shares",
@@ -539,6 +540,7 @@ else:
     ].rename(
         columns={
             "date": "Date",
+            "time": "Time",
             "ticker": "Ticker",
             "action": "Action",
             "shares": "Shares",
