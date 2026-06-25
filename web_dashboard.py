@@ -1,11 +1,125 @@
+import os
 import pandas as pd
 import streamlit as st
-import os
 from dotenv import load_dotenv
 from supabase import create_client
 
 from dashboard.data_loader import load_csv
-from dashboard.components import navigation
+
+
+def inject_mobile_css():
+    st.markdown(
+        """
+        <style>
+        .block-container {
+            padding-top: 1rem;
+            padding-left: 1rem;
+            padding-right: 1rem;
+            max-width: 900px;
+        }
+
+        div.stButton > button {
+            height: 86px;
+            border-radius: 16px;
+            border: 1px solid #30363d;
+            background: #111827;
+            color: white;
+            font-size: 15px;
+        }
+
+        div.stButton > button:hover {
+            border-color: #4ade80;
+            color: #6df58d;
+        }
+
+        .status-card {
+            background: linear-gradient(135deg, #123d26, #0f2d20);
+            border: 1px solid #2d7a46;
+            border-radius: 16px;
+            padding: 14px 16px;
+            margin-bottom: 24px;
+            color: #6df58d;
+            font-size: 16px;
+        }
+
+        .metric-card {
+            background: #111827;
+            border: 1px solid #30363d;
+            border-radius: 14px;
+            padding: 14px;
+            margin-bottom: 10px;
+        }
+
+        .metric-label {
+            color: #9ca3af;
+            font-size: 14px;
+            margin-bottom: 6px;
+        }
+
+        .metric-value {
+            color: #ffffff;
+            font-size: 22px;
+            font-weight: 800;
+        }
+
+        .metric-value-green {
+            color: #6df58d;
+            font-size: 22px;
+            font-weight: 800;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def status_card(last_updated):
+    st.markdown(
+        f"""
+        <div class="status-card">
+            <b>✅ Live data connected</b><br>
+            Last updated: {last_updated}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def navigation():
+    if "page" not in st.session_state:
+        st.session_state.page = "Home"
+
+    nav_items = [
+        ("Home", "🏠"),
+        ("Holdings", "💼"),
+        ("Journal", "📖"),
+        ("Audit", "🔍"),
+        ("Performance", "📈"),
+    ]
+
+    cols = st.columns(5)
+
+    for col, (name, icon) in zip(cols, nav_items):
+        with col:
+            label = f"{icon}\n\n{name}"
+            if st.button(label, key=f"nav_{name}", use_container_width=True):
+                st.session_state.page = name
+
+    return st.session_state.page
+
+
+def metric_card(label, value, green=False):
+    value_class = "metric-value-green" if green else "metric-value"
+
+    st.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">{label}</div>
+            <div class="{value_class}">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 st.set_page_config(
@@ -14,11 +128,7 @@ st.set_page_config(
     layout="centered"
 )
 
-st.title("📈 Garner Quant")
-st.caption("Personal investment research and paper trading dashboard.")
-
-page = navigation()
-st.divider()
+inject_mobile_css()
 
 load_dotenv()
 
@@ -58,16 +168,20 @@ trades = load_supabase_table("trade_journal", "trade_journal_v3.csv")
 portfolio = load_csv("portfolio_v2.csv")
 analytics = load_csv("trade_analytics_v3.csv")
 
-
 if broker.empty:
     st.error("broker_account.csv not found. Run main_v2.py first, then push the updated CSV files.")
     st.stop()
 
-
 broker_row = broker.iloc[0]
 last_updated = broker_row.get("updated_at", "Unknown")
 
-st.success(f"Live data connected ✅ Last updated: {last_updated}")
+status_card(last_updated)
+
+st.title("📈 Garner Quant")
+st.caption("Personal investment research and paper trading dashboard.")
+
+page = navigation()
+st.divider()
 
 
 if page == "Home":
@@ -95,12 +209,17 @@ if page == "Home":
         today = pd.Timestamp.now().date()
         days_tracked = (today - start_date).days + 1
 
-        st.metric("Day", f"{days_tracked}/30")
-        st.metric("Starting Balance", f"£{start_balance:,.2f}")
-        st.metric("Current Balance", f"£{current_balance:,.2f}")
-        st.metric("Return", f"{total_return:.2%}")
-        st.metric("Realised PnL", f"£{paper_row['realised_pnl']:,.2f}")
-        st.metric("Unrealised PnL", f"£{paper_row['unrealised_pnl']:,.2f}")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            metric_card("Day", f"{days_tracked}/30", True)
+            metric_card("Return", f"{total_return:.2%}", True)
+            metric_card("Realised PnL", f"£{paper_row['realised_pnl']:,.2f}", True)
+
+        with col2:
+            metric_card("Starting Balance", f"£{start_balance:,.2f}")
+            metric_card("Current Balance", f"£{current_balance:,.2f}")
+            metric_card("Unrealised PnL", f"£{paper_row['unrealised_pnl']:,.2f}", True)
 
         st.subheader("📈 30 Day Equity Curve")
 
@@ -119,10 +238,15 @@ if page == "Home":
     portfolio_value = broker_row["portfolio_value"]
     cash_percent = cash_value / portfolio_value if portfolio_value > 0 else 0
 
-    st.metric("Total Return", f"{total_return:.2%}")
-    st.metric("Cash %", f"{cash_percent:.2%}")
-    st.metric("Open Holdings", len(holdings))
-    st.metric("Unrealised PnL", f"£{broker_row['unrealised_pnl']:,.2f}")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        metric_card("Total Return", f"{total_return:.2%}", True)
+        metric_card("Open Holdings", len(holdings))
+
+    with col2:
+        metric_card("Cash %", f"{cash_percent:.2%}", True)
+        metric_card("Unrealised PnL", f"£{broker_row['unrealised_pnl']:,.2f}", True)
 
     st.subheader("📊 Benchmark")
 
@@ -135,18 +259,28 @@ if page == "Home":
 
         alpha = total_return - benchmark_return
 
-        st.metric("Garner Quant", f"{total_return:.2%}")
-        st.metric("SPY", f"{benchmark_return:.2%}")
-        st.metric("Alpha", f"{alpha:.2%}")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            metric_card("Garner Quant", f"{total_return:.2%}", True)
+        with col2:
+            metric_card("SPY", f"{benchmark_return:.2%}")
+        with col3:
+            metric_card("Alpha", f"{alpha:.2%}", True)
     else:
         st.info("No benchmark data available.")
 
     st.subheader("Portfolio")
 
-    st.metric("Portfolio Value", f"£{broker_row['portfolio_value']:,.2f}")
-    st.metric("Cash", f"£{broker_row['cash']:,.2f}")
-    st.metric("Buying Power", f"£{broker_row['buying_power']:,.2f}")
-    st.metric("Unrealised PnL", f"£{broker_row['unrealised_pnl']:,.2f}")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        metric_card("Portfolio Value", f"£{broker_row['portfolio_value']:,.2f}")
+        metric_card("Buying Power", f"£{broker_row['buying_power']:,.2f}")
+
+    with col2:
+        metric_card("Cash", f"£{broker_row['cash']:,.2f}")
+        metric_card("Unrealised PnL", f"£{broker_row['unrealised_pnl']:,.2f}", True)
 
     st.divider()
 
@@ -160,9 +294,14 @@ if page == "Home":
         drawdown = (paper_30["portfolio_value"] / rolling_peak) - 1
         max_drawdown = drawdown.min()
 
-        st.metric("Best Day", f"{best_day:.2%}")
-        st.metric("Worst Day", f"{worst_day:.2%}")
-        st.metric("Max Drawdown", f"{max_drawdown:.2%}")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            metric_card("Best Day", f"{best_day:.2%}", True)
+        with col2:
+            metric_card("Worst Day", f"{worst_day:.2%}")
+        with col3:
+            metric_card("Max Drawdown", f"{max_drawdown:.2%}")
     else:
         st.info("Need at least 2 days of data for daily return analytics.")
 
@@ -436,15 +575,20 @@ elif page == "Audit":
         losing_trades = len(audit[audit["pnl"] < 0])
         win_rate = (winning_trades / total_trades * 100) if total_trades else 0
         total_pnl = audit["pnl"].sum()
-        avg_pnl = audit["pnl"].mean()
         best_trade = audit["pnl"].max()
         worst_trade = audit["pnl"].min()
 
-        st.metric("Total Trades", total_trades)
-        st.metric("Win Rate", f"{win_rate:.1f}%")
-        st.metric("Total PnL", f"£{total_pnl:,.2f}")
-        st.metric("Best Trade", f"£{best_trade:,.2f}")
-        st.metric("Worst Trade", f"£{worst_trade:,.2f}")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            metric_card("Total Trades", total_trades)
+            metric_card("Total PnL", f"£{total_pnl:,.2f}", True)
+
+        with col2:
+            metric_card("Win Rate", f"{win_rate:.1f}%", True)
+            metric_card("Best Trade", f"£{best_trade:,.2f}", True)
+
+        metric_card("Worst Trade", f"£{worst_trade:,.2f}")
 
         st.divider()
 
@@ -518,10 +662,15 @@ elif page == "Performance":
     else:
         analytics_row = analytics.iloc[0]
 
-        st.metric("Total Trades", int(analytics_row["total_trades"]))
-        st.metric("Win Rate", f"{analytics_row['win_rate']:.2%}")
-        st.metric("Profit Factor", f"{analytics_row['profit_factor']:.2f}")
-        st.metric("Realised PnL", f"£{analytics_row['realised_pnl']:,.2f}")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            metric_card("Total Trades", int(analytics_row["total_trades"]))
+            metric_card("Win Rate", f"{analytics_row['win_rate']:.2%}", True)
+
+        with col2:
+            metric_card("Profit Factor", f"{analytics_row['profit_factor']:.2f}")
+            metric_card("Realised PnL", f"£{analytics_row['realised_pnl']:,.2f}", True)
 
 
 st.caption("Garner Quant V3 | Paper Trading Only")
