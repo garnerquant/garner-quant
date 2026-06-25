@@ -549,8 +549,9 @@ else:
     )
 
     trades["date"] = (
-        pd.to_datetime(trades["date"])
+        pd.to_datetime(trades["date"], errors="coerce")
         .dt.strftime("%Y-%m-%d")
+        .fillna("")
     )
 
     display_trades = trades[
