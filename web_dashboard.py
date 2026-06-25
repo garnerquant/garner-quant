@@ -550,8 +550,7 @@ else:
     )
 
     display_trades = (
-        display_trades
-        .sort_values("Date", ascending=False)
+        display_trades.iloc[::-1]
         .head(20)
     )
 
