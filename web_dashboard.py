@@ -526,10 +526,10 @@ else:
         for col in trades.columns
     ]
 
-if "time" not in trades.columns:
-    trades["time"] = ""
+    if "time" not in trades.columns:
+        trades["time"] = ""
 
-trades["time"] = trades["time"].fillna("").replace("nan", "")
+    trades["time"] = trades["time"].fillna("").replace("nan", "")
 
     display_trades = trades[
         [
