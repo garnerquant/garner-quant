@@ -127,20 +127,23 @@ def sync_trade_journal():
 
     trades = pd.read_csv("trade_journal_v3.csv")
 
+    supabase.table("trade_journal").delete().neq("id", 0).execute()
+
     for _, row in trades.iterrows():
+
         data = {
-            "date": str(row.get("date", "")),
+            "date": str(row.get("date", row.get("exit_date", ""))),
             "ticker": str(row.get("ticker", "")),
-            "action": str(row.get("action", "")),
+            "action": str(row.get("action", "SELL")),
             "shares": float(row.get("shares", 0)),
-            "price": float(row.get("price", 0)),
-            "value": float(row.get("value", 0)),
+            "price": float(row.get("price", row.get("exit_price", 0))),
+            "value": float(row.get("value", row.get("exit_price", 0) * row.get("shares", 0))),
             "pnl": float(row.get("pnl", 0)),
             "reason": str(row.get("reason", "")),
             "updated_at": datetime.utcnow().isoformat()
         }
 
-        supabase.table("trade_journal").delete().neq("id", 0).execute()
+        supabase.table("trade_journal").insert(data).execute()
 
     print("Supabase trade journal synced.")
 
