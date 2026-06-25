@@ -526,15 +526,32 @@ else:
         for col in trades.columns
     ]
 
-    if "time" not in trades.columns:
-        trades["time"] = ""
+    required_cols = [
+        "date",
+        "time",
+        "ticker",
+        "action",
+        "shares",
+        "price",
+        "value",
+        "pnl",
+        "reason"
+    ]
 
-    trades["time"] = trades["time"].fillna("").replace("nan", "")
+    for col in required_cols:
+        if col not in trades.columns:
+            trades[col] = ""
+
+    trades["time"] = (
+        trades["time"]
+        .fillna("")
+        .replace("nan", "")
+    )
 
     display_trades = trades[
         [
             "date",
-            "time"
+            "time",
             "ticker",
             "action",
             "shares",
