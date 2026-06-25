@@ -46,12 +46,42 @@ def load_trade_journal():
         journal = pd.read_csv(TRADE_JOURNAL_FILE)
 
         if "entry_date" in journal.columns:
-            journal = pd.DataFrame(columns=columns)
+            migrated_rows = []
+
+            for _, row in journal.iterrows():
+                raw_action = str(row.get("exit_date", ""))
+
+                if raw_action in ["BUY", "SELL"]:
+                    date = row.get("entry_date", "")
+                    action = raw_action
+                    price = row.get("entry_price", 0)
+                    shares = row.get("exit_price", 0)
+                    value = row.get("shares", 0)
+                else:
+                    date = row.get("exit_date", "")
+                    action = "SELL"
+                    price = row.get("exit_price", 0)
+                    shares = row.get("shares", 0)
+                    value = float(price) * float(shares)
+
+                migrated_rows.append({
+                    "date": date,
+                    "action": action,
+                    "ticker": row.get("ticker", ""),
+                    "price": price,
+                    "shares": shares,
+                    "value": value,
+                    "pnl": row.get("pnl", 0),
+                    "pnl_percent": row.get("pnl_percent", 0),
+                    "reason": row.get("reason", "")
+                })
+
+            journal = pd.DataFrame(migrated_rows, columns=columns)
+            journal.to_csv(TRADE_JOURNAL_FILE, index=False)
 
         return journal
 
     return pd.DataFrame(columns=columns)
-
 
 def load_transaction_log():
     if Path(TRANSACTION_LOG_FILE).exists():
