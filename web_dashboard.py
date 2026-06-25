@@ -549,7 +549,11 @@ else:
     )
 
     trades["date"] = (
-        pd.to_datetime(trades["date"], errors="coerce")
+        pd.to_datetime(
+            trades["date"],
+            format="mixed",
+            errors="coerce"
+        )
         .dt.strftime("%Y-%m-%d")
         .fillna("")
     )
