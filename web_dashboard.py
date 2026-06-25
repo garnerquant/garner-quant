@@ -526,6 +526,9 @@ else:
         for col in trades.columns
     ]
 
+if "time" not in trades.columns:
+    trades["time"] = ""
+
     display_trades = trades[
         [
             "date",
