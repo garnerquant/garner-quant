@@ -4,105 +4,58 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client
 
+from dashboard.data_loader import load_csv
+from dashboard.components import navigation
+
 
 st.set_page_config(
     page_title="Garner Quant",
+    page_icon="📊",
     layout="centered"
 )
 
 st.title("📈 Garner Quant")
 st.caption("Personal investment research and paper trading dashboard.")
+
+page = navigation()
+st.divider()
+
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-supabase = create_client(
-    SUPABASE_URL,
-    SUPABASE_KEY
-)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def load_csv(filename):
+
+def load_supabase_table(table_name, fallback_csv=None, order_col=None):
     try:
-        return pd.read_csv(filename)
-    except FileNotFoundError:
+        query = supabase.table(table_name).select("*")
+
+        if order_col:
+            query = query.order(order_col)
+
+        response = query.execute()
+        return pd.DataFrame(response.data)
+
+    except Exception:
+        if fallback_csv:
+            return load_csv(fallback_csv)
         return pd.DataFrame()
 
 
-try:
+broker = load_supabase_table("broker_account", "broker_account.csv")
+paper_30 = load_supabase_table(
+    "paper_30_day_tracker",
+    "paper_30_day_tracker.csv",
+    "date"
+)
+holdings = load_supabase_table("holdings", "holdings_report.csv")
+history = load_supabase_table("holdings_history", None, "date")
+signals = load_supabase_table("signals", "signal_report_v2.csv")
+trades = load_supabase_table("trade_journal", "trade_journal_v3.csv")
 
-    response = (
-        supabase
-        .table("broker_account")
-        .select("*")
-        .eq("id", 1)
-        .execute()
-    )
-
-    broker = pd.DataFrame(response.data)
-
-except:
-
-    try:
-        response = (
-            supabase
-            .table("broker_account")
-            .select("*")
-            .eq("id", 1)
-            .execute()
-        )
-
-        broker = pd.DataFrame(response.data)
-
-    except Exception as e:
-        st.error(f"Supabase broker load failed: {e}")
-        broker = load_csv("broker_account.csv")
-
-    try:
-
-        response = (
-            supabase
-            .table("broker_account")
-            .select("*")
-            .eq("id", 1)
-            .execute()
-        )
-
-        broker = pd.DataFrame(response.data)
-
-    except Exception:
-
-        broker = load_csv(
-            "broker_account.csv"
-        )
-try:
-    response = (
-        supabase
-        .table("paper_30_day_tracker")
-        .select("*")
-        .order("date")
-        .execute()
-    )
-
-    paper_30 = pd.DataFrame(response.data)
-
-except Exception:
-    paper_30 = load_csv("paper_30_day_tracker.csv")
-try:
-    response = (
-        supabase
-        .table("holdings")
-        .select("*")
-        .execute()
-    )
-
-    holdings = pd.DataFrame(response.data)
-
-except Exception:
-    holdings = load_csv("holdings_report.csv")
 portfolio = load_csv("portfolio_v2.csv")
-signals = load_csv("signal_report_v2.csv")
-trades = load_csv("trade_journal_v3.csv")
 analytics = load_csv("trade_analytics_v3.csv")
 
 
@@ -112,455 +65,274 @@ if broker.empty:
 
 
 broker_row = broker.iloc[0]
-last_updated = broker_row.get(
-    "updated_at",
-    "Unknown"
-)
+last_updated = broker_row.get("updated_at", "Unknown")
 
-st.success(
-    f"Live data connected ✅ Last updated: {last_updated}"
-)
+st.success(f"Live data connected ✅ Last updated: {last_updated}")
 
 
-st.subheader("🚀 30 Day Paper Trading Challenge")
+if page == "Home":
+    st.subheader("🚀 30 Day Paper Trading Challenge")
 
-if paper_30.empty:
-    st.info("30 day tracker has not started yet.")
-else:
-    paper_row = paper_30.iloc[-1]
+    if paper_30.empty:
+        st.info("30 day tracker has not started yet.")
+        start_balance = 0
+        current_balance = 0
+        total_return = 0
 
-    start_balance = paper_30["portfolio_value"].iloc[0]
-    current_balance = paper_row["portfolio_value"]
-    return_pct = (current_balance / start_balance) - 1
+    else:
+        paper_row = paper_30.iloc[-1]
 
-    paper_30["date"] = pd.to_datetime(
-        paper_30["date"],
-        errors="coerce"
-    )
+        start_balance = paper_30["portfolio_value"].iloc[0]
+        current_balance = paper_row["portfolio_value"]
+        total_return = (current_balance / start_balance) - 1 if start_balance > 0 else 0
 
-    start_date = paper_30["date"].min().date()
-    today = pd.Timestamp.now().date()
+        paper_30["date"] = pd.to_datetime(
+            paper_30["date"],
+            errors="coerce"
+        )
 
-    days_tracked = (today - start_date).days + 1
+        start_date = paper_30["date"].min().date()
+        today = pd.Timestamp.now().date()
+        days_tracked = (today - start_date).days + 1
 
-    st.metric("Day", f"{days_tracked}/30")
-    st.metric("Starting Balance", f"£{start_balance:,.2f}")
-    st.metric("Current Balance", f"£{current_balance:,.2f}")
-    st.metric("Return", f"{return_pct:.2%}")
-    st.metric("Realised PnL", f"£{paper_row['realised_pnl']:,.2f}")
-    st.metric("Unrealised PnL", f"£{paper_row['unrealised_pnl']:,.2f}")
-    st.subheader("📈 30 Day Equity Curve")
+        st.metric("Day", f"{days_tracked}/30")
+        st.metric("Starting Balance", f"£{start_balance:,.2f}")
+        st.metric("Current Balance", f"£{current_balance:,.2f}")
+        st.metric("Return", f"{total_return:.2%}")
+        st.metric("Realised PnL", f"£{paper_row['realised_pnl']:,.2f}")
+        st.metric("Unrealised PnL", f"£{paper_row['unrealised_pnl']:,.2f}")
 
-    chart_data = paper_30.copy()
-    chart_data["date"] = pd.to_datetime(chart_data["date"])
-    chart_data = chart_data.sort_values("date")
-    chart_data = chart_data.set_index("date")
+        st.subheader("📈 30 Day Equity Curve")
 
-    st.line_chart(
-        chart_data["portfolio_value"]
-    )
+        chart_data = paper_30.copy()
+        chart_data["date"] = pd.to_datetime(chart_data["date"])
+        chart_data = chart_data.sort_values("date")
+        chart_data = chart_data.set_index("date")
 
-st.divider()
+        st.line_chart(chart_data["portfolio_value"])
 
-st.subheader("📊 Strategy Analytics")
+    st.divider()
 
-cash_value = broker_row["cash"]
-portfolio_value = broker_row["portfolio_value"]
+    st.subheader("📊 Strategy Analytics")
 
-cash_percent = cash_value / portfolio_value if portfolio_value > 0 else 0
-
-total_return = (
-    current_balance / start_balance - 1
-) if start_balance > 0 else 0
-
-st.metric("Total Return", f"{total_return:.2%}")
-st.metric("Cash %", f"{cash_percent:.2%}")
-st.metric("Open Holdings", len(holdings))
-st.metric("Unrealised PnL", f"£{broker_row['unrealised_pnl']:,.2f}")
-
-st.subheader("📊 Benchmark")
-
-latest_tracker_row = paper_30.sort_values("date").iloc[-1]
-
-benchmark_return = float(latest_tracker_row.get("benchmark_return", 0))
-
-if benchmark_return > 0.10:
-    benchmark_return = benchmark_return / 100
-
-alpha = total_return - benchmark_return
-st.metric("Garner Quant", f"{total_return:.2%}")
-st.metric("SPY", f"{benchmark_return:.2%}")
-st.metric("Alpha", f"{alpha:.2%}")
-
-st.subheader("Portfolio")
-
-st.metric(
-    "Portfolio Value",
-    f"£{broker_row['portfolio_value']:,.2f}"
-)
-
-st.metric(
-    "Cash",
-    f"£{broker_row['cash']:,.2f}"
-)
-
-st.metric(
-    "Buying Power",
-    f"£{broker_row['buying_power']:,.2f}"
-)
-
-st.metric(
-    "Unrealised PnL",
-    f"£{broker_row['unrealised_pnl']:,.2f}"
-)
-
-st.divider()
-
-if not paper_30.empty and len(paper_30) > 1:
-    paper_30["daily_return"] = paper_30["portfolio_value"].pct_change()
-
-    best_day = paper_30["daily_return"].max()
-    worst_day = paper_30["daily_return"].min()
-
-    rolling_peak = paper_30["portfolio_value"].cummax()
-    drawdown = (paper_30["portfolio_value"] / rolling_peak) - 1
-    max_drawdown = drawdown.min()
-
-    st.metric("Best Day", f"{best_day:.2%}")
-    st.metric("Worst Day", f"{worst_day:.2%}")
-    st.metric("Max Drawdown", f"{max_drawdown:.2%}")
-else:
-    st.info("Need at least 2 days of data for daily return analytics.")
-
-
-st.subheader("Current Holdings")
-
-if holdings.empty:
-    st.info("No open holdings.")
-
-else:
-    holdings = holdings.copy()
-
-    holdings.columns = [
-        col.lower().replace(" ", "_")
-        for col in holdings.columns
-    ]
-
+    cash_value = broker_row["cash"]
     portfolio_value = broker_row["portfolio_value"]
+    cash_percent = cash_value / portfolio_value if portfolio_value > 0 else 0
 
-    holdings["portfolio_weight"] = (
-        holdings["market_value"] / portfolio_value * 100
-    ).round(2)
+    st.metric("Total Return", f"{total_return:.2%}")
+    st.metric("Cash %", f"{cash_percent:.2%}")
+    st.metric("Open Holdings", len(holdings))
+    st.metric("Unrealised PnL", f"£{broker_row['unrealised_pnl']:,.2f}")
 
-    cash_row = pd.DataFrame([{
-        "ticker": "CASH",
-        "shares": 0,
-        "entry_price": 0,
-        "current_price": 0,
-        "market_value": broker_row["cash"],
-        "portfolio_weight": round(
-            broker_row["cash"] / broker_row["portfolio_value"] * 100,
-            2
-        ),
-        "unrealised_pnl": 0
-    }])
+    st.subheader("📊 Benchmark")
 
-    holdings = pd.concat(
-        [holdings, cash_row],
-        ignore_index=True
-    )
+    if not paper_30.empty:
+        latest_tracker_row = paper_30.sort_values("date").iloc[-1]
+        benchmark_return = float(latest_tracker_row.get("benchmark_return", 0))
 
-    portfolio_value = broker_row["portfolio_value"]
+        if benchmark_return > 0.10:
+            benchmark_return = benchmark_return / 100
 
-    if portfolio_value > 0:
+        alpha = total_return - benchmark_return
+
+        st.metric("Garner Quant", f"{total_return:.2%}")
+        st.metric("SPY", f"{benchmark_return:.2%}")
+        st.metric("Alpha", f"{alpha:.2%}")
+    else:
+        st.info("No benchmark data available.")
+
+    st.subheader("Portfolio")
+
+    st.metric("Portfolio Value", f"£{broker_row['portfolio_value']:,.2f}")
+    st.metric("Cash", f"£{broker_row['cash']:,.2f}")
+    st.metric("Buying Power", f"£{broker_row['buying_power']:,.2f}")
+    st.metric("Unrealised PnL", f"£{broker_row['unrealised_pnl']:,.2f}")
+
+    st.divider()
+
+    if not paper_30.empty and len(paper_30) > 1:
+        paper_30["daily_return"] = paper_30["portfolio_value"].pct_change()
+
+        best_day = paper_30["daily_return"].max()
+        worst_day = paper_30["daily_return"].min()
+
+        rolling_peak = paper_30["portfolio_value"].cummax()
+        drawdown = (paper_30["portfolio_value"] / rolling_peak) - 1
+        max_drawdown = drawdown.min()
+
+        st.metric("Best Day", f"{best_day:.2%}")
+        st.metric("Worst Day", f"{worst_day:.2%}")
+        st.metric("Max Drawdown", f"{max_drawdown:.2%}")
+    else:
+        st.info("Need at least 2 days of data for daily return analytics.")
+
+    st.subheader("Day-over-Day Attribution")
+
+    if history.empty:
+        st.info("No holdings history available yet.")
+
+    else:
+        history["date"] = pd.to_datetime(history["date"])
+        dates = sorted(history["date"].dt.date.unique())
+
+        if len(dates) < 2:
+            st.info("Need at least 2 days of holdings history for attribution.")
+
+        else:
+            yesterday = dates[-2]
+            today = dates[-1]
+
+            yesterday_holdings = history[
+                history["date"].dt.date == yesterday
+            ][["ticker", "market_value"]].rename(
+                columns={"market_value": "Yesterday Value"}
+            )
+
+            today_holdings = history[
+                history["date"].dt.date == today
+            ][["ticker", "market_value"]].rename(
+                columns={"market_value": "Today Value"}
+            )
+
+            attribution = today_holdings.merge(
+                yesterday_holdings,
+                on="ticker",
+                how="outer"
+            ).fillna(0)
+
+            attribution["Daily PnL"] = (
+                attribution["Today Value"] - attribution["Yesterday Value"]
+            )
+
+            total_yesterday = attribution["Yesterday Value"].sum()
+
+            if total_yesterday > 0:
+                attribution["Contribution %"] = (
+                    attribution["Daily PnL"] / total_yesterday * 100
+                )
+            else:
+                attribution["Contribution %"] = 0
+
+            attribution = attribution.sort_values(
+                "Daily PnL",
+                ascending=False
+            )
+
+            st.caption(f"Comparing {yesterday} → {today}")
+
+            st.dataframe(
+                attribution.style.format({
+                    "Yesterday Value": "£{:,.2f}",
+                    "Today Value": "£{:,.2f}",
+                    "Daily PnL": "£{:,.2f}",
+                    "Contribution %": "{:.2f}%"
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+
+    st.subheader("Drawdown")
+
+    if portfolio.empty or "drawdown" not in portfolio.columns:
+        st.info("No drawdown data available.")
+    else:
+        st.line_chart(portfolio["drawdown"])
+
+
+elif page == "Holdings":
+    st.title("💼 Holdings")
+
+    if holdings.empty:
+        st.info("No open holdings.")
+
+    else:
+        holdings = holdings.copy()
+
+        holdings.columns = [
+            col.lower().replace(" ", "_")
+            for col in holdings.columns
+        ]
+
+        portfolio_value = broker_row["portfolio_value"]
 
         holdings["portfolio_weight"] = (
             holdings["market_value"] / portfolio_value * 100
         ).round(2)
 
-    else:
+        cash_row = pd.DataFrame([{
+            "ticker": "CASH",
+            "shares": 0,
+            "entry_price": 0,
+            "current_price": 0,
+            "market_value": broker_row["cash"],
+            "portfolio_weight": round(
+                broker_row["cash"] / broker_row["portfolio_value"] * 100,
+                2
+            ),
+            "unrealised_pnl": 0
+        }])
 
-        holdings["portfolio_weight"] = 0
+        holdings = pd.concat(
+            [holdings, cash_row],
+            ignore_index=True
+        )
 
-    holdings = holdings.sort_values(
-        "market_value",
-        ascending=False
-    )
-
-    display_holdings = holdings[
-        [
-            "ticker",
-            "shares",
-            "entry_price",
-            "current_price",
+        holdings = holdings.sort_values(
             "market_value",
-            "portfolio_weight",
-            "unrealised_pnl"
-        ]
-    ].rename(
-        columns={
-            "ticker": "Ticker",
-            "shares": "Shares",
-            "entry_price": "Entry Price",
-            "current_price": "Current Price",
-            "market_value": "Market Value",
-            "portfolio_weight": "Weight %",
-            "unrealised_pnl": "PnL"
-        }
-    )
-
-    st.dataframe(
-        display_holdings.style.format({
-            "Shares": "{:.2f}",
-            "Entry Price": "£{:,.2f}",
-            "Current Price": "£{:,.2f}",
-            "Market Value": "£{:,.2f}",
-            "Weight %": "{:.2f}%",
-            "PnL": "£{:,.2f}"
-        }),
-        use_container_width=True,
-        hide_index=True
-    )
-
-st.subheader("Day-over-Day Attribution")
-
-try:
-    response = (
-        supabase
-        .table("holdings_history")
-        .select("*")
-        .order("date")
-        .execute()
-    )
-
-    history = pd.DataFrame(response.data)
-
-except Exception:
-    history = pd.DataFrame()
-
-
-if history.empty:
-    st.info("No holdings history available yet.")
-
-else:
-    history["date"] = pd.to_datetime(history["date"])
-
-    dates = sorted(history["date"].dt.date.unique())
-
-    if len(dates) < 2:
-        st.info("Need at least 2 days of holdings history for attribution.")
-
-    else:
-        yesterday = dates[-2]
-        today = dates[-1]
-
-        yesterday_holdings = history[
-            history["date"].dt.date == yesterday
-        ][["ticker", "market_value"]].rename(
-            columns={
-                "market_value": "Yesterday Value"
-            }
-        )
-
-        today_holdings = history[
-            history["date"].dt.date == today
-        ][["ticker", "market_value"]].rename(
-            columns={
-                "market_value": "Today Value"
-            }
-        )
-
-        attribution = today_holdings.merge(
-            yesterday_holdings,
-            on="ticker",
-            how="outer"
-        ).fillna(0)
-
-        attribution["Daily PnL"] = (
-            attribution["Today Value"]
-            - attribution["Yesterday Value"]
-        )
-
-        total_yesterday = attribution["Yesterday Value"].sum()
-
-        if total_yesterday > 0:
-            attribution["Contribution %"] = (
-                attribution["Daily PnL"]
-                / total_yesterday
-                * 100
-            )
-        else:
-            attribution["Contribution %"] = 0
-
-        attribution = attribution.sort_values(
-            "Daily PnL",
             ascending=False
         )
 
-        st.caption(
-            f"Comparing {yesterday} → {today}"
+        display_holdings = holdings[
+            [
+                "ticker",
+                "shares",
+                "entry_price",
+                "current_price",
+                "market_value",
+                "portfolio_weight",
+                "unrealised_pnl"
+            ]
+        ].rename(
+            columns={
+                "ticker": "Ticker",
+                "shares": "Shares",
+                "entry_price": "Entry Price",
+                "current_price": "Current Price",
+                "market_value": "Market Value",
+                "portfolio_weight": "Weight %",
+                "unrealised_pnl": "PnL"
+            }
         )
 
         st.dataframe(
-            attribution.style.format({
-                "Yesterday Value": "£{:,.2f}",
-                "Today Value": "£{:,.2f}",
-                "Daily PnL": "£{:,.2f}",
-                "Contribution %": "{:.2f}%"
+            display_holdings.style.format({
+                "Shares": "{:.2f}",
+                "Entry Price": "£{:,.2f}",
+                "Current Price": "£{:,.2f}",
+                "Market Value": "£{:,.2f}",
+                "Weight %": "{:.2f}%",
+                "PnL": "£{:,.2f}"
             }),
             use_container_width=True,
             hide_index=True
-        )  
-
-st.subheader("Drawdown")
-
-if portfolio.empty or "drawdown" not in portfolio.columns:
-    st.info("No drawdown data available.")
-else:
-    st.line_chart(portfolio["drawdown"])
-
-st.divider()
-
-
-st.subheader("Current Signals")
-
-if signals.empty:
-    st.info("No signal report available.")
-else:
-    st.dataframe(
-        signals,
-        use_container_width=True
-    )
-
-st.divider()
-
-
-st.subheader("Trade Analytics")
-
-if analytics.empty:
-    st.info("No trade analytics available.")
-else:
-    analytics_row = analytics.iloc[0]
-
-    st.metric("Total Trades", int(analytics_row["total_trades"]))
-    st.metric("Win Rate", f"{analytics_row['win_rate']:.2%}")
-    st.metric("Profit Factor", f"{analytics_row['profit_factor']:.2f}")
-    st.metric("Realised PnL", f"£{analytics_row['realised_pnl']:,.2f}")
-
-st.divider()
-
-st.subheader("Signals")
-
-try:
-    response = (
-        supabase
-        .table("signals")
-        .select("*")
-        .execute()
-    )
-
-    signals = pd.DataFrame(response.data)
-
-except Exception:
-    signals = load_csv("signal_report_v2.csv")
-
-
-if signals.empty:
-    st.info("No signals available yet.")
-
-else:
-    signals.columns = [
-        col.lower().replace(" ", "_")
-        for col in signals.columns
-    ]
-
-    display_signals = signals[
-        [
-            "date",
-            "ticker",
-            "signal",
-            "weight",
-            "status"
-        ]
-    ].rename(
-        columns={
-            "date": "Date",
-            "ticker": "Ticker",
-            "signal": "Signal",
-            "weight": "Weight",
-            "status": "Status"
-        }
-    )
-
-    st.dataframe(
-        display_signals.style.format({
-            "Weight": "{:.2%}"
-        }),
-        use_container_width=True,
-        hide_index=True
-    )
-
-st.subheader("Trade Journal")
-
-try:
-    response = (
-        supabase
-        .table("trade_journal")
-        .select("*")
-        .execute()
-    )
-
-    trades = pd.DataFrame(response.data)
-    print(trades.columns.tolist())
-    print(trades[["date", "time"]].head(10))
-
-except Exception:
-    trades = load_csv("trade_journal_v3.csv")
-
-
-if trades.empty:
-    st.info("No trades logged yet.")
-
-else:
-    trades.columns = [
-        col.lower().replace(" ", "_")
-        for col in trades.columns
-    ]
-
-    required_cols = [
-        "date",
-        "time",
-        "ticker",
-        "action",
-        "shares",
-        "price",
-        "value",
-        "pnl",
-        "reason"
-    ]
-
-    for col in required_cols:
-        if col not in trades.columns:
-            trades[col] = ""
-
-    trades["time"] = (
-        trades["time"]
-        .fillna("")
-        .replace("nan", "")
-    )
-
-    trades["date"] = (
-        pd.to_datetime(
-            trades["date"],
-            format="mixed",
-            errors="coerce"
         )
-        .dt.strftime("%Y-%m-%d")
-        .fillna("")
-    )
 
-    display_trades = trades[
-        [
+
+elif page == "Journal":
+    st.title("📖 Trade Journal")
+
+    if trades.empty:
+        st.info("No trades logged yet.")
+
+    else:
+        trades = trades.copy()
+
+        trades.columns = [
+            col.lower().replace(" ", "_")
+            for col in trades.columns
+        ]
+
+        required_cols = [
             "date",
             "time",
             "ticker",
@@ -571,36 +343,185 @@ else:
             "pnl",
             "reason"
         ]
-    ].rename(
-        columns={
-            "date": "Date",
-            "time": "Time",
-            "ticker": "Ticker",
-            "action": "Action",
-            "shares": "Shares",
-            "price": "Price",
-            "value": "Value",
-            "pnl": "PnL",
-            "reason": "Reason"
-        }
-    )
 
-    display_trades = (
-        display_trades
-        .tail(20)
-        .iloc[::-1]
-    )
+        for col in required_cols:
+            if col not in trades.columns:
+                trades[col] = ""
 
-    st.dataframe(
-        display_trades.style.format({
-            "Shares": "{:.2f}",
-            "Price": "£{:,.2f}",
-            "Value": "£{:,.2f}",
-            "PnL": "£{:,.2f}",
-        }),
-        use_container_width=True,
-        hide_index=True
-    )
+        trades["time"] = (
+            trades["time"]
+            .fillna("")
+            .replace("nan", "")
+        )
+
+        trades["date"] = (
+            pd.to_datetime(
+                trades["date"],
+                format="mixed",
+                errors="coerce"
+            )
+            .dt.strftime("%Y-%m-%d")
+            .fillna("")
+        )
+
+        display_trades = trades[
+            [
+                "date",
+                "time",
+                "ticker",
+                "action",
+                "shares",
+                "price",
+                "value",
+                "pnl",
+                "reason"
+            ]
+        ].rename(
+            columns={
+                "date": "Date",
+                "time": "Time",
+                "ticker": "Ticker",
+                "action": "Action",
+                "shares": "Shares",
+                "price": "Price",
+                "value": "Value",
+                "pnl": "PnL",
+                "reason": "Reason"
+            }
+        )
+
+        display_trades = display_trades.tail(20).iloc[::-1]
+
+        st.dataframe(
+            display_trades.style.format({
+                "Shares": "{:.2f}",
+                "Price": "£{:,.2f}",
+                "Value": "£{:,.2f}",
+                "PnL": "£{:,.2f}",
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
 
 
-st.caption("Garner Quant V2.1 | Paper Trading Only")
+elif page == "Audit":
+    st.title("🔍 Trade Audit")
+
+    audit = load_csv("trade_audit_trail.csv")
+
+    if audit.empty:
+        st.info("No completed trades audited yet.")
+
+    else:
+        audit = audit.copy()
+
+        audit["open_time"] = pd.to_datetime(
+            audit["open_time"],
+            format="mixed",
+            errors="coerce"
+        )
+
+        audit["close_time"] = pd.to_datetime(
+            audit["close_time"],
+            format="mixed",
+            errors="coerce"
+        )
+
+        audit["holding_days"] = (
+            audit["close_time"] - audit["open_time"]
+        ).dt.total_seconds() / 86400
+
+        total_trades = len(audit)
+        winning_trades = len(audit[audit["pnl"] > 0])
+        losing_trades = len(audit[audit["pnl"] < 0])
+        win_rate = (winning_trades / total_trades * 100) if total_trades else 0
+        total_pnl = audit["pnl"].sum()
+        avg_pnl = audit["pnl"].mean()
+        best_trade = audit["pnl"].max()
+        worst_trade = audit["pnl"].min()
+
+        st.metric("Total Trades", total_trades)
+        st.metric("Win Rate", f"{win_rate:.1f}%")
+        st.metric("Total PnL", f"£{total_pnl:,.2f}")
+        st.metric("Best Trade", f"£{best_trade:,.2f}")
+        st.metric("Worst Trade", f"£{worst_trade:,.2f}")
+
+        st.divider()
+
+        audit = audit.tail(50).iloc[::-1]
+
+        for _, trade in audit.iterrows():
+            symbol = trade.get("symbol", "Unknown")
+            pnl = trade.get("pnl", 0)
+            pnl_pct = trade.get("pnl_pct", 0)
+
+            open_time = trade.get("open_time")
+            close_time = trade.get("close_time")
+
+            opened = open_time.strftime("%Y-%m-%d %H:%M") if pd.notna(open_time) else "N/A"
+            closed = close_time.strftime("%Y-%m-%d %H:%M") if pd.notna(close_time) else "N/A"
+
+            buy_price = trade.get("buy_price", 0)
+            sell_price = trade.get("sell_price", 0)
+            shares = trade.get("shares", 0)
+            held = trade.get("holding_period", "N/A")
+            open_reason = trade.get("open_reason", "N/A")
+            close_reason = trade.get("close_reason", "N/A")
+
+            result = "WIN ✅" if pnl > 0 else "LOSS ❌" if pnl < 0 else "FLAT ➖"
+
+            st.markdown(
+                f"""
+                <div style="
+                    border: 1px solid #30363d;
+                    border-radius: 16px;
+                    padding: 16px;
+                    margin-bottom: 14px;
+                    background-color: #111827;
+                    max-width: 100%;
+                ">
+                    <h3 style="margin: 0 0 8px 0;">{symbol} — {result}</h3>
+                    <p style="margin: 4px 0;"><b>Opened:</b> {opened}</p>
+                    <p style="margin: 4px 0;"><b>Closed:</b> {closed}</p>
+                    <p style="margin: 4px 0;"><b>Held:</b> {held}</p>
+                    <p style="margin: 4px 0;"><b>Buy:</b> £{buy_price:,.2f}</p>
+                    <p style="margin: 4px 0;"><b>Sell:</b> £{sell_price:,.2f}</p>
+                    <p style="margin: 4px 0;"><b>Shares:</b> {shares:,.4f}</p>
+                    <p style="margin: 4px 0;"><b>PnL:</b> £{pnl:,.2f} ({pnl_pct:.2f}%)</p>
+                    <p style="margin: 8px 0 4px 0;"><b>Entry:</b> {open_reason}</p>
+                    <p style="margin: 4px 0;"><b>Exit:</b> {close_reason}</p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+
+elif page == "Performance":
+    st.title("📈 Performance")
+
+    st.subheader("Current Signals")
+
+    if signals.empty:
+        st.info("No signal report available.")
+    else:
+        st.dataframe(
+            signals,
+            use_container_width=True
+        )
+
+    st.divider()
+
+    st.subheader("Trade Analytics")
+
+    if analytics.empty:
+        st.info("No trade analytics available.")
+    else:
+        analytics_row = analytics.iloc[0]
+
+        st.metric("Total Trades", int(analytics_row["total_trades"]))
+        st.metric("Win Rate", f"{analytics_row['win_rate']:.2%}")
+        st.metric("Profit Factor", f"{analytics_row['profit_factor']:.2f}")
+        st.metric("Realised PnL", f"£{analytics_row['realised_pnl']:,.2f}")
+
+
+st.caption("Garner Quant V3 | Paper Trading Only")
