@@ -30,22 +30,27 @@ def save_portfolio(portfolio):
 
 
 def load_trade_journal():
-    if Path(TRADE_JOURNAL_FILE).exists():
-        return pd.read_csv(TRADE_JOURNAL_FILE)
+    columns = [
+        "date",
+        "action",
+        "ticker",
+        "price",
+        "shares",
+        "value",
+        "pnl",
+        "pnl_percent",
+        "reason"
+    ]
 
-    return pd.DataFrame(
-        columns=[
-            "entry_date",
-            "exit_date",
-            "ticker",
-            "entry_price",
-            "exit_price",
-            "shares",
-            "pnl",
-            "pnl_percent",
-            "reason"
-        ]
-    )
+    if Path(TRADE_JOURNAL_FILE).exists():
+        journal = pd.read_csv(TRADE_JOURNAL_FILE)
+
+        if "entry_date" in journal.columns:
+            journal = pd.DataFrame(columns=columns)
+
+        return journal
+
+    return pd.DataFrame(columns=columns)
 
 
 def load_transaction_log():
