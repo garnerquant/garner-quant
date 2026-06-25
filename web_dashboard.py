@@ -512,6 +512,7 @@ try:
 
     trades = pd.DataFrame(response.data)
     print(trades.columns.tolist())
+    print(trades[["date", "time"]].head(10))
 
 except Exception:
     trades = load_csv("trade_journal_v3.csv")
