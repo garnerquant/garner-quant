@@ -18,6 +18,7 @@ from execution.portfolio_manager import update_portfolio, portfolio_summary
 from reporting.trade_analytics import analyse_trade_journal, print_trade_analytics
 from execution.broker_account import broker_summary
 from execution.supabase_sync import sync_broker_account, sync_holdings, sync_30_day_tracker, sync_holdings_history, sync_trade_journal, sync_signals
+from execution.trade_audit import build_trade_audit_trail
 from reporting.holdings_report import create_holdings_report, print_holdings_report
 from reporting.paper_performance import (
     update_30_day_tracker,
@@ -82,6 +83,9 @@ def main(show_charts=True, send_telegram=True):
     paper_portfolio.to_csv("paper_portfolio_v3.csv", index=False)
     trade_journal.to_csv("trade_journal_v3.csv", index=False)
     v3_trades.to_csv("v3_trades.csv", index=False)
+    audit_trail = build_trade_audit_trail(trade_journal)
+    audit_trail.to_csv("trade_audit_trail.csv", index=False)
+    print("Saved trade_audit_trail.csv")
     holdings_report.to_csv("holdings_report.csv", index=False)
 
     fundamental_scores = pd.read_csv("fundamental_scores.csv")
