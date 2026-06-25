@@ -127,10 +127,7 @@ def sync_trade_journal():
 
     trades = pd.read_csv("trade_journal_v3.csv")
 
-    supabase.table("trade_journal").delete().neq("id", 0).execute()
-
     for _, row in trades.iterrows():
-
         data = {
             "date": str(row.get("date", "")),
             "ticker": str(row.get("ticker", "")),
