@@ -529,6 +529,8 @@ else:
 if "time" not in trades.columns:
     trades["time"] = ""
 
+trades["time"] = trades["time"].fillna("").replace("nan", "")
+
     display_trades = trades[
         [
             "date",
