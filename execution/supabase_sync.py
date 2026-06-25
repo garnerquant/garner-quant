@@ -126,6 +126,8 @@ def sync_holdings_history():
 def sync_trade_journal():
 
     trades = pd.read_csv("trade_journal_v3.csv")
+    print(f"Trade journal rows loaded: {len(trades)}")
+    print(trades.tail(20))
 
     supabase.table("trade_journal").delete().neq("id", 0).execute()
 
