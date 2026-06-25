@@ -550,8 +550,9 @@ else:
     )
 
     display_trades = (
-        display_trades.iloc[::-1]
-        .head(20)
+        display_trades
+        .tail(20)
+        .iloc[::-1]
     )
 
     st.dataframe(
