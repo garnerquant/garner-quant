@@ -548,6 +548,11 @@ else:
         .replace("nan", "")
     )
 
+    trades["date"] = (
+        pd.to_datetime(trades["date"])
+        .dt.strftime("%Y-%m-%d")
+    )
+
     display_trades = trades[
         [
             "date",
