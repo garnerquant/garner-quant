@@ -140,7 +140,7 @@ def sync_trade_journal():
             "updated_at": datetime.utcnow().isoformat()
         }
 
-        supabase.table("trade_journal").insert(data).execute()
+        supabase.table("trade_journal").delete().neq("id", 0).execute()
 
     print("Supabase trade journal synced.")
 
