@@ -7,6 +7,7 @@ from datetime import datetime
 PORTFOLIO_FILE = "paper_portfolio_v3.csv"
 TRADE_JOURNAL_FILE = "trade_journal_v3.csv"
 TRANSACTION_LOG_FILE = "trade_transactions_v1.csv"
+TRADE_SNAPSHOTS_FILE = "trade_snapshots.csv"
 
 
 def load_portfolio():
@@ -102,6 +103,32 @@ def load_transaction_log():
         ]
     )
 
+def load_trade_snapshots():
+    if Path(TRADE_SNAPSHOTS_FILE).exists():
+        return pd.read_csv(TRADE_SNAPSHOTS_FILE)
+
+    return pd.DataFrame(
+        columns=[
+            "trade_id",
+            "event",
+            "ticker",
+            "timestamp",
+            "price",
+            "shares",
+            "position_value",
+            "cash",
+            "portfolio_value",
+            "portfolio_weight",
+            "signal",
+            "reason",
+            "stop_loss",
+            "take_profit",
+        ]
+    )
+
+
+def save_trade_snapshots(snapshots):
+    snapshots.to_csv(TRADE_SNAPSHOTS_FILE, index=False)
 
 def save_transaction_log(log):
     log.to_csv(TRANSACTION_LOG_FILE, index=False)  
@@ -143,6 +170,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
     portfolio = load_portfolio()
     journal = load_trade_journal()
     transaction_log = load_transaction_log()
+    snapshots = load_trade_snapshots()
 
     latest_date = signals.index[-1]
     latest_signals = signals.loc[latest_date]
@@ -206,6 +234,27 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 position["shares"],
                 current_price * position["shares"],
                 sell_reason
+            ]
+
+            trade_id = f"{ticker}_{position['entry_date']}"
+
+            portfolio_value_before_sell = cash + portfolio["position_value"].sum() if "cash" in locals() else portfolio["position_value"].sum()
+
+            snapshots.loc[len(snapshots)] = [
+                trade_id,
+                "SELL",
+                ticker,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                current_price,
+                position["shares"],
+                current_price * position["shares"],
+                portfolio_value_before_sell + (current_price * position["shares"]),
+                portfolio_value_before_sell,
+                0,
+                signal,
+                sell_reason,
+                stop_loss,
+                take_profit,
             ]
 
             now = datetime.now()
@@ -286,6 +335,27 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 "SIGNAL ENTRY"
             ]
 
+            trade_id = f"{ticker}_{latest_date}_{len(snapshots)}"
+
+            portfolio_value_before = cash + portfolio["position_value"].sum()
+
+            snapshots.loc[len(snapshots)] = [
+                trade_id,
+                "BUY",
+                ticker,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                price,
+                shares,
+                position_value,
+                cash,
+                portfolio_value_before,
+                weight,
+                signal,
+                "SIGNAL ENTRY",
+                stop_losses[ticker],
+                take_profits[ticker],
+            ]
+
             cash -= position_value
 
             trades.append({
@@ -301,6 +371,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
     save_portfolio(portfolio)
     save_trade_journal(journal)
     save_transaction_log(transaction_log)
+    save_trade_snapshots(snapshots)
 
     return portfolio, journal, pd.DataFrame(trades)
 
