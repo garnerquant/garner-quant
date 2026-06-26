@@ -209,16 +209,18 @@ def update_portfolio(signals, prices, weights, risk_levels):
             ]
 
             now = datetime.now()
-            
+
             trades.append({
                 "date": latest_date,
                 "time": now.strftime("%H:%M:%S"),
                 "ticker": ticker,
-                "action": "BUY",
-                "price": price,
-                "reason": "SIGNAL ENTRY",
-                "position_value": position_value,
-                "shares": shares
+                "action": "SELL",
+                "price": current_price,
+                "reason": sell_reason,
+                "position_value": current_price * position["shares"],
+                "shares": position["shares"],
+                "pnl": pnl,
+                "pnl_percent": pnl_percent
             })
 
             portfolio = portfolio[
