@@ -771,7 +771,16 @@ if page == "Home":
         )
     st.markdown("### Trade Statistics")
 
-    avg_hold = audit["holding_days"].mean()
+    if "holding_days" in audit.columns:
+        avg_hold = audit["holding_days"].mean()
+    elif "holding_period" in audit.columns:
+        holding = pd.to_timedelta(
+            audit["holding_period"],
+            errors="coerce"
+        )
+        avg_hold = holding.dt.total_seconds().div(86400).mean()
+    else:
+        avg_hold = 0
 
     avg_return = audit["pnl_pct"].mean()
 
