@@ -612,26 +612,64 @@ if page == "Home":
 
         total_trades = len(audit)
         winning_trades = len(audit[audit["pnl"] > 0])
+        losing_trades = len(audit[audit["pnl"] < 0])
+
         win_rate = (
             winning_trades / total_trades * 100
             if total_trades
             else 0
         )
+
         total_pnl = audit["pnl"].sum()
         best_trade = audit["pnl"].max()
         worst_trade = audit["pnl"].min()
+        avg_pnl = audit["pnl"].mean()
 
-        col1, col2 = st.columns(2)
+        gross_profit = audit.loc[audit["pnl"] > 0, "pnl"].sum()
+        gross_loss = abs(audit.loc[audit["pnl"] < 0, "pnl"].sum())
 
-        with col1:
+        profit_factor = (
+            gross_profit / gross_loss
+            if gross_loss > 0
+            else 0
+        )
+
+        avg_win = (
+            audit.loc[audit["pnl"] > 0, "pnl"].mean()
+            if winning_trades > 0
+            else 0
+        )
+
+        avg_loss = (
+            audit.loc[audit["pnl"] < 0, "pnl"].mean()
+            if losing_trades > 0
+            else 0
+        )
+
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
             metric_card("Total Trades", total_trades)
-            metric_card("Total PnL", f"£{total_pnl:,.2f}", True)
+            metric_card("Winners", winning_trades)
 
-        with col2:
+        with c2:
             metric_card("Win Rate", f"{win_rate:.1f}%", True)
-            metric_card("Best Trade", f"£{best_trade:,.2f}", True)
+            metric_card("Losers", losing_trades)
 
-        metric_card("Worst Trade", f"£{worst_trade:,.2f}")
+        with c3:
+            metric_card("Total PnL", f"£{total_pnl:,.2f}", total_pnl >= 0)
+            metric_card("Profit Factor", f"{profit_factor:.2f}", profit_factor >= 1)
+
+        c4, c5, c6 = st.columns(3)
+
+        with c4:
+            metric_card("Average PnL", f"£{avg_pnl:,.2f}", avg_pnl >= 0)
+
+        with c5:
+            metric_card("Best Trade", f"£{best_trade:,.2f}", best_trade >= 0)
+
+        with c6:
+            metric_card("Worst Trade", f"£{worst_trade:,.2f}", worst_trade >= 0)
 
         st.divider()
 
@@ -663,40 +701,101 @@ if page == "Home":
             open_reason = trade.get("open_reason", "N/A")
             close_reason = trade.get("close_reason", "N/A")
 
-            result = (
-                "WIN ✅"
-                if pnl > 0
-                else "LOSS ❌"
-                if pnl < 0
-                else "FLAT ➖"
-            )
+            result = "WIN ✅" if pnl > 0 else "LOSS ❌" if pnl < 0 else "FLAT ➖"
 
-            st.markdown(
-                f"""
-                <div style="
-                    border: 1px solid #30363d;
-                    border-radius: 16px;
-                    padding: 16px;
-                    margin-bottom: 14px;
-                    background-color: #111827;
-                    max-width: 100%;
-                ">
-                    <h3 style="margin: 0 0 8px 0;">{symbol} — {result}</h3>
-                    <p style="margin: 4px 0;"><b>Opened:</b> {opened}</p>
-                    <p style="margin: 4px 0;"><b>Closed:</b> {closed}</p>
-                    <p style="margin: 4px 0;"><b>Held:</b> {held}</p>
-                    <p style="margin: 4px 0;"><b>Buy:</b> £{buy_price:,.2f}</p>
-                    <p style="margin: 4px 0;"><b>Sell:</b> £{sell_price:,.2f}</p>
-                    <p style="margin: 4px 0;"><b>Shares:</b> {shares:,.4f}</p>
-                    <p style="margin: 4px 0;"><b>PnL:</b> £{pnl:,.2f} ({pnl_pct:.2f}%)</p>
-                    <p style="margin: 8px 0 4px 0;"><b>Entry:</b> {open_reason}</p>
-                    <p style="margin: 4px 0;"><b>Exit:</b> {close_reason}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            with st.container(border=True):
+                st.subheader(f"{symbol} — {result}")
+
+                col1, col2 = st.columns(2)
+
+            with col1:
+                st.write(f"**Opened:** {opened}")
+                st.write(f"**Closed:** {closed}")
+                st.write(f"**Held:** {held}")
+                st.write(f"**Shares:** {shares:.4f}")
+
+            with col2:
+                st.write(f"**Buy:** £{buy_price:,.2f}")
+                st.write(f"**Sell:** £{sell_price:,.2f}")
+                st.write(f"**PnL:** £{pnl:,.2f} ({pnl_pct:.2f}%)")
+
+            with st.expander("🔍 Trade Replay"):
+                entry_rule = trade.get("entry_rule", "BUY signal generated")
+                exit_rule = trade.get("exit_rule", close_reason)
+                trade_result = trade.get("trade_result", result)
+
+                entry_value = trade.get("entry_value", buy_price * shares)
+                exit_value = trade.get("exit_value", sell_price * shares)
+                strategy = trade.get("strategy", "Momentum")
+
+                st.markdown("### Entry Snapshot")
+                st.write(f"**Action:** BUY")
+                st.write(f"**Rule:** {entry_rule}")
+                st.write(f"**Strategy:** {strategy}")
+                st.write(f"**Entry Value:** £{float(entry_value):,.2f}")
+                st.write(f"**Buy Price:** £{buy_price:,.2f}")
+                st.write(f"**Shares:** {shares:.4f}")
+
+                st.markdown("### Exit Snapshot")
+                st.write(f"**Action:** SELL")
+                st.write(f"**Rule:** {exit_rule}")
+                st.write(f"**Exit Value:** £{float(exit_value):,.2f}")
+                st.write(f"**Sell Price:** £{sell_price:,.2f}")
+
+                st.markdown("### Outcome")
+                st.write(f"**Result:** {trade_result}")
+                st.write(f"**PnL:** £{pnl:,.2f}")
+                st.write(f"**Return:** {pnl_pct:.2f}%")
 
     st.divider()
+    
+    st.subheader("📈 Realised Equity Curve")
+
+    equity = audit.copy()
+
+    equity["close_time"] = pd.to_datetime(equity["close_time"])
+
+    equity = equity.sort_values("close_time")
+
+    equity["Cumulative PnL"] = equity["pnl"].cumsum()
+
+    st.line_chart(
+        equity.set_index("close_time")["Cumulative PnL"],
+        use_container_width=True,
+    )
+
+    st.markdown("### Trade Statistics")
+
+    avg_hold = audit["holding_days"].mean()
+
+    avg_return = audit["pnl_pct"].mean()
+
+    largest_win = (
+        audit.loc[audit["pnl"].idxmax(), "symbol"]
+        if len(audit[audit["pnl"] > 0]) > 0
+        else "None"
+    )
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        metric_card(
+            "Average Hold",
+            f"{avg_hold:.1f} days"
+        )
+
+    with c2:
+        metric_card(
+            "Average Return",
+            f"{avg_return:.2f}%",
+            avg_return >= 0
+        )
+
+    with c3:
+        metric_card(
+            "Largest Winner",
+            largest_win
+        )
 
     st.subheader("Trade Journal")
 
