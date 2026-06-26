@@ -155,6 +155,7 @@ trades = load_supabase_table("trade_journal", "trade_journal_v3.csv")
 
 portfolio = load_csv("portfolio_v2.csv")
 analytics = load_csv("trade_analytics_v3.csv")
+snapshots = load_csv("trade_snapshots.csv")
 
 if broker.empty:
     st.error(
@@ -720,32 +721,73 @@ if page == "Home":
                 st.write(f"**PnL:** £{pnl:,.2f} ({pnl_pct:.2f}%)")
 
             with st.expander("🔍 Trade Replay"):
-                entry_rule = trade.get("entry_rule", "BUY signal generated")
-                exit_rule = trade.get("exit_rule", close_reason)
-                trade_result = trade.get("trade_result", result)
+                trade_snapshot = pd.DataFrame()
 
-                entry_value = trade.get("entry_value", buy_price * shares)
-                exit_value = trade.get("exit_value", sell_price * shares)
-                strategy = trade.get("strategy", "Momentum")
+                if not snapshots.empty:
 
-                st.markdown("### Entry Snapshot")
-                st.write(f"**Action:** BUY")
-                st.write(f"**Rule:** {entry_rule}")
-                st.write(f"**Strategy:** {strategy}")
-                st.write(f"**Entry Value:** £{float(entry_value):,.2f}")
-                st.write(f"**Buy Price:** £{buy_price:,.2f}")
-                st.write(f"**Shares:** {shares:.4f}")
+                    trade_snapshot = snapshots[
+                        snapshots["ticker"] == symbol
+                    ].copy()
 
-                st.markdown("### Exit Snapshot")
-                st.write(f"**Action:** SELL")
-                st.write(f"**Rule:** {exit_rule}")
-                st.write(f"**Exit Value:** £{float(exit_value):,.2f}")
-                st.write(f"**Sell Price:** £{sell_price:,.2f}")
+                    if not trade_snapshot.empty:
 
-                st.markdown("### Outcome")
-                st.write(f"**Result:** {trade_result}")
-                st.write(f"**PnL:** £{pnl:,.2f}")
-                st.write(f"**Return:** {pnl_pct:.2f}%")
+                        trade_snapshot["timestamp"] = pd.to_datetime(
+                            trade_snapshot["timestamp"],
+                            errors="coerce"
+                        )
+
+                        trade_snapshot = trade_snapshot.sort_values("timestamp")
+
+                if trade_snapshot.empty:
+
+                    st.info("No snapshot data available.")
+
+                else:
+
+                    buy = trade_snapshot[
+                        trade_snapshot["event"] == "BUY"
+                    ].iloc[0]
+
+                    sell = trade_snapshot[
+                        trade_snapshot["event"] == "SELL"
+                    ].iloc[-1]
+
+                    st.markdown("### 🟢 Entry")
+
+                    c1, c2 = st.columns(2)
+
+                    with c1:
+                        st.metric("Cash", f"£{buy['cash']:,.2f}")
+                        st.metric("Weight", f"{buy['portfolio_weight']:.1%}")
+
+                    with c2:
+                        st.metric("Stop Loss", f"£{buy['stop_loss']:,.2f}")
+                        st.metric("Take Profit", f"£{buy['take_profit']:,.2f}")
+
+                    st.write(f"**Reason:** {buy['reason']}")
+
+                    st.divider()
+
+                    st.markdown("### 🔴 Exit")
+
+                    st.metric("Reason", sell["reason"])
+
+                    st.metric(
+                        "Portfolio Value",
+                        f"£{sell['portfolio_value']:,.2f}"
+                    )
+
+                    st.divider()
+
+                    st.markdown("### 📈 Result")
+
+                    c1, c2 = st.columns(2)
+
+                    with c1:
+                        st.metric("PnL", f"£{pnl:,.2f}")
+
+                    with c2:
+                        st.metric("Return", f"{pnl_pct:.2f}%")
 
     st.divider()
     
