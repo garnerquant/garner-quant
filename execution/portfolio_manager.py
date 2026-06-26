@@ -121,70 +121,6 @@ def load_trade_snapshots():
 def save_trade_snapshots(snapshots):
     snapshots.to_csv(TRADE_SNAPSHOTS_FILE, index=False)
 
-
-def rebuild_trade_snapshots_from_journal():
-    journal = load_trade_journal()
-
-    columns = [
-        "trade_id",
-        "event",
-        "ticker",
-        "timestamp",
-        "price",
-        "shares",
-        "position_value",
-        "cash",
-        "portfolio_value",
-        "portfolio_weight",
-        "signal",
-        "reason",
-        "stop_loss",
-        "take_profit",
-    ]
-
-    snapshots = pd.DataFrame(columns=columns)
-
-    if journal.empty:
-        save_trade_snapshots(snapshots)
-        return snapshots
-
-    for _, row in journal.iterrows():
-        ticker = row.get("ticker", "")
-        action = str(row.get("action", "")).upper()
-        date = row.get("date", "")
-        time = row.get("time", "")
-
-        if action not in ["BUY", "SELL"]:
-            continue
-
-        timestamp = f"{date} {time}".strip()
-
-        price = row.get("price", 0)
-        shares = row.get("shares", 0)
-        value = row.get("value", 0)
-        reason = row.get("reason", "")
-
-        snapshots.loc[len(snapshots)] = [
-            f"{ticker}_{timestamp}_{action}",
-            action,
-            ticker,
-            timestamp,
-            price,
-            shares,
-            value,
-            "",
-            "",
-            "",
-            "",
-            reason,
-            "",
-            "",
-        ]
-
-    save_trade_snapshots(snapshots)
-    return snapshots
-
-
 def calculate_cash(portfolio):
     if portfolio.empty or "position_value" not in portfolio.columns:
         return STARTING_CASH
@@ -428,8 +364,6 @@ def update_portfolio(signals, prices, weights, risk_levels):
     save_transaction_log(transaction_log)
     save_trade_snapshots(snapshots)
 
-    # This backfills snapshots from the full journal too, so old trades have replay rows.
-    rebuild_trade_snapshots_from_journal()
 
     return portfolio, journal, pd.DataFrame(trades)
 

@@ -744,13 +744,15 @@ if page == "Home":
 
                 else:
 
-                    buy = trade_snapshot[
-                        trade_snapshot["event"] == "BUY"
-                    ].iloc[0]
+                    buy_rows = trade_snapshot[trade_snapshot["event"] == "BUY"]
+                    sell_rows = trade_snapshot[trade_snapshot["event"] == "SELL"]
 
-                    sell = trade_snapshot[
-                        trade_snapshot["event"] == "SELL"
-                    ].iloc[-1]
+                    if buy_rows.empty:
+                        st.info("No entry snapshot available for this trade yet.")
+                        st.stop()
+
+                    buy = buy_rows.iloc[0]
+                    sell = sell_rows.iloc[-1] if not sell_rows.empty else None
 
                     st.markdown("### 🟢 Entry")
 
@@ -770,12 +772,15 @@ if page == "Home":
 
                     st.markdown("### 🔴 Exit")
 
-                    st.metric("Reason", sell["reason"])
+                    if sell is None:
+                        st.info("No exit snapshot available yet. This trade may still be open or was created before snapshot logging.")
+                    else:
+                        st.metric("Reason", sell["reason"])
 
-                    st.metric(
-                        "Portfolio Value",
-                        f"£{sell['portfolio_value']:,.2f}"
-                    )
+                        st.metric(
+                            "Portfolio Value",
+                            f"£{sell['portfolio_value']:,.2f}"
+                        )
 
                     st.divider()
 
