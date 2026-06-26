@@ -769,47 +769,43 @@ if page == "Home":
             equity.set_index("close_time")["Cumulative PnL"],
             use_container_width=True,
         )
-    st.markdown("### Trade Statistics")
-
-    if "holding_days" in audit.columns:
-        avg_hold = audit["holding_days"].mean()
-    elif "holding_period" in audit.columns:
-        holding = pd.to_timedelta(
-            audit["holding_period"],
-            errors="coerce"
-        )
-        avg_hold = holding.dt.total_seconds().div(86400).mean()
+    if audit.empty or "pnl" not in audit.columns:
+        st.info("No trade statistics available yet.")
     else:
-        avg_hold = 0
+        st.subheader("Trade Statistics")
 
-    avg_return = audit["pnl_pct"].mean()
+        if "holding_days" in audit.columns:
+            avg_hold = audit["holding_days"].mean()
+        elif "holding_period" in audit.columns:
+            holding = pd.to_timedelta(
+                audit["holding_period"],
+                errors="coerce"
+            )
+            avg_hold = holding.dt.total_seconds().div(86400).mean()
+        else:
+            avg_hold = 0
+ 
+        if "pnl_pct" in audit.columns:
+            avg_return = audit["pnl_pct"].mean()
+        else:
+            avg_return = 0
 
-    largest_win = (
-        audit.loc[audit["pnl"].idxmax(), "symbol"]
-        if len(audit[audit["pnl"] > 0]) > 0
-        else "None"
-    )
-
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        metric_card(
-            "Average Hold",
-            f"{avg_hold:.1f} days"
+        largest_win = (
+            audit.loc[audit["pnl"].idxmax(), "symbol"]
+            if "symbol" in audit.columns and len(audit[audit["pnl"] > 0]) > 0
+            else "None"
         )
 
-    with c2:
-        metric_card(
-            "Average Return",
-            f"{avg_return:.2f}%",
-            avg_return >= 0
-        )
+        c1, c2, c3 = st.columns(3)
 
-    with c3:
-        metric_card(
-            "Largest Winner",
-            largest_win
-        )
+        with c1:
+            metric_card("Average Hold", f"{avg_hold:.1f} days")
+
+        with c2:
+            metric_card("Average Return", f"{avg_return:.2f}%", avg_return >= 0)
+
+        with c3:
+            metric_card("Largest Winner", largest_win)
 
     st.subheader("Trade Journal")
 
