@@ -749,21 +749,27 @@ if page == "Home":
 
     st.divider()
     
-    st.subheader("📈 Realised Equity Curve")
+    if audit.empty or "close_time" not in audit.columns or "pnl" not in audit.columns:
+        st.info("No completed trade equity curve available yet.")
+    else:
+        st.subheader("📈 Realised Equity Curve")
 
-    equity = audit.copy()
+        equity = audit.copy()
 
-    equity["close_time"] = pd.to_datetime(equity["close_time"])
+        equity["close_time"] = pd.to_datetime(
+            equity["close_time"],
+            format="mixed",
+            errors="coerce"
+        )
 
-    equity = equity.sort_values("close_time")
+        equity = equity.dropna(subset=["close_time"])
+        equity = equity.sort_values("close_time")
+        equity["Cumulative PnL"] = equity["pnl"].cumsum()
 
-    equity["Cumulative PnL"] = equity["pnl"].cumsum()
-
-    st.line_chart(
-        equity.set_index("close_time")["Cumulative PnL"],
-        use_container_width=True,
-    )
-
+        st.line_chart(
+            equity.set_index("close_time")["Cumulative PnL"],
+            use_container_width=True,
+        )
     st.markdown("### Trade Statistics")
 
     avg_hold = audit["holding_days"].mean()
