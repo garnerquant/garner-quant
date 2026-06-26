@@ -755,7 +755,6 @@ if page == "Home":
         st.subheader("📈 Realised Equity Curve")
 
         equity = audit.copy()
-
         equity["close_time"] = pd.to_datetime(
             equity["close_time"],
             format="mixed",
