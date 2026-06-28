@@ -1,1 +1,2 @@
-
+date,time,ticker,action,price,reason,position_value,shares
+2026-06-28,12:46:01,IUSA.L,BUY,5555.75,SIGNAL ENTRY,2000.0,0.35998740044098454
