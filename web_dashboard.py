@@ -144,29 +144,8 @@ def load_supabase_table(table_name, fallback_csv=None, order_col=None):
 
 
 def load_trade_audit(journal):
-    candidates = []
-
     if journal is not None and not journal.empty:
-        audit = build_trade_audit_trail(journal)
-
-        if not audit.empty:
-            candidates.append(audit)
-
-    local_journal = load_csv("trade_journal_v3.csv")
-
-    if not local_journal.empty:
-        audit = build_trade_audit_trail(local_journal)
-
-        if not audit.empty:
-            candidates.append(audit)
-
-    csv_audit = load_csv("trade_audit_trail.csv")
-
-    if not csv_audit.empty:
-        candidates.append(csv_audit)
-
-    if candidates:
-        return max(candidates, key=len)
+        return build_trade_audit_trail(journal)
 
     return pd.DataFrame()
 
@@ -679,7 +658,7 @@ if page == "Home":
         c1, c2, c3 = st.columns(3)
 
         with c1:
-            metric_card("Total Trades", total_trades)
+            metric_card("Completed BUY -> SELL Pairs", total_trades)
             metric_card("Winners", winning_trades)
 
         with c2:

@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 st.title("🔍 Trade Audit")
-st.caption("Completed BUY → SELL trade reviews")
+st.caption("Completed BUY -> SELL pairs derived from the current trade journal")
 
 
 def load_supabase_trade_journal():
@@ -32,31 +32,10 @@ def load_supabase_trade_journal():
 
 
 def load_trade_audit():
-    candidates = []
-
     journal = load_supabase_trade_journal()
 
     if not journal.empty:
-        audit = build_trade_audit_trail(journal)
-
-        if not audit.empty:
-            candidates.append(audit)
-
-    local_journal = load_csv("trade_journal_v3.csv")
-
-    if not local_journal.empty:
-        audit = build_trade_audit_trail(local_journal)
-
-        if not audit.empty:
-            candidates.append(audit)
-
-    csv_audit = load_csv("trade_audit_trail.csv")
-
-    if not csv_audit.empty:
-        candidates.append(csv_audit)
-
-    if candidates:
-        return max(candidates, key=len)
+        return build_trade_audit_trail(journal)
 
     return pd.DataFrame()
 
@@ -68,7 +47,7 @@ if audit.empty:
 else:
     audit = audit.copy()
 
-    st.metric("Completed Trades", len(audit))
+    st.metric("Completed BUY -> SELL Pairs", len(audit))
 
     if "pnl" in audit.columns:
         total_pnl = audit["pnl"].sum()
