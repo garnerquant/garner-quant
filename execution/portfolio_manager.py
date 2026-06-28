@@ -121,12 +121,20 @@ def load_trade_snapshots():
 def save_trade_snapshots(snapshots):
     snapshots.to_csv(TRADE_SNAPSHOTS_FILE, index=False)
 
-def calculate_cash(portfolio):
+def calculate_cash(portfolio, journal=None):
+    realised_pnl = 0
+
+    if journal is not None and not journal.empty and "pnl" in journal.columns:
+        realised_pnl = pd.to_numeric(
+            journal["pnl"],
+            errors="coerce"
+        ).fillna(0).sum()
+
     if portfolio.empty or "position_value" not in portfolio.columns:
-        return STARTING_CASH
+        return STARTING_CASH + realised_pnl
 
     invested = portfolio["position_value"].sum()
-    return STARTING_CASH - invested
+    return STARTING_CASH - invested + realised_pnl
 
 
 def update_portfolio(signals, prices, weights, risk_levels):
@@ -148,7 +156,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
 
     held_tickers = set(portfolio["ticker"]) if not portfolio.empty else set()
 
-    cash = calculate_cash(portfolio)
+    cash = calculate_cash(portfolio, journal)
 
     # SELL logic
     for _, position in portfolio.copy().iterrows():

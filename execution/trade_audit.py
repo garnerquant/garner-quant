@@ -19,18 +19,35 @@ def build_trade_audit_trail(trade_journal):
 
     trades = trade_journal.copy()
 
-    time_col = "timestamp" if "timestamp" in trades.columns else "date"
+    # Detect column names
     symbol_col = "symbol" if "symbol" in trades.columns else "ticker"
     qty_col = "shares" if "shares" in trades.columns else "quantity"
 
-    trades[time_col] = pd.to_datetime(
-        trades[time_col],
-        format="mixed",
-        errors="coerce"
-    )
+    # Build a datetime from date plus time when time exists.
+    if "timestamp" in trades.columns:
+        trades["audit_time"] = pd.to_datetime(
+            trades["timestamp"],
+            format="mixed",
+            errors="coerce"
+        )
+    else:
+        date_text = trades["date"].astype(str).str.strip()
 
-    trades = trades.dropna(subset=[time_col])
-    trades = trades.sort_values([symbol_col, time_col])
+        if "time" in trades.columns:
+            time_text = trades["time"].fillna("").astype(str).str.strip()
+            missing_time = time_text.str.lower().isin(["", "nan", "nat", "none"])
+            datetime_text = date_text.where(missing_time, date_text + " " + time_text)
+        else:
+            datetime_text = date_text
+
+        trades["audit_time"] = pd.to_datetime(
+            datetime_text,
+            format="mixed",
+            errors="coerce"
+        )
+
+    trades = trades.dropna(subset=["audit_time"])
+    trades = trades.sort_values([symbol_col, "audit_time"])
 
     audit_rows = []
 
@@ -54,15 +71,14 @@ def build_trade_audit_trail(trade_journal):
                 pnl = (sell_price - buy_price) * shares
                 pnl_pct = ((sell_price - buy_price) / buy_price) * 100
 
-                open_time = open_trade[time_col]
-                close_time = row[time_col]
-
                 audit_rows.append({
                     # Core trade details
                     "symbol": symbol,
-                    "open_time": open_time,
-                    "close_time": close_time,
-                    "holding_period": str(close_time - open_time),
+                    "open_time": open_trade["audit_time"],
+                    "close_time": row["audit_time"],
+                    "holding_period": str(
+                        row["audit_time"] - open_trade["audit_time"]
+                    ),
                     "buy_price": buy_price,
                     "sell_price": sell_price,
                     "shares": shares,

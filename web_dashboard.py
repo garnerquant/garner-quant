@@ -518,7 +518,7 @@ if page == "Home":
 
         with col1:
             metric_card(
-                "Total Trades",
+                "Journal Events",
                 int(analytics_row["total_trades"]),
             )
             metric_card(
