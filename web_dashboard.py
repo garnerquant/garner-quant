@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from dashboard.data_loader import load_csv
+from execution.trade_audit import build_trade_audit_trail
 
 
 def inject_mobile_css():
@@ -140,6 +141,34 @@ def load_supabase_table(table_name, fallback_csv=None, order_col=None):
             return load_csv(fallback_csv)
 
         return pd.DataFrame()
+
+
+def load_trade_audit(journal):
+    candidates = []
+
+    if journal is not None and not journal.empty:
+        audit = build_trade_audit_trail(journal)
+
+        if not audit.empty:
+            candidates.append(audit)
+
+    local_journal = load_csv("trade_journal_v3.csv")
+
+    if not local_journal.empty:
+        audit = build_trade_audit_trail(local_journal)
+
+        if not audit.empty:
+            candidates.append(audit)
+
+    csv_audit = load_csv("trade_audit_trail.csv")
+
+    if not csv_audit.empty:
+        candidates.append(csv_audit)
+
+    if candidates:
+        return max(candidates, key=len)
+
+    return pd.DataFrame()
 
 
 broker = load_supabase_table("broker_account", "broker_account.csv")
@@ -587,7 +616,7 @@ if page == "Home":
 
     st.subheader("Trade Audit")
 
-    audit = load_csv("trade_audit_trail.csv")
+    audit = load_trade_audit(trades)
 
     if audit.empty:
         st.info("No completed trades audited yet.")
