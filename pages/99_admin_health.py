@@ -231,7 +231,7 @@ def runtime_uptime_label(runtime_status):
 
 def heartbeat_status(runtime_status):
     heartbeat = runtime_state(runtime_status)["heartbeat"]
-    return heartbeat["label"], bool(heartbeat["healthy"])
+    return heartbeat["display"], bool(heartbeat["healthy"])
 
 
 def heartbeat_age_label(runtime_status):
@@ -375,12 +375,7 @@ def next_cycle_delta(runtime_status):
 
 
 def next_cycle_clock_label(runtime_status):
-    next_cycle = runtime_state(runtime_status)["next_cycle"]
-    if next_cycle["time"] == "None":
-        return next_cycle["delta"]
-    if next_cycle["delta"] in {"Due now", "Scanning now"}:
-        return next_cycle["delta"]
-    return next_cycle["time"]
+    return runtime_state(runtime_status)["next_scan_display"]
 
 
 def paper_execution_enabled(runtime_status, runtime_config):
@@ -725,7 +720,7 @@ def human_age(value):
 
 
 def next_scan_label(runtime_status):
-    return runtime_state(runtime_status)["next_cycle"]["scan"]
+    return runtime_state(runtime_status)["next_scan_display"]
 
 
 def market_is_open(market):
@@ -951,6 +946,17 @@ def health_item(
     return {"Check": label, "Status": f"{icon} {bad_text}"}
 
 
+def heartbeat_health_item(runtime_status):
+    heartbeat = runtime_state(runtime_status)["heartbeat"]
+    if heartbeat.get("level") == "overdue":
+        return {"Check": "Heartbeat", "Status": "🔴 Overdue"}
+    if heartbeat.get("level") == "delayed":
+        return {"Check": "Heartbeat", "Status": "🟡 Delayed"}
+    if heartbeat.get("level") == "missing":
+        return {"Check": "Heartbeat", "Status": "🔴 Missing"}
+    return {"Check": "Heartbeat", "Status": f"🟢 {heartbeat.get('label', 'Healthy')}"}
+
+
 def operator_summary(
     runtime_status,
     runtime_config,
@@ -1067,7 +1073,7 @@ def runtime_status_sentence(
 
 
 def mission_stage(runtime_status):
-    return runtime_state(runtime_status)["stage"]
+    return runtime_state(runtime_status)["display_stage"]
 
 
 def pipeline_state(stage, current_stage):
@@ -1235,6 +1241,7 @@ def inject_mission_control_css():
 def render_hero_status(runtime_status, runtime_config, heartbeat_ok, markets_open):
     state = runtime_state(runtime_status)
     current_stage = mission_stage(runtime_status)
+    raw_stage = state["stage"]
     live_label = state["banner"]
     markets = " • ".join(expand_market_names(markets_open)) if markets_open else "No markets open"
     mode = (
@@ -1264,13 +1271,13 @@ def render_hero_status(runtime_status, runtime_config, heartbeat_ok, markets_ope
                 <div class="gq-hero-item"><div class="gq-label">Last Cycle</div><div class="gq-value">{html.escape(short_time(runtime_status.get("last_cycle_at")))}</div></div>
                 <div class="gq-hero-item"><div class="gq-label">Next Cycle</div><div class="gq-value">{html.escape(next_cycle_clock_label(runtime_status))}</div></div>
                 <div class="gq-hero-item"><div class="gq-label">Heartbeat</div><div class="gq-value">{html.escape(heartbeat_status(runtime_status)[0])}</div></div>
-                <div class="gq-hero-item"><div class="gq-label">Current Stage</div><div class="gq-value">{html.escape(current_stage)}</div></div>
+                <div class="gq-hero-item"><div class="gq-label">Current Stage</div><div class="gq-value">{html.escape(raw_stage)}</div></div>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    return current_stage
+    return state["stage"]
 
 
 def render_pipeline(current_stage):
@@ -2337,6 +2344,8 @@ st.divider()
 st.subheader("Live Control Centre")
 runtime_status = load_runtime_status()
 runtime_config = load_json_file("runtime/live_runtime_config.json")
+runtime_status = dict(runtime_status)
+runtime_status.setdefault("cycle_seconds", runtime_config.get("cycle_seconds", 300))
 decision_trace = load_json_file("data/runtime_decision_trace.json")
 last_cycle = get_last_cycle()
 recent_cycles = get_recent_cycles(limit=50)
@@ -2654,7 +2663,7 @@ run_cols[2].metric(
 st.markdown("**Operations Health**")
 health_rows = [
     health_item("Runtime", runtime_live),
-    health_item("Heartbeat", heartbeat_ok),
+    heartbeat_health_item(runtime_status),
     health_item(
         "Paper Execution",
         paper_execution_enabled(runtime_status, runtime_config),

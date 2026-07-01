@@ -181,6 +181,7 @@ def runtime_heartbeat(status):
         return {
             "label": "No heartbeat",
             "healthy": False,
+            "level": "missing",
             "age": "Unknown",
             "age_seconds": None,
         }
@@ -189,18 +190,36 @@ def runtime_heartbeat(status):
     age_seconds = max(0, int((now - last_cycle_at).total_seconds()))
     cycle_seconds = int(status.get("cycle_seconds", 300) or 300)
     next_cycle_at = _parse_time(status.get("next_cycle_at"))
-    missed_cycle = (
-        next_cycle_at is not None
-        and now > next_cycle_at + pd.Timedelta(seconds=max(90, cycle_seconds))
-    )
-    threshold_seconds = max((cycle_seconds * 2) + 60, 600)
-    healthy = age_seconds <= threshold_seconds and not missed_cycle
+    delayed_after_seconds = max(cycle_seconds * 3, 900)
+    overdue_after_seconds = max(cycle_seconds * 6, 1800)
+
+    if age_seconds >= overdue_after_seconds:
+        label = "Overdue"
+        level = "overdue"
+        healthy = False
+    elif age_seconds >= delayed_after_seconds:
+        label = "Delayed"
+        level = "delayed"
+        healthy = True
+    else:
+        label = "Healthy"
+        level = "healthy"
+        healthy = True
 
     return {
-        "label": "Healthy" if healthy else "Heartbeat overdue",
+        "label": label,
+        "display": label,
         "healthy": healthy,
+        "level": level,
         "age": _duration_label(age_seconds),
         "age_seconds": age_seconds,
+        "delayed_after_seconds": delayed_after_seconds,
+        "overdue_after_seconds": overdue_after_seconds,
+        "next_cycle_seconds": (
+            int((next_cycle_at - now).total_seconds())
+            if next_cycle_at is not None
+            else None
+        ),
     }
 
 
@@ -245,7 +264,21 @@ def runtime_next_cycle(status):
 
     now = pd.Timestamp.now(tz="Europe/London")
     seconds = int((next_cycle_at - now).total_seconds())
-    if seconds <= 0:
+    stage = runtime_stage(status)
+    active_stages = {
+        "Market Check",
+        "Price Download",
+        "Signal Generation",
+        "Portfolio Decision",
+        "Paper Execution",
+        "Telegram",
+        "Running",
+        "Scanning",
+    }
+    if seconds <= 0 and stage not in active_stages:
+        scan = next_cycle_at.strftime("%H:%M:%S")
+        delta = "Due now"
+    elif seconds <= 0:
         scan = "Scanning..."
         delta = "Scanning..."
     else:
@@ -273,6 +306,16 @@ def runtime_state(status):
     last_error = status.get("last_error")
     running = raw_status == "running"
     error = raw_status == "error" or bool(last_error)
+    active_activity = {
+        "Market Check": "Checking markets",
+        "Price Download": "Downloading prices",
+        "Signal Generation": "Generating signals",
+        "Portfolio Decision": "Reviewing portfolio decisions",
+        "Paper Execution": "Running paper execution",
+        "Telegram": "Sending notifications",
+        "Running": "Running",
+        "Scanning": "Scanning",
+    }
 
     if error:
         level = "error"
@@ -281,23 +324,35 @@ def runtime_state(status):
         health = "Error"
         healthy = False
         activity = "Runtime reported an error."
+        display_stage = "Runtime reported an error"
+        next_scan_display = next_cycle["scan"]
     elif running:
         healthy = heartbeat["healthy"]
-        health = "Running" if healthy else "Heartbeat overdue"
+        if heartbeat["level"] == "overdue":
+            health = "Runtime needs attention"
+        elif heartbeat["level"] == "delayed":
+            health = "Runtime delayed"
+        else:
+            health = "Running normally"
         if stage in {"Sleep", "Sleeping", "Strategy Completed", "Waiting", "Idle", "Market Closed"}:
             level = "idle"
             title = "Runtime Running"
             banner = "Garner Quant Sleeping"
-            activity = (
-                f"Sleeping until next scan at {next_cycle['time']}."
-                if next_cycle["time"] != "None"
-                else "Running and waiting for the next scan."
-            )
+            if next_cycle["delta"] == "Due now":
+                activity = "Waiting for next cycle."
+            elif next_cycle["time"] != "None":
+                activity = "Sleeping until next scan."
+            else:
+                activity = "Running and waiting for the next scan."
+            display_stage = activity.rstrip(".")
+            next_scan_display = next_cycle["time"] if next_cycle["time"] != "None" else next_cycle["scan"]
         else:
             level = "live"
             title = "Runtime Running"
             banner = "Garner Quant Running"
-            activity = f"{stage} in progress."
+            activity = f"{active_activity.get(stage, stage)}."
+            display_stage = activity.rstrip(".")
+            next_scan_display = next_cycle["scan"]
     else:
         level = "offline"
         title = "Runtime Offline"
@@ -305,6 +360,8 @@ def runtime_state(status):
         health = "Stopped"
         healthy = False
         activity = "Runtime is not running."
+        display_stage = "Runtime stopped"
+        next_scan_display = next_cycle["scan"]
 
     return {
         "raw_status": raw_status,
@@ -315,9 +372,11 @@ def runtime_state(status):
         "health": health,
         "healthy": healthy,
         "stage": stage,
+        "display_stage": display_stage,
         "activity": activity,
         "heartbeat": heartbeat,
         "next_cycle": next_cycle,
+        "next_scan_display": next_scan_display,
         "freshness": runtime_freshness(status),
         "last_cycle_at": status.get("last_cycle_at"),
         "next_cycle_at": status.get("next_cycle_at"),
