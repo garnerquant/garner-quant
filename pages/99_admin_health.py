@@ -30,7 +30,11 @@ from ui.responsive import (
     responsive_table,
 )
 from ui.auto_refresh import enable_auto_refresh
-from ui.runtime_status import load_runtime_status, runtime_status_updated_at
+from ui.runtime_status import (
+    load_runtime_status,
+    runtime_state,
+    runtime_status_updated_at,
+)
 
 
 FILES = [
@@ -260,40 +264,24 @@ def runtime_uptime_label(runtime_status):
 
 
 def heartbeat_status(runtime_status):
-    last_cycle_at = parse_timestamp(runtime_status.get("last_cycle_at"))
-    if last_cycle_at is None:
-        return "No heartbeat", False
-
-    cycle_seconds = int(runtime_status.get("cycle_seconds", 300) or 300)
-    threshold_seconds = max((cycle_seconds * 2) + 60, 600)
-    now = pd.Timestamp.now(tz="Europe/London")
-    is_healthy = (now - last_cycle_at).total_seconds() <= threshold_seconds
-    return ("Healthy" if is_healthy else "Stale"), is_healthy
+    heartbeat = runtime_state(runtime_status)["heartbeat"]
+    return heartbeat["label"], bool(heartbeat["healthy"])
 
 
 def heartbeat_age_label(runtime_status):
-    last_cycle_at = parse_timestamp(runtime_status.get("last_cycle_at"))
-    if last_cycle_at is None:
-        return "Unknown"
-
-    now = pd.Timestamp.now(tz="Europe/London")
-    return format_runtime_duration((now - last_cycle_at).total_seconds())
+    return runtime_state(runtime_status)["heartbeat"]["age"]
 
 
 def runtime_banner_state(runtime_status, heartbeat_ok):
-    status = runtime_status.get("status", "not started")
-    markets_open = safe_list(runtime_status.get("markets_open"))
+    state = runtime_state(runtime_status)
 
-    if status == "error":
-        return "error", "🔴 Runtime Error", "Runtime reported an error."
+    if state["level"] == "error":
+        return "error", "Runtime Error", state["last_error"] or "Runtime reported an error."
 
-    if status == "running" and heartbeat_ok and markets_open:
-        return "live", "🟢 LIVE", "Runtime Running"
+    if state["running"]:
+        return state["level"], "Runtime Running", state["health"]
 
-    if status == "running" and heartbeat_ok:
-        return "waiting", "🟡 Waiting for Market", "Runtime Running"
-
-    return "offline", "🔴 Runtime Offline", "Background runtime is not running."
+    return "offline", "Runtime Offline", "Background runtime is not running."
 
 
 def market_countdown(market):
@@ -413,24 +401,11 @@ def market_session_time(market):
 
 
 def next_cycle_value(runtime_status):
-    next_cycle = parse_timestamp(runtime_status.get("next_cycle_at"))
-    if next_cycle is None:
-        return "None"
-
-    return next_cycle.strftime("%H:%M:%S")
+    return runtime_state(runtime_status)["next_cycle"]["time"]
 
 
 def next_cycle_delta(runtime_status):
-    next_cycle = parse_timestamp(runtime_status.get("next_cycle_at"))
-    if next_cycle is None:
-        return "Not scheduled"
-
-    now = pd.Timestamp.now(tz="Europe/London")
-    seconds = int((next_cycle - now).total_seconds())
-    if seconds <= 0:
-        return "due now"
-
-    return f"in {format_runtime_duration(seconds)}"
+    return runtime_state(runtime_status)["next_cycle"]["delta"]
 
 
 def paper_execution_enabled(runtime_status, runtime_config):
@@ -441,28 +416,25 @@ def paper_execution_enabled(runtime_status, runtime_config):
 
 
 def activity_state(runtime_status, runtime_config, heartbeat_ok, markets):
-    status = runtime_status.get("status", "not started")
-    mode = runtime_status.get("mode") or runtime_config.get("mode") or "monitor_only"
+    state = runtime_state(runtime_status)
     markets_open = safe_list(runtime_status.get("markets_open"))
-    paper_enabled = paper_execution_enabled(runtime_status, runtime_config)
     next_market_name, next_market_seconds = next_market_details(markets)
-    stage = runtime_status.get("current_strategy_stage")
 
-    if status == "error":
+    if state["level"] == "error":
         return {
             "level": "error",
-            "title": "🔴 Runtime Error",
-            "current_activity": "Attention required.",
+            "title": "Runtime Error",
+            "current_activity": state["activity"],
             "next_label": "Last Error",
-            "next_value": runtime_status.get("last_error") or "Unknown runtime error.",
+            "next_value": state["last_error"] or "Unknown runtime error.",
             "command": None,
         }
 
-    if status != "running" or not heartbeat_ok:
+    if not state["running"]:
         return {
             "level": "offline",
-            "title": "🔴 Runtime Offline",
-            "current_activity": "Not running",
+            "title": "Runtime Offline",
+            "current_activity": state["activity"],
             "next_label": "Next Action",
             "next_value": "Start runtime from PowerShell.",
             "command": "python runtime/live_runtime.py",
@@ -476,32 +448,19 @@ def activity_state(runtime_status, runtime_config, heartbeat_ok, markets):
         )
         return {
             "level": "waiting",
-            "title": "🟡 Waiting for Market",
-            "current_activity": "Sleeping / waiting",
+            "title": "Runtime Running",
+            "current_activity": state["activity"],
             "next_label": "Next Market",
             "next_value": next_market_text,
             "command": None,
         }
 
-    if paper_enabled and mode == "paper_execution":
-        return {
-            "level": "live",
-            "title": "🟢 Paper Trading Active",
-            "current_activity": (
-                stage
-                or "Running strategy pipeline during open market sessions."
-            ),
-            "next_label": "Paper Only",
-            "next_value": "Yes",
-            "command": None,
-        }
-
     return {
-        "level": "live",
-        "title": "🟢 Monitoring Live Markets",
-        "current_activity": "Monitoring holdings and checking paper alerts.",
-        "next_label": "Mode",
-        "next_value": "Monitor Only",
+        "level": state["level"],
+        "title": "Runtime Running",
+        "current_activity": state["activity"],
+        "next_label": "Next Cycle",
+        "next_value": state["next_cycle"]["time"],
         "command": None,
     }
 
@@ -791,19 +750,7 @@ def human_age(value):
 
 
 def next_scan_label(runtime_status):
-    next_cycle = parse_timestamp(runtime_status.get("next_cycle_at"))
-    if next_cycle is None:
-        return "Not scheduled"
-
-    now = pd.Timestamp.now(tz="Europe/London")
-    seconds = int((next_cycle - now).total_seconds())
-    if seconds <= 0:
-        return "Scanning..."
-
-    minutes, seconds = divmod(seconds, 60)
-    if minutes >= 60:
-        return format_runtime_duration(minutes * 60 + seconds)
-    return f"{minutes:02d}m {seconds:02d}s"
+    return runtime_state(runtime_status)["next_cycle"]["scan"]
 
 
 def market_is_open(market):
@@ -1037,14 +984,20 @@ def operator_summary(
     execution_summary,
     notification_health,
 ):
+    state = runtime_state(runtime_status)
+    if not state["running"]:
+        if state["level"] == "error":
+            return "Garner Quant needs attention. Review the latest runtime error."
+        return "Garner Quant is offline. Start the runtime before relying on live status."
+
+    if not state["healthy"]:
+        return "Garner Quant is running, but its heartbeat is stale. Check the runtime host."
+
     status = runtime_status.get("status")
     active_markets = safe_list(runtime_status.get("markets_open"))
     trades = int(execution_summary.get("paper_trades", 0) or 0)
     trace_count = int(execution_summary.get("decision_trace_count", 0) or 0)
     notifications = int(notification_health.get("notifications_sent_today", 0) or 0)
-
-    if status != "running" or not heartbeat_ok:
-        return "Garner Quant is offline or stale. Restart the runtime before relying on live status."
 
     if not active_markets:
         next_name, next_seconds = next_market_details(markets)
@@ -1098,6 +1051,12 @@ def runtime_status_sentence(
     today_trade_rows,
     notification_health,
 ):
+    state = runtime_state(runtime_status)
+    if not state["running"]:
+        if state["level"] == "error":
+            return "Garner Quant needs attention. The runtime reported an error."
+        return "Garner Quant is offline. Start the runtime before relying on live status."
+
     stage = mission_stage(runtime_status)
     markets = expand_market_names(runtime_status.get("markets_open"))
     market_text = ", ".join(markets) if markets else "configured markets"
@@ -1133,32 +1092,7 @@ def runtime_status_sentence(
 
 
 def mission_stage(runtime_status):
-    stage_text = " ".join(
-        [
-            str(runtime_status.get("current_strategy_stage") or ""),
-            str((runtime_status.get("latest_runtime_event") or {}).get("type") or ""),
-        ]
-    ).lower()
-
-    if "strategy completed" in stage_text or "completed" in stage_text:
-        return "Sleep"
-    if "runtime started" in stage_text or "resumed" in stage_text:
-        return "Market Check"
-    if "download" in stage_text or "price" in stage_text:
-        return "Price Download"
-    if "signal" in stage_text:
-        return "Signal Generation"
-    if "portfolio" in stage_text:
-        return "Portfolio Decision"
-    if "paper" in stage_text or "trade" in stage_text:
-        return "Paper Execution"
-    if "telegram" in stage_text or "notification" in stage_text:
-        return "Telegram"
-    if "market" in stage_text or "monitor" in stage_text:
-        return "Market Check"
-    if "sleep" in stage_text or "blocked" in stage_text:
-        return "Sleep"
-    return runtime_status.get("current_strategy_stage") or "Sleeping"
+    return runtime_state(runtime_status)["stage"]
 
 
 def pipeline_state(stage, current_stage):
@@ -1324,15 +1258,22 @@ def inject_mission_control_css():
 
 
 def render_hero_status(runtime_status, runtime_config, heartbeat_ok, markets_open):
+    state = runtime_state(runtime_status)
     current_stage = mission_stage(runtime_status)
-    live_label = "🟢 GARNER QUANT LIVE" if heartbeat_ok else "🔴 GARNER QUANT OFFLINE"
+    live_label = state["banner"]
     markets = " • ".join(expand_market_names(markets_open)) if markets_open else "No markets open"
     mode = (
         runtime_status.get("mode")
         or runtime_config.get("mode")
         or "monitor_only"
     ).replace("_", " ").title()
-    health = "Runtime Healthy" if heartbeat_ok else "Runtime Needs Attention"
+    if state["running"]:
+        live_label = state["banner"]
+    elif state["level"] == "error":
+        live_label = "Garner Quant Needs Attention"
+    else:
+        live_label = "Garner Quant Offline"
+    health = f"Runtime {state['health']}"
     st.markdown(
         f"""
         <div class="gq-hero">
@@ -2385,7 +2326,7 @@ active_market_label = (
     if active_markets
     else "Markets Closed"
 )
-runtime_live = runtime_status.get("status") == "running" and heartbeat_ok
+runtime_live = runtime_state(runtime_status)["running"]
 trace_decisions = safe_list(decision_trace.get("decisions"))
 
 current_mission_stage = render_hero_status(
