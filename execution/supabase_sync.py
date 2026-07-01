@@ -15,6 +15,58 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = None
 
 
+def warn_sync_failed(name, exc):
+    print(f"Warning: {name} Supabase sync failed: {exc}")
+
+
+def safe_float(value, default=0.0):
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default
+
+    if not math.isfinite(numeric):
+        return default
+
+    return numeric
+
+
+def upsert_rows(client, table_name, rows):
+    if not rows:
+        return
+
+    client.table(table_name).upsert(rows).execute()
+
+
+def remote_ids(client, table_name, filters=None):
+    query = client.table(table_name).select("id")
+    for column, value in filters or []:
+        query = query.eq(column, value)
+
+    response = query.execute()
+    return {
+        row.get("id")
+        for row in (response.data or [])
+        if row.get("id") is not None
+    }
+
+
+def delete_stale_rows(client, table_name, desired_ids, filters=None):
+    stale_ids = remote_ids(client, table_name, filters=filters) - set(desired_ids)
+
+    for stale_id in stale_ids:
+        query = client.table(table_name).delete()
+        for column, value in filters or []:
+            query = query.eq(column, value)
+        query.eq("id", stale_id).execute()
+
+
+def replace_rows_after_upsert(client, table_name, rows, filters=None):
+    desired_ids = [row["id"] for row in rows]
+    upsert_rows(client, table_name, rows)
+    delete_stale_rows(client, table_name, desired_ids, filters=filters)
+
+
 def get_supabase_client():
     global supabase
 
@@ -65,172 +117,196 @@ def sync_runtime_status(status_path="data/live_runtime_status.json"):
 
 
 def sync_broker_account():
-    client = get_supabase_client()
+    try:
+        client = get_supabase_client()
 
-    broker = pd.read_csv("broker_account.csv")
-    row = broker.iloc[0]
+        broker = pd.read_csv("broker_account.csv")
+        row = broker.iloc[0]
 
-    data = {
-        "id": 1,
-        "portfolio_value": float(row["portfolio_value"]),
-        "cash": float(row["cash"]),
-        "buying_power": float(row["buying_power"]),
-        "realised_pnl": float(row["realised_pnl"]),
-        "unrealised_pnl": float(row["unrealised_pnl"]),
-        "updated_at": datetime.utcnow().isoformat()
-    }
+        data = {
+            "id": 1,
+            "portfolio_value": float(row["portfolio_value"]),
+            "cash": float(row["cash"]),
+            "buying_power": float(row["buying_power"]),
+            "realised_pnl": float(row["realised_pnl"]),
+            "unrealised_pnl": float(row["unrealised_pnl"]),
+            "updated_at": datetime.utcnow().isoformat()
+        }
 
-    client.table("broker_account").upsert(data).execute()
+        client.table("broker_account").upsert(data).execute()
 
-    print("Supabase broker account synced.")
+        print("Supabase broker account synced.")
+        return True
+    except Exception as exc:
+        warn_sync_failed("broker account", exc)
+        return False
 
 
 def sync_holdings():
-    client = get_supabase_client()
-
     try:
+        client = get_supabase_client()
         holdings = pd.read_csv("holdings_report.csv")
     except pd.errors.EmptyDataError:
-        client.table("holdings").delete().neq("id", 0).execute()
-        print("No holdings to sync.")
-        return
+        holdings = pd.DataFrame()
+    except Exception as exc:
+        warn_sync_failed("holdings", exc)
+        return False
 
-    client.table("holdings").delete().neq("id", 0).execute()
-
-    for _, row in holdings.iterrows():
-
-        data = {
-            "ticker": row["ticker"],
-            "shares": float(row["shares"]),
-            "entry_price": float(row["entry_price"]),
-            "current_price": float(row["current_price"]),
-            "market_value": float(row["market_value"]),
-            "unrealised_pnl": float(row["unrealised_pnl"]),
-            "unrealised_pnl_percent": float(row["unrealised_pnl_percent"]),
-            "updated_at": datetime.utcnow().isoformat()
-        }
-
-        client.table("holdings").insert(data).execute()
-
-    print("Supabase holdings synced.")
+    try:
+        rows = []
+        for _, row in holdings.iterrows():
+            rows.append({
+                "id": int(len(rows) + 1),
+                "ticker": row["ticker"],
+                "shares": float(row["shares"]),
+                "entry_price": float(row["entry_price"]),
+                "current_price": float(row["current_price"]),
+                "market_value": float(row["market_value"]),
+                "unrealised_pnl": float(row["unrealised_pnl"]),
+                "unrealised_pnl_percent": float(row["unrealised_pnl_percent"]),
+                "updated_at": datetime.utcnow().isoformat()
+            })
+        replace_rows_after_upsert(client, "holdings", rows)
+        print("Supabase holdings synced.")
+        return True
+    except Exception as exc:
+        warn_sync_failed("holdings", exc)
+        return False
 
 
 def sync_30_day_tracker():
-    client = get_supabase_client()
-
-    tracker = pd.read_csv("paper_30_day_tracker.csv")
-
-    client.table("paper_30_day_tracker").delete().neq("id", 0).execute()
-
-    for _, row in tracker.iterrows():
-
-        benchmark_return = row.get("benchmark_return", 0)
-        alpha = row.get("alpha", 0)
-
-        benchmark_return = 0 if pd.isna(benchmark_return) or not math.isfinite(float(benchmark_return)) else float(benchmark_return)
-        alpha = 0 if pd.isna(alpha) or not math.isfinite(float(alpha)) else float(alpha)
-
-        data = {
-            "date": str(row["date"]),
-            "portfolio_value": float(row["portfolio_value"]),
-            "cash": float(row["cash"]),
-            "realised_pnl": float(row["realised_pnl"]),
-            "unrealised_pnl": float(row["unrealised_pnl"]),
-            "benchmark_return": benchmark_return,
-            "alpha": alpha,
-            "updated_at": datetime.utcnow().isoformat()
-        }
-
-        client.table("paper_30_day_tracker").insert(data).execute()
-
-    print("Supabase 30 day tracker synced.")
-
-def sync_holdings_history():
-    client = get_supabase_client()
+    try:
+        client = get_supabase_client()
+        tracker = pd.read_csv("paper_30_day_tracker.csv")
+    except Exception as exc:
+        warn_sync_failed("30 day tracker", exc)
+        return False
 
     try:
+        rows = []
+        for _, row in tracker.iterrows():
+            benchmark_return = row.get("benchmark_return", 0)
+            alpha = row.get("alpha", 0)
+
+            benchmark_return = safe_float(benchmark_return)
+            alpha = safe_float(alpha)
+
+            rows.append({
+                "id": int(len(rows) + 1),
+                "date": str(row["date"]),
+                "portfolio_value": float(row["portfolio_value"]),
+                "cash": float(row["cash"]),
+                "realised_pnl": float(row["realised_pnl"]),
+                "unrealised_pnl": float(row["unrealised_pnl"]),
+                "benchmark_return": benchmark_return,
+                "alpha": alpha,
+                "updated_at": datetime.utcnow().isoformat()
+            })
+        replace_rows_after_upsert(client, "paper_30_day_tracker", rows)
+        print("Supabase 30 day tracker synced.")
+        return True
+    except Exception as exc:
+        warn_sync_failed("30 day tracker", exc)
+        return False
+
+
+def sync_holdings_history():
+    try:
+        client = get_supabase_client()
         holdings = pd.read_csv("holdings_report.csv")
     except pd.errors.EmptyDataError:
-        print("No holdings history to sync.")
-        return
+        holdings = pd.DataFrame()
+    except Exception as exc:
+        warn_sync_failed("holdings history", exc)
+        return False
 
     today = datetime.utcnow().date().isoformat()
+    try:
+        rows = []
+        for _, row in holdings.iterrows():
+            rows.append({
+                "id": int(datetime.utcnow().strftime("%Y%m%d")) * 1000 + len(rows) + 1,
+                "date": today,
+                "ticker": row["ticker"],
+                "shares": float(row["shares"]),
+                "entry_price": float(row["entry_price"]),
+                "current_price": float(row["current_price"]),
+                "market_value": float(row["market_value"]),
+                "unrealised_pnl": float(row["unrealised_pnl"]),
+                "unrealised_pnl_percent": float(row["unrealised_pnl_percent"])
+            })
+        replace_rows_after_upsert(
+            client,
+            "holdings_history",
+            rows,
+            filters=[("date", today)],
+        )
+        print("Supabase holdings history synced.")
+        return True
+    except Exception as exc:
+        warn_sync_failed("holdings history", exc)
+        return False
 
-    client.table("holdings_history").delete().eq("date", today).execute()
-
-    for _, row in holdings.iterrows():
-
-        data = {
-            "date": today,
-            "ticker": row["ticker"],
-            "shares": float(row["shares"]),
-            "entry_price": float(row["entry_price"]),
-            "current_price": float(row["current_price"]),
-            "market_value": float(row["market_value"]),
-            "unrealised_pnl": float(row["unrealised_pnl"]),
-            "unrealised_pnl_percent": float(row["unrealised_pnl_percent"])
-        }
-
-        client.table("holdings_history").insert(data).execute()
-
-    print("Supabase holdings history synced.")
-    
 def sync_trade_journal():
-    client = get_supabase_client()
+    try:
+        client = get_supabase_client()
+        trades = pd.read_csv("trade_journal_v3.csv")
+        print(f"Trade journal rows loaded: {len(trades)}")
+        print(trades.tail(20))
+    except Exception as exc:
+        warn_sync_failed("trade journal", exc)
+        return False
 
-    trades = pd.read_csv("trade_journal_v3.csv")
-    print(f"Trade journal rows loaded: {len(trades)}")
-    print(trades.tail(20))
+    try:
+        rows = []
+        for _, row in trades.iterrows():
+            rows.append({
+                "id": int(len(rows) + 1),
+                "date": str(row.get("date", row.get("exit_date", ""))),
+                "time": str(row.get("time", "")),
+                "ticker": str(row.get("ticker", "")),
+                "action": str(row.get("action", "SELL")),
+                "shares": float(row.get("shares", 0)),
+                "price": float(row.get("price", row.get("exit_price", 0))),
+                "value": float(row.get("value", row.get("exit_price", 0) * row.get("shares", 0))),
+                "pnl": float(row.get("pnl", 0)),
+                "reason": str(row.get("reason", "")),
+                "updated_at": datetime.utcnow().isoformat()
+            })
+        replace_rows_after_upsert(client, "trade_journal", rows)
+        print("Supabase trade journal synced.")
+        return True
+    except Exception as exc:
+        warn_sync_failed("trade journal", exc)
+        return False
 
-    client.table("trade_journal").delete().neq("id", 0).execute()
-
-    for _, row in trades.iterrows():
-
-        data = {
-            "date": str(row.get("date", row.get("exit_date", ""))),
-            "time": str(row.get("time", "")),
-            "ticker": str(row.get("ticker", "")),
-            "action": str(row.get("action", "SELL")),
-            "shares": float(row.get("shares", 0)),
-            "price": float(row.get("price", row.get("exit_price", 0))),
-            "value": float(row.get("value", row.get("exit_price", 0) * row.get("shares", 0))),
-            "pnl": float(row.get("pnl", 0)),
-            "reason": str(row.get("reason", "")),
-            "updated_at": datetime.utcnow().isoformat()
-        }
-
-        client.table("trade_journal").insert(data).execute()
-
-    print("Supabase trade journal synced.")
 
 def sync_signals():
-    client = get_supabase_client()
+    try:
+        client = get_supabase_client()
+        signals = pd.read_csv(
+            "signal_report_v2.csv"
+        )
+    except Exception as exc:
+        warn_sync_failed("signals", exc)
+        return False
 
-    signals = pd.read_csv(
-        "signal_report_v2.csv"
-    )
-
-    client.table(
-        "signals"
-    ).delete().neq(
-        "id",
-        0
-    ).execute()
-
-    for _, row in signals.iterrows():
-
-        data = {
-            "date": str(row["date"]),
-            "ticker": row["ticker"],
-            "signal": row["signal"],
-            "weight": float(row["weight"]),
-            "status": row["status"],
-            "updated_at":
-                datetime.utcnow().isoformat()
-        }
-
-        client.table(
-            "signals"
-        ).insert(data).execute()
-
-    print("Supabase signals synced.")
+    try:
+        rows = []
+        for _, row in signals.iterrows():
+            rows.append({
+                "id": int(len(rows) + 1),
+                "date": str(row["date"]),
+                "ticker": row["ticker"],
+                "signal": row["signal"],
+                "weight": float(row["weight"]),
+                "status": row["status"],
+                "updated_at":
+                    datetime.utcnow().isoformat()
+            })
+        replace_rows_after_upsert(client, "signals", rows)
+        print("Supabase signals synced.")
+        return True
+    except Exception as exc:
+        warn_sync_failed("signals", exc)
+        return False
