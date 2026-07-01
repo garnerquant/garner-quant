@@ -1,4 +1,7 @@
 import os
+import json
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -11,7 +14,7 @@ from ui.responsive import (
     responsive_columns,
     responsive_table,
 )
-from ui.auto_refresh import enable_auto_refresh
+from ui.auto_refresh import fragment_runner, live_mode_controls
 
 
 def inject_mobile_css():
@@ -120,6 +123,100 @@ def format_last_updated():
         return "Unknown"
 
 
+ROOT = Path(__file__).resolve().parent
+
+
+def file_freshness(path):
+    path = ROOT / path
+    if not path.exists():
+        return "Missing"
+
+    age_seconds = max(0, pd.Timestamp.now().timestamp() - path.stat().st_mtime)
+    if age_seconds <= 60:
+        return "Live"
+    if age_seconds <= 300:
+        return "Recent"
+    if age_seconds <= 900:
+        return "Slightly stale"
+    return "Stale"
+
+
+def read_json_file(path):
+    try:
+        with (ROOT / path).open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        return {}
+
+
+def latest_trade_label():
+    journal = load_csv("trade_journal_v3.csv")
+    if journal.empty:
+        return "None today"
+
+    latest = journal.iloc[-1]
+    action = latest.get("action", "TRADE")
+    ticker = latest.get("ticker", "UNKNOWN")
+    time_value = latest.get("time", "")
+    if pd.isna(time_value):
+        time_value = ""
+    return f"{action} {ticker} {time_value}".strip()
+
+
+def holdings_count_label():
+    current_holdings = load_csv("holdings_report.csv")
+    if current_holdings.empty:
+        return "0"
+
+    ticker_column = None
+    for column in current_holdings.columns:
+        if column.lower() == "ticker":
+            ticker_column = column
+            break
+
+    if ticker_column is None:
+        return str(len(current_holdings))
+
+    tickers = current_holdings[ticker_column].astype(str).str.upper()
+    return str(int((tickers != "CASH").sum()))
+
+
+def runtime_status_label():
+    status = read_json_file("data/live_runtime_status.json")
+    return str(status.get("status") or "Unknown").title()
+
+
+def render_live_operational_cards():
+    status_card(format_last_updated())
+
+    cols = responsive_columns(4)
+    with cols[0]:
+        metric_card(
+            "Data Freshness",
+            file_freshness("data/live_runtime_status.json"),
+            True,
+        )
+    with cols[1]:
+        metric_card("Runtime Status", runtime_status_label(), True)
+    with cols[2]:
+        metric_card("Latest Paper Trade", latest_trade_label(), True)
+    with cols[3]:
+        metric_card("Current Holdings", holdings_count_label(), True)
+
+
+def render_live_panel(live_mode):
+    # Full-page auto-refresh is deliberately avoided because Streamlit reruns can
+    # return the browser to the top of the page. Fragments refresh this small
+    # operational panel every 60 seconds without rebuilding the whole dashboard.
+    fragment = fragment_runner()
+    if live_mode["enabled"] and fragment is not None:
+        live_fragment = fragment(run_every="60s")(render_live_operational_cards)
+        live_fragment()
+        return
+
+    render_live_operational_cards()
+
+
 st.set_page_config(
     page_title="Garner Quant",
     page_icon="📊",
@@ -128,11 +225,6 @@ st.set_page_config(
 
 inject_mobile_css()
 apply_responsive_styles()
-auto_refresh = enable_auto_refresh(
-    interval_seconds=60,
-    key="main_dashboard_auto_refresh",
-    default_enabled=False,
-)
 
 load_dotenv()
 
@@ -188,18 +280,21 @@ if broker.empty:
     st.stop()
 
 broker_row = broker.iloc[0]
-last_updated = format_last_updated()
-
-status_card(last_updated)
 
 st.title("📈 Garner Quant")
 st.caption("Personal investment research and paper trading dashboard.")
 if st.button("Refresh now", type="primary"):
     st.rerun()
-if auto_refresh["enabled"]:
-    st.caption(f"Auto-refresh: ON | Every {auto_refresh['interval_seconds']}s")
+live_mode = live_mode_controls(
+    interval_seconds=60,
+    key="main_dashboard_live_mode",
+    default_enabled=False,
+)
+if live_mode["enabled"]:
+    st.caption("Live mode: ON | Key cards update every 60s")
 else:
     st.caption("Auto-refresh paused to preserve scroll position")
+render_live_panel(live_mode)
 
 page = "Home"
 

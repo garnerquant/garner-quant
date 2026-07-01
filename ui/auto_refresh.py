@@ -1,5 +1,3 @@
-import json
-
 import streamlit as st
 
 
@@ -40,99 +38,60 @@ def _valid_interval(value, default):
     return value if value in INTERVAL_OPTIONS else default
 
 
-def _scroll_script(key, interval_seconds=None):
-    storage_key = json.dumps(f"garner_quant_scroll_{key}")
-    timer_key = json.dumps(f"garner_quant_refresh_timer_{key}")
-    listener_key = json.dumps(f"garner_quant_scroll_listener_{key}")
-    interval_ms = (
-        "null"
-        if interval_seconds is None
-        else str(max(1, int(interval_seconds)) * 1000)
+def fragment_runner():
+    if hasattr(st, "fragment"):
+        return st.fragment
+    if hasattr(st, "experimental_fragment"):
+        return st.experimental_fragment
+    return None
+
+
+def fragments_available():
+    return fragment_runner() is not None
+
+
+def live_mode_controls(
+    interval_seconds=60,
+    key="dashboard_live_mode",
+    default_enabled=False,
+):
+    interval_seconds = _valid_interval(interval_seconds, interval_seconds)
+    enabled_key = f"{key}_enabled"
+    enabled_control_key = f"{enabled_key}_control"
+    query_enabled = _query_enabled(enabled_key)
+
+    if enabled_key not in st.session_state:
+        st.session_state[enabled_key] = (
+            bool(default_enabled)
+            if query_enabled is None
+            else query_enabled
+        )
+    if enabled_control_key not in st.session_state:
+        st.session_state[enabled_control_key] = bool(st.session_state[enabled_key])
+
+    enabled = st.checkbox(
+        "Live mode",
+        key=enabled_control_key,
+        help="Updates key cards without forcing full-page navigation where possible.",
+    )
+    st.caption(
+        "Updates key cards without forcing full-page navigation where possible."
     )
 
-    st.iframe(
-        f"""
-        <script>
-        (function() {{
-            try {{
-                const parentWindow = window.parent;
-                const storageKey = {storage_key};
-                const timerKey = {timer_key};
-                const listenerKey = {listener_key};
-                const intervalMs = {interval_ms};
+    available = fragments_available()
+    if enabled and not available:
+        st.caption("Live mode unavailable in this Streamlit version.")
+        enabled = False
 
-                function currentScrollY() {{
-                    return parentWindow.scrollY ||
-                        parentWindow.pageYOffset ||
-                        parentWindow.document.documentElement.scrollTop ||
-                        parentWindow.document.body.scrollTop ||
-                        0;
-                }}
+    st.session_state[enabled_key] = bool(enabled)
+    _write_query_value(enabled_key, "1" if enabled else "0")
 
-                function saveScroll() {{
-                    try {{
-                        parentWindow.sessionStorage.setItem(
-                            storageKey,
-                            String(currentScrollY())
-                        );
-                    }} catch (error) {{}}
-                }}
-
-                function restoreScroll() {{
-                    try {{
-                        const raw = parentWindow.sessionStorage.getItem(storageKey);
-                        if (raw === null) {{
-                            return;
-                        }}
-                        const y = parseInt(raw, 10);
-                        if (Number.isNaN(y)) {{
-                            return;
-                        }}
-                        parentWindow.requestAnimationFrame(function() {{
-                            parentWindow.scrollTo({{ top: y, behavior: "auto" }});
-                        }});
-                    }} catch (error) {{}}
-                }}
-
-                if (parentWindow[listenerKey]) {{
-                    parentWindow.removeEventListener(
-                        "scroll",
-                        parentWindow[listenerKey]
-                    );
-                }}
-                parentWindow[listenerKey] = saveScroll;
-                parentWindow.addEventListener(
-                    "scroll",
-                    parentWindow[listenerKey],
-                    {{ passive: true }}
-                );
-                parentWindow.addEventListener("beforeunload", saveScroll);
-                restoreScroll();
-
-                if (parentWindow[timerKey]) {{
-                    parentWindow.clearTimeout(parentWindow[timerKey]);
-                    parentWindow[timerKey] = null;
-                }}
-
-                // Fallback path for environments without streamlit-autorefresh.
-                // It must reload the page, but it preserves scroll position when
-                // the browser allows component JavaScript to access the parent.
-                if (intervalMs !== null) {{
-                    parentWindow[timerKey] = parentWindow.setTimeout(function() {{
-                        saveScroll();
-                        parentWindow.location.reload();
-                    }}, intervalMs);
-                }}
-            }} catch (error) {{
-                // Streamlit Cloud/browser sandbox changes can block parent access.
-                // In that case auto-refresh still falls back gracefully elsewhere.
-            }}
-        }})();
-        </script>
-        """,
-        height=1,
-        width=1,
-    )
+    return {
+        "enabled": bool(enabled),
+        "interval_seconds": interval_seconds,
+        "fragments_available": available,
+        "method": "streamlit_fragment" if enabled and available else "manual",
+    }
 
 
 def enable_auto_refresh(
@@ -193,9 +152,7 @@ def enable_auto_refresh(
     _write_query_value(interval_key, interval)
 
     method = "disabled"
-    fallback_interval = None
     if enabled:
-        method = "streamlit_autorefresh"
         try:
             from streamlit_autorefresh import st_autorefresh
 
@@ -203,11 +160,9 @@ def enable_auto_refresh(
                 interval=interval * 1000,
                 key=f"{key}_tick",
             )
+            method = "streamlit_autorefresh"
         except Exception:
-            method = "scroll_preserving_reload_fallback"
-            fallback_interval = interval
-
-    _scroll_script(key, interval_seconds=fallback_interval)
+            method = "unavailable"
 
     return {
         "enabled": enabled,
