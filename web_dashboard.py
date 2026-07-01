@@ -100,6 +100,10 @@ def metric_card(label, value, green=False):
 
 
 def format_last_updated(value):
+    now = pd.Timestamp.now(tz="Europe/London")
+    timezone_label = now.tzname()
+    return f"Today \u2022 {now:%H:%M} {timezone_label}"
+
     if not value:
         return "Unknown"
 
