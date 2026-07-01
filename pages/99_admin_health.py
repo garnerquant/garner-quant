@@ -31,9 +31,10 @@ from ui.responsive import (
 )
 from ui.auto_refresh import enable_auto_refresh
 from ui.runtime_status import (
+    freshness_for_timestamp,
     load_runtime_status,
+    runtime_freshness,
     runtime_state,
-    runtime_status_updated_at,
 )
 
 
@@ -146,47 +147,12 @@ def age_label(value):
 
 
 def format_age(value):
-    if value == "" or value is None or pd.isna(value):
-        return "Missing"
-
-    seconds = max(
-        0,
-        int((pd.Timestamp.now() - pd.Timestamp(value)).total_seconds()),
-    )
-
-    if seconds < 60:
-        return f"{seconds} second{'s' if seconds != 1 else ''} ago"
-
-    minutes = seconds // 60
-    if minutes < 60:
-        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
-
-    hours = minutes // 60
-    if hours < 24:
-        return f"{hours} hour{'s' if hours != 1 else ''} ago"
-
-    days = hours // 24
-    return f"{days} day{'s' if days != 1 else ''} ago"
+    return freshness_for_timestamp(value)["age"]
 
 
 def freshness_badge(value):
-    if value == "" or value is None or pd.isna(value):
-        return "⚪ Missing", "missing"
-
-    seconds = max(
-        0,
-        int((pd.Timestamp.now() - pd.Timestamp(value)).total_seconds()),
-    )
-
-    if seconds <= 60:
-        return "🟢 Live", "live"
-    if seconds <= 5 * 60:
-        return "🟢 Recent", "recent"
-    if seconds <= 15 * 60:
-        return "🟡 Slightly stale", "slightly-stale"
-    if seconds <= 60 * 60:
-        return "🟠 Stale", "stale"
-    return "🔴 Very stale", "very-stale"
+    freshness = freshness_for_timestamp(value)
+    return freshness["badge"], freshness["level"]
 
 
 def parse_timestamp(value):
@@ -408,6 +374,15 @@ def next_cycle_delta(runtime_status):
     return runtime_state(runtime_status)["next_cycle"]["delta"]
 
 
+def next_cycle_clock_label(runtime_status):
+    next_cycle = runtime_state(runtime_status)["next_cycle"]
+    if next_cycle["time"] == "None":
+        return next_cycle["delta"]
+    if next_cycle["delta"] == "Scanning...":
+        return "Scanning..."
+    return next_cycle["time"]
+
+
 def paper_execution_enabled(runtime_status, runtime_config):
     return bool(
         runtime_status.get("paper_execution_enabled")
@@ -460,7 +435,7 @@ def activity_state(runtime_status, runtime_config, heartbeat_ok, markets):
         "title": "Runtime Running",
         "current_activity": state["activity"],
         "next_label": "Next Cycle",
-        "next_value": state["next_cycle"]["time"],
+        "next_value": next_cycle_clock_label(runtime_status),
         "command": None,
     }
 
@@ -954,9 +929,9 @@ def build_timeline_rows(cycles, runtime_status, limit=12):
     if runtime_status.get("next_cycle_at"):
         rows.append(
             {
-                "Time": short_time(runtime_status.get("next_cycle_at")),
+                "Time": next_cycle_clock_label(runtime_status),
                 "": "▶",
-                "Activity": f"Sleeping until {short_time(runtime_status.get('next_cycle_at'))}",
+                "Activity": f"Sleeping until {next_cycle_clock_label(runtime_status)}",
                 "Stage": "Next Cycle",
             }
         )
@@ -1060,7 +1035,7 @@ def runtime_status_sentence(
     stage = mission_stage(runtime_status)
     markets = expand_market_names(runtime_status.get("markets_open"))
     market_text = ", ".join(markets) if markets else "configured markets"
-    next_cycle = short_time(runtime_status.get("next_cycle_at"))
+    next_cycle = next_cycle_clock_label(runtime_status)
 
     if today_trade_rows:
         latest = today_trade_rows[-1]
@@ -1287,7 +1262,7 @@ def render_hero_status(runtime_status, runtime_config, heartbeat_ok, markets_ope
                 <div class="gq-hero-item"><div class="gq-label">Health</div><div class="gq-value">{html.escape(health)}</div></div>
                 <div class="gq-hero-item"><div class="gq-label">Markets Open</div><div class="gq-value">{html.escape(markets)}</div></div>
                 <div class="gq-hero-item"><div class="gq-label">Last Cycle</div><div class="gq-value">{html.escape(short_time(runtime_status.get("last_cycle_at")))}</div></div>
-                <div class="gq-hero-item"><div class="gq-label">Next Cycle</div><div class="gq-value">{html.escape(short_time(runtime_status.get("next_cycle_at")))}</div></div>
+                <div class="gq-hero-item"><div class="gq-label">Next Cycle</div><div class="gq-value">{html.escape(next_cycle_clock_label(runtime_status))}</div></div>
                 <div class="gq-hero-item"><div class="gq-label">Heartbeat</div><div class="gq-value">{html.escape(heartbeat_status(runtime_status)[0])}</div></div>
                 <div class="gq-hero-item"><div class="gq-label">Current Stage</div><div class="gq-value">{html.escape(current_stage)}</div></div>
             </div>
@@ -1403,18 +1378,22 @@ def data_freshness_items(runtime_status=None):
     ]
     items = []
     for label, filename in files:
-        modified_at = (
-            runtime_status_updated_at(runtime_status or {})
-            if label == "Runtime Status"
-            else file_mtime(filename)
-        )
-        badge, level = freshness_badge(modified_at)
+        if label == "Runtime Status":
+            freshness = runtime_freshness(runtime_status or {})
+            modified_at = freshness["timestamp"]
+            badge = freshness["badge"]
+            level = freshness["level"]
+            age = freshness["age"]
+        else:
+            modified_at = file_mtime(filename)
+            badge, level = freshness_badge(modified_at)
+            age = format_age(modified_at)
         items.append(
             {
                 "label": label,
                 "filename": filename,
                 "modified_at": modified_at,
-                "age": format_age(modified_at),
+                "age": age,
                 "badge": badge,
                 "level": level,
             }
@@ -2489,9 +2468,9 @@ operator_cols = responsive_columns(8)
 operator_cols[0].metric("State", "🟢 LIVE" if runtime_live else "🔴 OFFLINE")
 operator_cols[1].metric("Mode", mode_label)
 operator_cols[2].metric("Market", active_market_label)
-operator_cols[3].metric("Runtime", "Healthy" if heartbeat_ok else heartbeat_label)
+operator_cols[3].metric("Runtime", runtime_state(runtime_status)["health"])
 operator_cols[4].metric("Last Cycle", short_time(runtime_status.get("last_cycle_at")))
-operator_cols[5].metric("Next Cycle", short_time(runtime_status.get("next_cycle_at")))
+operator_cols[5].metric("Next Cycle", next_cycle_clock_label(runtime_status))
 operator_cols[6].metric("Next Scan", next_scan_label(runtime_status))
 operator_cols[7].metric("Heartbeat", heartbeat_label)
 
@@ -2925,10 +2904,12 @@ health_detail_cols[5].metric(
     ),
 )
 
-if not heartbeat_ok:
+runtime_shared_state = runtime_state(runtime_status)
+
+if runtime_shared_state["running"] and not heartbeat_ok:
     st.warning(
-        "Runtime heartbeat is stale or missing. Restart the runtime from the "
-        "terminal or with systemd on the VPS."
+        "Runtime heartbeat is overdue. Check whether the scheduled runtime "
+        "cycle has stalled."
     )
 
 strategy_stats_cols = responsive_columns(5)

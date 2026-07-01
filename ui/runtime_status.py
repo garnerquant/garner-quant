@@ -87,9 +87,21 @@ def _parse_time(value):
         return None
 
     try:
-        return pd.to_datetime(value, utc=True).tz_convert("Europe/London")
+        if isinstance(value, pd.Timestamp):
+            timestamp = value
+        else:
+            timestamp = pd.to_datetime(value, utc=True)
+
+        if timestamp.tzinfo is None:
+            return timestamp.tz_localize("Europe/London")
+
+        return timestamp.tz_convert("Europe/London")
     except Exception:
         return None
+
+def _latest_timestamp(*values):
+    parsed = [timestamp for timestamp in (_parse_time(value) for value in values) if timestamp is not None]
+    return max(parsed) if parsed else None
 
 
 def _duration_label(seconds):
@@ -107,6 +119,62 @@ def _duration_label(seconds):
     return f"{seconds}s"
 
 
+def freshness_for_timestamp(value):
+    timestamp = _parse_time(value)
+    if timestamp is None:
+        return {
+            "label": "Missing",
+            "badge": "Missing",
+            "level": "missing",
+            "age": "Missing",
+            "age_seconds": None,
+            "timestamp": None,
+        }
+
+    now = pd.Timestamp.now(tz="Europe/London")
+    age_seconds = max(0, int((now - timestamp).total_seconds()))
+    age = f"{_duration_label(age_seconds)} ago"
+
+    if age_seconds <= 60:
+        label = "Live"
+        level = "live"
+    elif age_seconds <= 5 * 60:
+        label = "Recent"
+        level = "recent"
+    elif age_seconds <= 15 * 60:
+        label = "Slightly stale"
+        level = "slightly-stale"
+    elif age_seconds <= 60 * 60:
+        label = "Stale"
+        level = "stale"
+    else:
+        label = "Very stale"
+        level = "very-stale"
+
+    return {
+        "label": label,
+        "badge": label,
+        "level": level,
+        "age": age,
+        "age_seconds": age_seconds,
+        "timestamp": timestamp,
+    }
+
+
+def runtime_freshness(status):
+    latest_event = status.get("latest_runtime_event") or {}
+    candidates = [
+        status.get("updated_at"),
+        status.get("last_cycle_at"),
+        latest_event.get("timestamp"),
+    ]
+
+    if status.get("_runtime_source") == "local_json":
+        candidates.append(runtime_status_updated_at(status))
+
+    return freshness_for_timestamp(_latest_timestamp(*candidates))
+
+
 def runtime_heartbeat(status):
     last_cycle_at = _parse_time(status.get("last_cycle_at"))
     if last_cycle_at is None:
@@ -120,11 +188,16 @@ def runtime_heartbeat(status):
     now = pd.Timestamp.now(tz="Europe/London")
     age_seconds = max(0, int((now - last_cycle_at).total_seconds()))
     cycle_seconds = int(status.get("cycle_seconds", 300) or 300)
+    next_cycle_at = _parse_time(status.get("next_cycle_at"))
+    missed_cycle = (
+        next_cycle_at is not None
+        and now > next_cycle_at + pd.Timedelta(seconds=max(90, cycle_seconds))
+    )
     threshold_seconds = max((cycle_seconds * 2) + 60, 600)
-    healthy = age_seconds <= threshold_seconds
+    healthy = age_seconds <= threshold_seconds and not missed_cycle
 
     return {
-        "label": "Healthy" if healthy else "Stale",
+        "label": "Healthy" if healthy else "Heartbeat overdue",
         "healthy": healthy,
         "age": _duration_label(age_seconds),
         "age_seconds": age_seconds,
@@ -174,7 +247,7 @@ def runtime_next_cycle(status):
     seconds = int((next_cycle_at - now).total_seconds())
     if seconds <= 0:
         scan = "Scanning..."
-        delta = "due now"
+        delta = "Scanning..."
     else:
         minutes, remainder = divmod(seconds, 60)
         scan = (
@@ -210,13 +283,13 @@ def runtime_state(status):
         activity = "Runtime reported an error."
     elif running:
         healthy = heartbeat["healthy"]
-        health = "Healthy" if healthy else "Stale heartbeat"
+        health = "Running" if healthy else "Heartbeat overdue"
         if stage in {"Sleep", "Sleeping", "Strategy Completed", "Waiting", "Idle", "Market Closed"}:
             level = "idle"
             title = "Runtime Running"
             banner = "Garner Quant Sleeping"
             activity = (
-                f"Sleeping until {next_cycle['time']}."
+                f"Sleeping until next scan at {next_cycle['time']}."
                 if next_cycle["time"] != "None"
                 else "Running and waiting for the next scan."
             )
@@ -224,7 +297,7 @@ def runtime_state(status):
             level = "live"
             title = "Runtime Running"
             banner = "Garner Quant Running"
-            activity = f"Processing {stage.lower()}."
+            activity = f"{stage} in progress."
     else:
         level = "offline"
         title = "Runtime Offline"
@@ -245,6 +318,7 @@ def runtime_state(status):
         "activity": activity,
         "heartbeat": heartbeat,
         "next_cycle": next_cycle,
+        "freshness": runtime_freshness(status),
         "last_cycle_at": status.get("last_cycle_at"),
         "next_cycle_at": status.get("next_cycle_at"),
         "last_error": last_error,

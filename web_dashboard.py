@@ -12,7 +12,7 @@ from ui.responsive import (
     responsive_columns,
     responsive_table,
 )
-from ui.runtime_status import load_runtime_status, runtime_status_updated_at
+from ui.runtime_status import load_runtime_status, runtime_freshness
 
 try:
     from ui.auto_refresh import (
@@ -178,28 +178,6 @@ def format_last_updated():
         return "Unknown"
 
 
-def age_freshness_from_timestamp(value):
-    if not value:
-        return None
-
-    try:
-        updated_at = pd.to_datetime(value, utc=True)
-    except Exception:
-        return None
-
-    age_seconds = max(
-        0,
-        (pd.Timestamp.now(tz="UTC") - updated_at).total_seconds(),
-    )
-    if age_seconds <= 60:
-        return "Live"
-    if age_seconds <= 300:
-        return "Recent"
-    if age_seconds <= 900:
-        return "Slightly stale"
-    return "Stale"
-
-
 def latest_trade_label():
     journal = load_csv("trade_journal_v3.csv")
     if journal.empty:
@@ -239,18 +217,7 @@ def runtime_status_label():
 
 def runtime_freshness_label():
     status = load_runtime_status()
-    if status.get("_runtime_source") == "supabase":
-        freshness = age_freshness_from_timestamp(status.get("updated_at"))
-        if freshness:
-            return freshness
-
-    updated_at = runtime_status_updated_at(status)
-    if updated_at:
-        freshness = age_freshness_from_timestamp(updated_at)
-        if freshness:
-            return freshness
-
-    return "Missing"
+    return runtime_freshness(status)["label"]
 
 
 def render_live_operational_cards():
