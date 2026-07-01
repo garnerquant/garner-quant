@@ -755,17 +755,19 @@ def run_cycle(config, started_at, cycle_count):
             )
 
     try:
-        from news.news_config import NEWS_MONITOR_ENABLED
-        from news.news_monitor import run_news_monitor
+        from market_intelligence.daily_brief import (
+            MARKET_INTELLIGENCE_ENABLED,
+            run_market_intelligence,
+        )
 
-        if NEWS_MONITOR_ENABLED:
-            news_summary = run_news_monitor(tickers=tickers)
+        if MARKET_INTELLIGENCE_ENABLED:
+            news_summary = run_market_intelligence()
             append_event(
                 events,
-                "News Monitor Updated",
-                "Read-only market news monitor refreshed.",
+                "Market Intelligence Updated",
+                "Read-only market intelligence engine refreshed.",
                 details={
-                    "items_count": news_summary.get("items_count", 0),
+                    "stories_count": news_summary.get("stories_count", 0),
                     "sources": news_summary.get("sources", []),
                     "errors": len(news_summary.get("errors", [])),
                 },
@@ -773,8 +775,8 @@ def run_cycle(config, started_at, cycle_count):
     except Exception as exc:
         append_event(
             events,
-            "News Monitor Warning",
-            "Read-only market news monitor failed; runtime continued.",
+            "Market Intelligence Warning",
+            "Read-only market intelligence engine failed; runtime continued.",
             severity="warning",
             details={"error": str(exc)},
         )
@@ -887,9 +889,9 @@ def run_cycle(config, started_at, cycle_count):
         "alerts_found": alerts_found,
         "notifications_sent": notifications_sent,
         "notification_summary": notification_summary,
-        "news_monitor": (
+        "market_intelligence": (
             {
-                "items_count": news_summary.get("items_count", 0),
+                "stories_count": news_summary.get("stories_count", 0),
                 "generated_at": news_summary.get("generated_at"),
                 "errors": len(news_summary.get("errors", [])),
             }

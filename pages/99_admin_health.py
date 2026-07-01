@@ -378,8 +378,8 @@ def next_cycle_clock_label(runtime_status):
     next_cycle = runtime_state(runtime_status)["next_cycle"]
     if next_cycle["time"] == "None":
         return next_cycle["delta"]
-    if next_cycle["delta"] == "Scanning...":
-        return "Scanning..."
+    if next_cycle["delta"] in {"Due now", "Scanning now"}:
+        return next_cycle["delta"]
     return next_cycle["time"]
 
 
@@ -1375,7 +1375,7 @@ def data_freshness_items(runtime_status=None):
         ("Portfolio", "paper_portfolio_v3.csv"),
         ("Decision Trace", "data/runtime_decision_trace.json"),
         ("Telegram Notifications", "data/notification_state.json"),
-        ("Market News", "data/news_events.json"),
+        ("Market Intelligence", "data/market_intelligence.json"),
     ]
     items = []
     for label, filename in files:
@@ -1432,22 +1432,76 @@ def render_data_freshness_card(items):
     st.markdown("".join(cards), unsafe_allow_html=True)
 
 
-def news_monitor_rows(limit=10):
-    news_data = load_json_file("data/news_events.json")
+def market_intelligence_rows(limit=10):
+    intelligence = load_json_file("data/market_intelligence.json")
     rows = []
-    for item in safe_list(news_data.get("items"))[:limit]:
+    for item in safe_list(intelligence.get("stories"))[:limit]:
         rows.append(
             {
-                "Time": short_time(item.get("timestamp")),
-                "Ticker": item.get("ticker") or item.get("query") or "Unknown",
+                "Time": short_time(item.get("published_at")),
+                "Tickers": ", ".join(safe_list(item.get("matched_tickers"))) or "-",
                 "Source": item.get("source") or "Unknown",
-                "Headline": item.get("title") or "Untitled",
+                "Headline": item.get("headline") or "Untitled",
+                "Category": item.get("category") or "Market",
                 "Sentiment": item.get("sentiment") or "unknown",
                 "Importance": item.get("importance") or "unknown",
                 "URL": item.get("url") or "",
             }
         )
-    return rows, news_data
+    return rows, intelligence
+
+
+def portfolio_exposure_rows(intelligence, limit=8):
+    rows = []
+    for item in safe_list(intelligence.get("portfolio_exposure"))[:limit]:
+        rows.append(
+            {
+                "Ticker": item.get("ticker"),
+                "Stories": item.get("stories_count", 0),
+                "Holding": "Yes" if item.get("in_current_holdings") else "No",
+                "Signal Today": "Yes" if item.get("in_todays_signals") else "No",
+                "Top Importance": item.get("highest_importance", "unknown"),
+            }
+        )
+    return rows
+
+
+def top_story_rows(intelligence, limit=5):
+    rows = []
+    for item in safe_list(intelligence.get("top_stories"))[:limit]:
+        rows.append(
+            {
+                "Time": short_time(item.get("published_at")),
+                "Headline": item.get("headline") or "Untitled",
+                "Category": item.get("category") or "Market",
+                "Importance": item.get("importance") or "unknown",
+                "Tickers": ", ".join(safe_list(item.get("matched_tickers"))) or "-",
+            }
+        )
+    return rows
+
+
+def macro_calendar_rows(intelligence, limit=8):
+    rows = []
+    calendar_items = safe_list(intelligence.get("macro_calendar"))
+    if not calendar_items:
+        try:
+            from market_intelligence.market_calendar import macro_calendar
+
+            calendar_items = safe_list(macro_calendar().get("events"))
+        except Exception:
+            calendar_items = []
+
+    for item in calendar_items[:limit]:
+        rows.append(
+            {
+                "Event": item.get("event"),
+                "Category": item.get("category"),
+                "Region": item.get("region"),
+                "Importance": item.get("importance"),
+            }
+        )
+    return rows
 
 
 def market_groups():
@@ -2368,26 +2422,59 @@ with market_panel_cols[1]:
         st.success("All configured markets are open.")
 st.caption(f"Next Market Event: {next_market_to_open(configured_markets)}")
 
-st.markdown("**Market News Monitor**")
-news_rows, news_data = news_monitor_rows(limit=10)
-news_cols = responsive_columns(3)
-news_cols[0].metric("Headlines Stored", news_data.get("items_count", 0))
-news_cols[1].metric(
+st.markdown("**Market Intelligence**")
+headline_rows, intelligence = market_intelligence_rows(limit=10)
+intelligence_cols = responsive_columns(4)
+intelligence_cols[0].metric("Stories Stored", intelligence.get("stories_count", 0))
+intelligence_cols[1].metric(
     "Sources",
-    ", ".join(safe_list(news_data.get("sources"))) or "Unavailable",
+    ", ".join(safe_list(intelligence.get("sources"))) or "Unavailable",
 )
-news_cols[2].metric(
+intelligence_cols[2].metric(
     "Last Updated",
-    short_time(news_data.get("generated_at")),
+    short_time(intelligence.get("generated_at")),
+)
+intelligence_cols[3].metric(
+    "Errors",
+    len(safe_list(intelligence.get("errors"))),
 )
 st.caption(
-    "Read-only RSS monitoring. News is displayed for operator context only "
-    "and does not change signals, portfolio decisions, or paper execution."
+    "Read-only market intelligence. Headlines are operator context only and "
+    "do not change signals, portfolio decisions, or paper execution."
 )
-if news_rows:
-    responsive_table(pd.DataFrame(news_rows), hide_index=True)
-else:
-    st.info("No news headlines have been collected yet.")
+st.info(intelligence.get("market_summary") or "No market summary available yet.")
+
+mi_tabs = st.tabs(
+    [
+        "Latest Headlines",
+        "Portfolio Exposure",
+        "Top Stories",
+        "Macro Calendar",
+    ]
+)
+with mi_tabs[0]:
+    if headline_rows:
+        responsive_table(pd.DataFrame(headline_rows), hide_index=True)
+    else:
+        st.info("No market intelligence headlines have been collected yet.")
+with mi_tabs[1]:
+    exposure_rows = portfolio_exposure_rows(intelligence)
+    if exposure_rows:
+        responsive_table(pd.DataFrame(exposure_rows), hide_index=True)
+    else:
+        st.info("No current portfolio exposure has been matched to headlines yet.")
+with mi_tabs[2]:
+    top_rows = top_story_rows(intelligence)
+    if top_rows:
+        responsive_table(pd.DataFrame(top_rows), hide_index=True)
+    else:
+        st.info("No top stories have been identified yet.")
+with mi_tabs[3]:
+    calendar_rows = macro_calendar_rows(intelligence)
+    if calendar_rows:
+        responsive_table(pd.DataFrame(calendar_rows), hide_index=True)
+    else:
+        st.info("No macro calendar items are available yet.")
 
 st.markdown("**Latest Completed Strategy**")
 st.caption(
