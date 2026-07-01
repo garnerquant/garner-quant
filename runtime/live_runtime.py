@@ -549,6 +549,10 @@ def run_paper_execution(now, markets_open, mode, events=None):
         "trades_recorded": 0,
         "paper_trades": 0,
         "portfolio_changed": False,
+        "decision_trace_count": 0,
+        "no_trade_count": 0,
+        "trade_count": 0,
+        "top_no_trade_reasons": {},
         "notifications_sent": 0,
         "execution_time_seconds": 0,
         "latest_paper_trade": None,
@@ -590,6 +594,14 @@ def run_paper_execution(now, markets_open, mode, events=None):
                 "trades_recorded": int(result.get("trades_recorded", 0)),
                 "paper_trades": int(result.get("paper_trades", 0)),
                 "portfolio_changed": bool(result.get("portfolio_changed", False)),
+                "decision_trace_count": int(
+                    result.get("decision_trace_count", 0) or 0
+                ),
+                "no_trade_count": int(result.get("no_trade_count", 0) or 0),
+                "trade_count": int(result.get("trade_count", 0) or 0),
+                "top_no_trade_reasons": json_safe(
+                    result.get("top_no_trade_reasons", {})
+                ),
                 "notifications_sent": int(
                     result.get(
                         "notifications_sent",
@@ -606,6 +618,20 @@ def run_paper_execution(now, markets_open, mode, events=None):
                 "latest_paper_trade": json_safe(result.get("latest_paper_trade")),
                 "status": "success",
             }
+        )
+        append_event(
+            events,
+            "Decision Trace Created",
+            (
+                f"{entry['decision_trace_count']} decisions traced. "
+                f"{entry['trades_recorded']} trades recorded."
+            ),
+            details={
+                "decision_trace_count": entry["decision_trace_count"],
+                "no_trade_count": entry["no_trade_count"],
+                "trade_count": entry["trade_count"],
+                "top_no_trade_reasons": entry["top_no_trade_reasons"],
+            },
         )
         append_event(
             events,
@@ -862,6 +888,26 @@ def run_cycle(config, started_at, cycle_count):
                     execution_entry.get("portfolio_changed", False)
                     if execution_entry is not None
                     else False
+                ),
+                "decision_trace_count": (
+                    execution_entry.get("decision_trace_count", 0)
+                    if execution_entry is not None
+                    else 0
+                ),
+                "no_trade_count": (
+                    execution_entry.get("no_trade_count", 0)
+                    if execution_entry is not None
+                    else 0
+                ),
+                "trade_count": (
+                    execution_entry.get("trade_count", 0)
+                    if execution_entry is not None
+                    else 0
+                ),
+                "top_no_trade_reasons": (
+                    execution_entry.get("top_no_trade_reasons", {})
+                    if execution_entry is not None
+                    else {}
                 ),
                 "notifications_sent": (
                     execution_entry.get("notifications_sent", 0)

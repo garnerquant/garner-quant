@@ -11,6 +11,7 @@ from ui.responsive import (
     responsive_columns,
     responsive_table,
 )
+from ui.auto_refresh import enable_auto_refresh
 
 
 def inject_mobile_css():
@@ -123,6 +124,10 @@ st.set_page_config(
 
 inject_mobile_css()
 apply_responsive_styles()
+auto_refresh = enable_auto_refresh(
+    interval_seconds=60,
+    key="main_dashboard_auto_refresh",
+)
 
 load_dotenv()
 
@@ -184,6 +189,10 @@ status_card(last_updated)
 
 st.title("📈 Garner Quant")
 st.caption("Personal investment research and paper trading dashboard.")
+if auto_refresh["enabled"]:
+    st.caption(f"Auto-refresh: ON | Every {auto_refresh['interval_seconds']}s")
+else:
+    st.caption("Auto-refresh: OFF")
 
 page = "Home"
 

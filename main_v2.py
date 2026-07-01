@@ -217,6 +217,10 @@ def main(show_charts=True, send_telegram=True, sync_remote=True):
         "notification_summary",
         {},
     )
+    decision_trace_summary = v3_trades.attrs.get(
+        "decision_trace_summary",
+        {},
+    )
     trade_notifications_sent = int(
         trade_notification_summary.get("sent", 0)
     )
@@ -238,6 +242,19 @@ def main(show_charts=True, send_telegram=True, sync_remote=True):
         "portfolio_changed": bool(len(v3_trades) > 0),
         "trade_notifications_sent": trade_notifications_sent,
         "notifications_sent": trade_notifications_sent,
+        "decision_trace_count": int(
+            decision_trace_summary.get("decision_trace_count", 0) or 0
+        ),
+        "no_trade_count": int(
+            decision_trace_summary.get("no_trade_count", 0) or 0
+        ),
+        "trade_count": int(
+            decision_trace_summary.get("trade_count", 0) or 0
+        ),
+        "top_no_trade_reasons": decision_trace_summary.get(
+            "top_no_trade_reasons",
+            {},
+        ),
         "execution_time_seconds": round(time.perf_counter() - run_started, 2),
         "events": pipeline_events,
         "latest_paper_trade": (

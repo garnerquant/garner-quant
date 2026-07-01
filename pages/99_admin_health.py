@@ -29,6 +29,7 @@ from ui.responsive import (
     responsive_columns,
     responsive_table,
 )
+from ui.auto_refresh import enable_auto_refresh
 
 
 FILES = [
@@ -64,6 +65,10 @@ st.set_page_config(
 )
 
 apply_responsive_styles()
+auto_refresh = enable_auto_refresh(
+    interval_seconds=30,
+    key="admin_health_auto_refresh",
+)
 
 
 def load_csv(filename):
@@ -133,6 +138,50 @@ def age_label(value):
     days = hours // 24
     unit = "day" if days == 1 else "days"
     return f"{days} {unit} ago"
+
+
+def format_age(value):
+    if value == "" or value is None or pd.isna(value):
+        return "Missing"
+
+    seconds = max(
+        0,
+        int((pd.Timestamp.now() - pd.Timestamp(value)).total_seconds()),
+    )
+
+    if seconds < 60:
+        return f"{seconds} second{'s' if seconds != 1 else ''} ago"
+
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+
+    days = hours // 24
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+def freshness_badge(value):
+    if value == "" or value is None or pd.isna(value):
+        return "⚪ Missing", "missing"
+
+    seconds = max(
+        0,
+        int((pd.Timestamp.now() - pd.Timestamp(value)).total_seconds()),
+    )
+
+    if seconds <= 60:
+        return "🟢 Live", "live"
+    if seconds <= 5 * 60:
+        return "🟢 Recent", "recent"
+    if seconds <= 15 * 60:
+        return "🟡 Slightly stale", "slightly-stale"
+    if seconds <= 60 * 60:
+        return "🟠 Stale", "stale"
+    return "🔴 Very stale", "very-stale"
 
 
 def parse_timestamp(value):
@@ -697,6 +746,970 @@ def empty_notification_summary():
     }
 
 
+def format_reason_counts(reason_counts):
+    if not reason_counts:
+        return "None"
+
+    return ", ".join(
+        f"{reason}: {count}"
+        for reason, count in reason_counts.items()
+    )
+
+
+def build_decision_trace_rows(decisions):
+    rows = []
+    for decision in decisions:
+        rows.append(
+            {
+                "Ticker": decision.get("ticker"),
+                "Signal": decision.get("signal"),
+                "Holding?": "Yes" if decision.get("current_holding") else "No",
+                "Target Weight": decision.get("target_weight"),
+                "Current Weight": decision.get("current_weight"),
+                "Decision": decision.get("portfolio_decision"),
+                "Reason": decision.get("reason"),
+            }
+        )
+    return rows
+
+
+def short_time(value):
+    timestamp = parse_timestamp(value)
+    if timestamp is None:
+        return "Unavailable"
+    return timestamp.strftime("%H:%M:%S")
+
+
+def human_age(value):
+    timestamp = parse_timestamp(value)
+    if timestamp is None:
+        return "Unavailable"
+
+    now = pd.Timestamp.now(tz="Europe/London")
+    return f"{format_runtime_duration((now - timestamp).total_seconds())} ago"
+
+
+def next_scan_label(runtime_status):
+    next_cycle = parse_timestamp(runtime_status.get("next_cycle_at"))
+    if next_cycle is None:
+        return "Not scheduled"
+
+    now = pd.Timestamp.now(tz="Europe/London")
+    seconds = int((next_cycle - now).total_seconds())
+    if seconds <= 0:
+        return "Scanning..."
+
+    minutes, seconds = divmod(seconds, 60)
+    if minutes >= 60:
+        return format_runtime_duration(minutes * 60 + seconds)
+    return f"{minutes:02d}m {seconds:02d}s"
+
+
+def market_is_open(market):
+    return market_countdown(market)[0] == "Open"
+
+
+def market_badge(label, market):
+    return {
+        "label": label,
+        "status": "OPEN" if market_is_open(market) else "CLOSED",
+        "healthy": market_is_open(market),
+    }
+
+
+def expand_market_names(markets):
+    names = []
+    for market in safe_list(markets):
+        if market == "LSE":
+            names.append("London")
+        elif market == "US":
+            names.extend(["NYSE", "NASDAQ"])
+        elif market == "TSE":
+            names.append("Tokyo")
+        else:
+            names.append(str(market))
+    return names
+
+
+def render_market_banner(configured_markets):
+    markets = [
+        market_badge("LSE", "LSE"),
+        market_badge("NYSE", "US"),
+        market_badge("NASDAQ", "US"),
+        market_badge("Tokyo", "TSE"),
+    ]
+    cols = responsive_columns(4)
+    for index, market in enumerate(markets):
+        icon = "🟢" if market["healthy"] else "🔴"
+        cols[index].metric(market["label"], f"{icon} {market['status']}")
+
+    st.caption(f"Next Market: {next_market_to_open(configured_markets)}")
+
+
+def latest_successful_cycle(cycles):
+    for cycle in cycles:
+        if cycle.get("status") == "success":
+            return cycle
+    return None
+
+
+def latest_notification_label():
+    state = load_json_file("data/notification_state.json")
+    sent_log = safe_list(state.get("sent_log"))
+    if not sent_log:
+        return "No notification sent today", "", ""
+
+    today = pd.Timestamp.now(tz="Europe/London").date()
+    for row in reversed(sent_log):
+        timestamp = parse_timestamp(row.get("timestamp"))
+        if timestamp is None or timestamp.date() != today:
+            continue
+        if row.get("type") == "trade_event":
+            return (
+                str(row.get("action", "TRADE")).upper(),
+                str(row.get("ticker", "Unknown")),
+                timestamp.strftime("%H:%M"),
+            )
+        return (
+            str(row.get("alert_type", "ALERT")),
+            str(row.get("ticker", "Unknown")),
+            timestamp.strftime("%H:%M"),
+        )
+
+    return "No notification sent today", "", ""
+
+
+def telegram_panel_state(notification_health):
+    state = notification_state()
+    sent_today = [
+        row
+        for row in safe_list(state.get("sent_log"))
+        if parse_timestamp(row.get("timestamp")) is not None
+        and parse_timestamp(row.get("timestamp")).date() == today_london_date()
+    ]
+    has_channel_delivery = any(row.get("delivery") == "channel" for row in sent_today)
+    has_fallback_delivery = any(row.get("delivery") == "fallback" for row in sent_today)
+
+    if notification_health.get("telegram_configured"):
+        return "Telegram Connected", "Latest message"
+    if has_fallback_delivery and not has_channel_delivery:
+        return "Telegram Fallback Only", "Notifications are being logged but not sent"
+    return "Telegram Not Configured", "No live Telegram delivery available"
+
+
+def notification_state():
+    return load_json_file("data/notification_state.json")
+
+
+def today_london_date():
+    return pd.Timestamp.now(tz="Europe/London").date()
+
+
+def trade_datetime(row):
+    timestamp = row.get("timestamp")
+    if timestamp:
+        parsed = parse_timestamp(timestamp)
+        if parsed is not None:
+            return parsed
+
+    date_value = row.get("date")
+    time_value = row.get("time")
+    if date_value is None:
+        return None
+
+    date_text = str(date_value).strip()
+    time_text = str(time_value or "").strip()
+    date_parsed = pd.to_datetime(date_text, errors="coerce")
+    if pd.isna(date_parsed):
+        return None
+
+    if time_text:
+        parsed = pd.to_datetime(
+            f"{date_parsed.strftime('%Y-%m-%d')} {time_text}",
+            errors="coerce",
+        )
+    else:
+        parsed = date_parsed
+
+    if pd.isna(parsed):
+        return None
+    return pd.Timestamp(parsed).tz_localize("Europe/London")
+
+
+def is_today_trade(row):
+    timestamp = trade_datetime(row)
+    return timestamp is not None and timestamp.date() == today_london_date()
+
+
+def event_icon(event_type, severity="info"):
+    if severity == "error":
+        return "❌"
+    if severity == "warning":
+        return "⚠"
+    event_type = str(event_type or "")
+    if "Decision Trace" in event_type:
+        return "📝"
+    if "Telegram" in event_type or "Notification" in event_type:
+        return "🔔"
+    if "Portfolio" in event_type or "Trade" in event_type:
+        return "💼"
+    if "Signal" in event_type or "Strategy" in event_type or "Downloaded" in event_type:
+        return "📈"
+    return "▶"
+
+
+def event_label(event):
+    event_type = event.get("type", "Runtime Event")
+    details = event.get("details") or {}
+    if event_type == "Generated Signals":
+        total = (
+            int(details.get("buy_signals", 0) or 0)
+            + int(details.get("sell_signals", 0) or 0)
+            + int(details.get("hold_signals", 0) or 0)
+        )
+        return f"Generated {total} signals"
+    if event_type == "Paper Portfolio Updated":
+        trades = int(details.get("paper_trades", 0) or 0)
+        return f"Portfolio {'changed' if trades else 'unchanged'}"
+    if event_type == "Decision Trace Created":
+        return "Decision Trace created"
+    if event_type == "Runtime Sleeping":
+        return "Sleeping until next cycle"
+    return event.get("message") or event_type
+
+
+def build_timeline_rows(cycles, runtime_status, limit=12):
+    rows = []
+    for cycle in cycles:
+        for event in reversed(safe_list(cycle.get("events"))):
+            rows.append(
+                {
+                    "Time": short_time(event.get("timestamp")),
+                    "": event_icon(event.get("type"), event.get("severity", "info")),
+                    "Activity": event_label(event),
+                    "Stage": event.get("type", "Runtime Event"),
+                }
+            )
+            if len(rows) >= limit:
+                return rows
+
+        if not safe_list(cycle.get("events")):
+            rows.append(
+                {
+                    "Time": short_time(cycle.get("finished_at")),
+                    "": "▶",
+                    "Activity": cycle.get("cycle_summary") or "Runtime cycle finished",
+                    "Stage": cycle.get("status", "cycle"),
+                }
+            )
+
+    if runtime_status.get("next_cycle_at"):
+        rows.append(
+            {
+                "Time": short_time(runtime_status.get("next_cycle_at")),
+                "": "▶",
+                "Activity": f"Sleeping until {short_time(runtime_status.get('next_cycle_at'))}",
+                "Stage": "Next Cycle",
+            }
+        )
+    return rows[:limit]
+
+
+def health_item(
+    label,
+    ok,
+    healthy_text="Healthy",
+    bad_text="Needs attention",
+    bad_level="red",
+):
+    if ok:
+        return {"Check": label, "Status": f"🟢 {healthy_text}"}
+    icon = "🟡" if bad_level == "yellow" else "🔴"
+    return {"Check": label, "Status": f"{icon} {bad_text}"}
+
+
+def operator_summary(
+    runtime_status,
+    runtime_config,
+    heartbeat_ok,
+    markets,
+    execution_summary,
+    notification_health,
+):
+    status = runtime_status.get("status")
+    active_markets = safe_list(runtime_status.get("markets_open"))
+    trades = int(execution_summary.get("paper_trades", 0) or 0)
+    trace_count = int(execution_summary.get("decision_trace_count", 0) or 0)
+    notifications = int(notification_health.get("notifications_sent_today", 0) or 0)
+
+    if status != "running" or not heartbeat_ok:
+        return "Garner Quant is offline or stale. Restart the runtime before relying on live status."
+
+    if not active_markets:
+        next_name, next_seconds = next_market_details(markets)
+        if next_seconds is not None:
+            return f"Runtime is waiting for {next_name} to open in {format_runtime_duration(next_seconds)}."
+        return "Runtime is waiting for the next configured market session."
+
+    if trades:
+        return f"Garner Quant executed {trades} paper trade{'s' if trades != 1 else ''} and notified Telegram."
+
+    if trace_count:
+        return "Garner Quant is monitoring live markets. The latest strategy completed successfully with no portfolio changes required."
+
+    return "Garner Quant is monitoring live markets and waiting for the next strategy scan."
+
+
+def meaningful_strategy_summary(summary):
+    if not isinstance(summary, dict) or not summary:
+        return False
+
+    signal_fields = [
+        "symbols_scanned",
+        "buy_signals",
+        "sell_signals",
+        "hold_signals",
+        "paper_trades",
+        "trades_recorded",
+        "decision_trace_count",
+    ]
+    return any(float(summary.get(field, 0) or 0) > 0 for field in signal_fields)
+
+
+def latest_completed_execution_summary(current_summary):
+    if meaningful_strategy_summary(current_summary):
+        return current_summary, "runtime_status"
+
+    execution_log = load_json_file("data/live_runtime_execution_log.json")
+    executions = safe_list(execution_log.get("executions"))
+    for execution in reversed(executions):
+        if execution.get("status") != "success":
+            continue
+        if meaningful_strategy_summary(execution):
+            return execution, "execution_log"
+
+    return current_summary or {}, "runtime_status"
+
+
+def runtime_status_sentence(
+    runtime_status,
+    strategy_summary,
+    today_trade_rows,
+    notification_health,
+):
+    stage = mission_stage(runtime_status)
+    markets = expand_market_names(runtime_status.get("markets_open"))
+    market_text = ", ".join(markets) if markets else "configured markets"
+    next_cycle = short_time(runtime_status.get("next_cycle_at"))
+
+    if today_trade_rows:
+        latest = today_trade_rows[-1]
+        action = str(latest.get("action", "trade")).upper()
+        ticker = latest.get("ticker", "Unknown")
+        delivery = latest.get("telegram_status", "No/Unknown")
+        return (
+            f"Garner Quant executed one {action} trade in {ticker} today "
+            f"and logged Telegram delivery as {delivery.lower()}."
+        )
+
+    if stage == "Sleep":
+        return (
+            "Garner Quant completed its latest strategy run successfully "
+            f"and is sleeping until {next_cycle}."
+        )
+
+    if stage in {"Paper Execution", "Portfolio Decision", "Signal Generation", "Price Download"}:
+        return f"Garner Quant is currently processing {stage.lower()} for {market_text}."
+
+    if meaningful_strategy_summary(strategy_summary):
+        return (
+            "Garner Quant completed the latest strategy run with "
+            f"{int(strategy_summary.get('paper_trades', strategy_summary.get('trades_recorded', 0)) or 0)} "
+            "portfolio changes."
+        )
+
+    return f"Garner Quant is monitoring {market_text} and waiting for the next scan."
+
+
+def mission_stage(runtime_status):
+    stage_text = " ".join(
+        [
+            str(runtime_status.get("current_strategy_stage") or ""),
+            str((runtime_status.get("latest_runtime_event") or {}).get("type") or ""),
+        ]
+    ).lower()
+
+    if "strategy completed" in stage_text or "completed" in stage_text:
+        return "Sleep"
+    if "runtime started" in stage_text or "resumed" in stage_text:
+        return "Market Check"
+    if "download" in stage_text or "price" in stage_text:
+        return "Price Download"
+    if "signal" in stage_text:
+        return "Signal Generation"
+    if "portfolio" in stage_text:
+        return "Portfolio Decision"
+    if "paper" in stage_text or "trade" in stage_text:
+        return "Paper Execution"
+    if "telegram" in stage_text or "notification" in stage_text:
+        return "Telegram"
+    if "market" in stage_text or "monitor" in stage_text:
+        return "Market Check"
+    if "sleep" in stage_text or "blocked" in stage_text:
+        return "Sleep"
+    return runtime_status.get("current_strategy_stage") or "Sleeping"
+
+
+def pipeline_state(stage, current_stage):
+    stages = [
+        "Market Check",
+        "Price Download",
+        "Signal Generation",
+        "Portfolio Decision",
+        "Paper Execution",
+        "Telegram",
+        "Sleep",
+    ]
+    try:
+        current_index = stages.index(current_stage)
+    except ValueError:
+        current_index = len(stages) - 1
+
+    index = stages.index(stage)
+    if index < current_index:
+        return "complete"
+    if index == current_index:
+        return "current"
+    return "future"
+
+
+def inject_mission_control_css():
+    st.markdown(
+        """
+        <style>
+        .gq-hero {
+            border: 1px solid rgba(125, 211, 252, 0.42);
+            border-left: 8px solid #22c55e;
+            border-radius: 8px;
+            padding: 1.15rem;
+            background: linear-gradient(135deg, rgba(15,23,42,0.96), rgba(17,24,39,0.92));
+            color: #f8fafc;
+            margin: 0.25rem 0 1rem 0;
+        }
+        .gq-hero-title {
+            font-size: 1.65rem;
+            font-weight: 800;
+            letter-spacing: 0;
+            margin-bottom: 0.65rem;
+        }
+        .gq-hero-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.75rem;
+        }
+        .gq-hero-item, .gq-card {
+            border: 1px solid rgba(148,163,184,0.24);
+            border-radius: 8px;
+            padding: 0.85rem;
+            background: rgba(255,255,255,0.04);
+        }
+        .gq-label {
+            color: #cbd5e1;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0;
+            margin-bottom: 0.3rem;
+        }
+        .gq-value {
+            color: #f8fafc;
+            font-size: 1.05rem;
+            font-weight: 700;
+            line-height: 1.25;
+        }
+        .gq-pipeline {
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            gap: 0.45rem;
+            margin: 0.35rem 0 1rem 0;
+        }
+        .gq-stage {
+            border-radius: 8px;
+            padding: 0.72rem 0.58rem;
+            text-align: center;
+            border: 1px solid rgba(148,163,184,0.25);
+            min-height: 4.2rem;
+            font-size: 0.86rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .gq-stage.complete { background: rgba(34,197,94,0.16); border-color: rgba(34,197,94,0.55); }
+        .gq-stage.current { background: rgba(59,130,246,0.2); border-color: rgba(59,130,246,0.7); font-weight: 800; }
+        .gq-stage.future { background: rgba(148,163,184,0.08); color: #94a3b8; }
+        .gq-health-grid {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 0.55rem;
+            margin-bottom: 1rem;
+        }
+        .gq-health {
+            border-radius: 8px;
+            padding: 0.8rem;
+            border: 1px solid rgba(148,163,184,0.25);
+            font-weight: 700;
+        }
+        .gq-health.green { background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.5); }
+        .gq-health.yellow { background: rgba(234,179,8,0.12); border-color: rgba(234,179,8,0.55); }
+        .gq-health.red { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.55); }
+        .gq-performance-grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 0.55rem;
+            margin: 0.25rem 0 1rem 0;
+        }
+        .gq-performance {
+            border-radius: 8px;
+            padding: 0.85rem;
+            border: 1px solid rgba(148,163,184,0.25);
+            background: rgba(255,255,255,0.03);
+        }
+        .gq-performance.positive { color:#22c55e; border-color: rgba(34,197,94,0.45); }
+        .gq-performance.negative { color:#ef4444; border-color: rgba(239,68,68,0.45); }
+        .gq-performance.neutral { color:#e5e7eb; }
+        .gq-freshness-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.65rem;
+            margin: 0.4rem 0 0.75rem 0;
+        }
+        .gq-freshness {
+            border-radius: 8px;
+            padding: 0.85rem;
+            border: 1px solid rgba(148,163,184,0.28);
+            background: rgba(255,255,255,0.035);
+        }
+        .gq-freshness.live, .gq-freshness.recent {
+            border-color: rgba(34,197,94,0.55);
+        }
+        .gq-freshness.slightly-stale {
+            border-color: rgba(234,179,8,0.6);
+        }
+        .gq-freshness.stale {
+            border-color: rgba(249,115,22,0.65);
+        }
+        .gq-freshness.very-stale {
+            border-color: rgba(239,68,68,0.65);
+        }
+        .gq-freshness.missing {
+            border-color: rgba(148,163,184,0.35);
+            opacity: 0.78;
+        }
+        .gq-badge-buy { color:#166534; background:#dcfce7; padding:0.15rem 0.45rem; border-radius:999px; font-weight:700; }
+        .gq-badge-sell { color:#991b1b; background:#fee2e2; padding:0.15rem 0.45rem; border-radius:999px; font-weight:700; }
+        .gq-badge-traded { color:#1d4ed8; background:#dbeafe; padding:0.15rem 0.45rem; border-radius:999px; font-weight:700; }
+        .gq-badge-neutral { color:#374151; background:#e5e7eb; padding:0.15rem 0.45rem; border-radius:999px; font-weight:700; }
+        @media (max-width: 900px) {
+            .gq-hero-grid, .gq-pipeline, .gq-health-grid, .gq-performance-grid, .gq-freshness-grid {
+                grid-template-columns: 1fr;
+            }
+            .gq-hero-title {
+                font-size: 1.3rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_hero_status(runtime_status, runtime_config, heartbeat_ok, markets_open):
+    current_stage = mission_stage(runtime_status)
+    live_label = "🟢 GARNER QUANT LIVE" if heartbeat_ok else "🔴 GARNER QUANT OFFLINE"
+    markets = " • ".join(expand_market_names(markets_open)) if markets_open else "No markets open"
+    mode = (
+        runtime_status.get("mode")
+        or runtime_config.get("mode")
+        or "monitor_only"
+    ).replace("_", " ").title()
+    health = "Runtime Healthy" if heartbeat_ok else "Runtime Needs Attention"
+    st.markdown(
+        f"""
+        <div class="gq-hero">
+            <div class="gq-hero-title">{html.escape(live_label)}</div>
+            <div style="font-size:2.15rem;font-weight:900;line-height:1.1;margin-bottom:0.85rem;">
+                {html.escape(current_stage)}
+            </div>
+            <div class="gq-hero-grid">
+                <div class="gq-hero-item"><div class="gq-label">Mode</div><div class="gq-value">{html.escape(mode)}</div></div>
+                <div class="gq-hero-item"><div class="gq-label">Next Scan</div><div class="gq-value" style="font-size:1.35rem;">{html.escape(next_scan_label(runtime_status))}</div></div>
+                <div class="gq-hero-item"><div class="gq-label">Health</div><div class="gq-value">{html.escape(health)}</div></div>
+                <div class="gq-hero-item"><div class="gq-label">Markets Open</div><div class="gq-value">{html.escape(markets)}</div></div>
+                <div class="gq-hero-item"><div class="gq-label">Last Cycle</div><div class="gq-value">{html.escape(short_time(runtime_status.get("last_cycle_at")))}</div></div>
+                <div class="gq-hero-item"><div class="gq-label">Next Cycle</div><div class="gq-value">{html.escape(short_time(runtime_status.get("next_cycle_at")))}</div></div>
+                <div class="gq-hero-item"><div class="gq-label">Heartbeat</div><div class="gq-value">{html.escape(heartbeat_status(runtime_status)[0])}</div></div>
+                <div class="gq-hero-item"><div class="gq-label">Current Stage</div><div class="gq-value">{html.escape(current_stage)}</div></div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    return current_stage
+
+
+def render_pipeline(current_stage):
+    stages = [
+        "Market Check",
+        "Price Download",
+        "Signal Generation",
+        "Portfolio Decision",
+        "Paper Execution",
+        "Telegram",
+        "Sleep",
+    ]
+    html_parts = ['<div class="gq-pipeline">']
+    for stage in stages:
+        state = pipeline_state(stage, current_stage)
+        prefix = "✓ " if state == "complete" else "● " if state == "current" else ""
+        html_parts.append(
+            f'<div class="gq-stage {state}">{html.escape(prefix + stage)}</div>'
+        )
+    html_parts.append("</div>")
+    st.markdown("".join(html_parts), unsafe_allow_html=True)
+
+
+def health_card_rows(health_rows):
+    cards = ['<div class="gq-health-grid">']
+    for row in health_rows:
+        status = row.get("Status", "")
+        if "🔴" in status or "ðŸ”´" in status:
+            color = "red"
+        elif "🟡" in status or "ðŸŸ¡" in status:
+            color = "yellow"
+        else:
+            color = "green"
+        cards.append(
+            f'<div class="gq-health {color}"><div class="gq-label">{html.escape(row.get("Check", ""))}</div>'
+            f'<div>{html.escape(status)}</div></div>'
+        )
+    cards.append("</div>")
+    st.markdown("".join(cards), unsafe_allow_html=True)
+
+
+def value_class(value):
+    text = str(value).replace("%", "").replace(",", "").replace("£", "").strip()
+    try:
+        numeric = float(text)
+    except ValueError:
+        return "neutral"
+    if numeric > 0:
+        return "positive"
+    if numeric < 0:
+        return "negative"
+    return "neutral"
+
+
+def safe_float(value):
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def money_label(value):
+    numeric = safe_float(value)
+    if numeric is None:
+        return "Unavailable"
+    return f"£{numeric:,.2f}"
+
+
+def price_label(value):
+    numeric = safe_float(value)
+    if numeric is None:
+        return "Unavailable"
+    return f"£{numeric:,.2f}"
+
+
+def percent_label(value):
+    numeric = safe_float(value)
+    if numeric is None:
+        return "Unavailable"
+    return f"{numeric * 100:.2f}%"
+
+
+def render_performance_strip(items):
+    cards = ['<div class="gq-performance-grid">']
+    for label, value in items:
+        css_class = value_class(value)
+        cards.append(
+            f'<div class="gq-performance {css_class}"><div class="gq-label">{html.escape(label)}</div>'
+            f'<div class="gq-value">{html.escape(str(value))}</div></div>'
+        )
+    cards.append("</div>")
+    st.markdown("".join(cards), unsafe_allow_html=True)
+
+
+def data_freshness_items():
+    files = [
+        ("Runtime Status", "data/live_runtime_status.json"),
+        ("Execution Log", "data/live_runtime_execution_log.json"),
+        ("Trade Journal", "trade_journal_v3.csv"),
+        ("Portfolio", "paper_portfolio_v3.csv"),
+        ("Decision Trace", "data/runtime_decision_trace.json"),
+        ("Telegram Notifications", "data/notification_state.json"),
+    ]
+    items = []
+    for label, filename in files:
+        modified_at = file_mtime(filename)
+        badge, level = freshness_badge(modified_at)
+        items.append(
+            {
+                "label": label,
+                "filename": filename,
+                "modified_at": modified_at,
+                "age": format_age(modified_at),
+                "badge": badge,
+                "level": level,
+            }
+        )
+    return items
+
+
+def data_freshness_summary(items):
+    levels = [item["level"] for item in items]
+    if any(level == "missing" for level in levels):
+        return "Some runtime data files are missing."
+    if any(level in {"stale", "very-stale"} for level in levels):
+        return "Runtime appears inactive."
+    if any(level == "slightly-stale" for level in levels):
+        return "Some runtime data appears stale."
+    return "All runtime data is current."
+
+
+def render_data_freshness_card(items):
+    cards = ['<div class="gq-freshness-grid">']
+    for item in items:
+        age_text = (
+            "Not found"
+            if item["level"] == "missing"
+            else f"Updated {item['age']}"
+        )
+        cards.append(
+            f'<div class="gq-freshness {html.escape(item["level"])}">'
+            f'<div class="gq-label">{html.escape(item["label"])}</div>'
+            f'<div class="gq-value">{html.escape(age_text)}</div>'
+            f'<div style="margin-top:0.35rem;font-weight:700;">{html.escape(item["badge"])}</div>'
+            '</div>'
+        )
+    cards.append("</div>")
+    st.markdown("".join(cards), unsafe_allow_html=True)
+
+
+def market_groups():
+    markets = [
+        ("LSE", "LSE"),
+        ("NYSE", "US"),
+        ("NASDAQ", "US"),
+        ("Tokyo", "TSE"),
+    ]
+    open_items = [label for label, market in markets if market_is_open(market)]
+    closed_items = [label for label, market in markets if not market_is_open(market)]
+    return open_items, closed_items
+
+
+def load_transaction_log_file():
+    path = Path("trade_transactions_v1.csv")
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path)
+    except Exception:
+        return pd.DataFrame()
+
+
+def trade_notification_sent(row):
+    return trade_notification_status(row) in {"Yes", "Fallback"}
+
+
+def trade_notification_status(row):
+    state = notification_state()
+    sent_log = safe_list(state.get("sent_log"))
+    ticker = str(row.get("ticker", ""))
+    action = str(row.get("action", "")).upper()
+    row_time = trade_datetime(row)
+    if row_time is None:
+        return "No/Unknown"
+
+    for item in reversed(sent_log):
+        if item.get("type") != "trade_event":
+            continue
+        if ticker and ticker != str(item.get("ticker", "")):
+            continue
+        if action and action != str(item.get("action", "")).upper():
+            continue
+        sent_time = parse_timestamp(item.get("timestamp"))
+        if sent_time is None:
+            continue
+        if abs((sent_time - row_time).total_seconds()) <= 180:
+            return "Yes" if item.get("delivery") == "channel" else "Fallback"
+
+    return "No/Unknown"
+
+
+def today_trades_from_sources(journal):
+    rows = []
+    if not journal.empty and "action" in journal.columns:
+        for _, row in journal.iterrows():
+            item = row.to_dict()
+            if is_today_trade(item):
+                item["source"] = "trade_journal"
+                item["timestamp"] = trade_datetime(item)
+                item["telegram_sent"] = trade_notification_sent(item)
+                item["telegram_status"] = trade_notification_status(item)
+                rows.append(item)
+
+    if rows:
+        return sorted(rows, key=lambda item: item.get("timestamp") or pd.Timestamp.min)
+
+    transaction_log = load_transaction_log_file()
+    if not transaction_log.empty and "action" in transaction_log.columns:
+        for _, row in transaction_log.iterrows():
+            item = row.to_dict()
+            if is_today_trade(item):
+                item["source"] = "transaction_log"
+                item["timestamp"] = trade_datetime(item)
+                item["telegram_sent"] = trade_notification_sent(item)
+                item["telegram_status"] = trade_notification_status(item)
+                rows.append(item)
+
+    if rows:
+        return sorted(rows, key=lambda item: item.get("timestamp") or pd.Timestamp.min)
+
+    runtime_latest = load_json_file("data/live_runtime_status.json").get(
+        "latest_paper_trade"
+    )
+    if isinstance(runtime_latest, dict) and is_today_trade(runtime_latest):
+        runtime_latest["source"] = "runtime_status"
+        runtime_latest["timestamp"] = trade_datetime(runtime_latest)
+        runtime_latest["telegram_sent"] = trade_notification_sent(runtime_latest)
+        runtime_latest["telegram_status"] = trade_notification_status(runtime_latest)
+        rows.append(runtime_latest)
+
+    if rows:
+        return sorted(rows, key=lambda item: item.get("timestamp") or pd.Timestamp.min)
+
+    state = notification_state()
+    for row in safe_list(state.get("sent_log")):
+        if row.get("type") != "trade_event":
+            continue
+        ticker = str(row.get("ticker", ""))
+        if ticker.upper().startswith("TEST") or ticker.upper() == "BUY.L":
+            continue
+        timestamp = parse_timestamp(row.get("timestamp"))
+        if timestamp is None or timestamp.date() != today_london_date():
+            continue
+        rows.append(
+            {
+                "source": "notification_state",
+                "timestamp": timestamp,
+                "time": timestamp.strftime("%H:%M:%S"),
+                "action": row.get("action"),
+                "ticker": ticker,
+                "price": None,
+                "shares": None,
+                "value": None,
+                "pnl": None,
+                "telegram_sent": row.get("delivery") == "channel",
+                "telegram_status": "Yes" if row.get("delivery") == "channel" else "Fallback",
+            }
+        )
+    return sorted(rows, key=lambda item: item.get("timestamp") or pd.Timestamp.min)
+
+
+def latest_trade_from_journal(journal):
+    trades = today_trades_from_sources(journal)
+    return trades[-1] if trades else None
+
+
+def portfolio_snapshot_rows(portfolio, holdings, portfolio_value):
+    rows = []
+    if portfolio.empty:
+        return rows
+
+    holding_lookup = {}
+    if not holdings.empty and "ticker" in holdings.columns:
+        holding_lookup = {
+            row.get("ticker"): row
+            for _, row in holdings.iterrows()
+        }
+
+    for _, row in portfolio.iterrows():
+        ticker = row.get("ticker")
+        holding = holding_lookup.get(ticker, {})
+        market_value = holding.get("market_value", row.get("position_value", 0))
+        weight = (
+            float(market_value) / portfolio_value
+            if portfolio_value
+            else None
+        )
+        rows.append(
+            {
+                "Ticker": ticker,
+                "Weight": None if weight is None else f"{weight * 100:.1f}%",
+                "PnL %": percent_label(holding.get("unrealised_pnl_percent")),
+                "Entry Date": row.get("entry_date"),
+                "Current Price": price_label(
+                    holding.get("current_price", row.get("entry_price"))
+                ),
+            }
+        )
+    return rows
+
+
+def tracker_period_return(tracker, days):
+    if tracker.empty or "portfolio_value" not in tracker.columns:
+        return "Unavailable"
+
+    working = tracker.copy()
+    if "date" in working.columns:
+        working["_date"] = pd.to_datetime(working["date"], errors="coerce")
+        working = working.dropna(subset=["_date"])
+        if not working.empty:
+            cutoff = working["_date"].max() - pd.Timedelta(days=days)
+            working = working[working["_date"] >= cutoff]
+
+    values = pd.to_numeric(working["portfolio_value"], errors="coerce").dropna()
+    if len(values) < 2 or values.iloc[0] == 0:
+        return "Unavailable"
+
+    return f"{((values.iloc[-1] / values.iloc[0]) - 1) * 100:.2f}%"
+
+
+def tracker_day_pnl(tracker):
+    if tracker.empty or "portfolio_value" not in tracker.columns:
+        return "Unavailable"
+
+    values = pd.to_numeric(tracker["portfolio_value"], errors="coerce").dropna()
+    if len(values) < 2:
+        return "Unavailable"
+
+    return f"{values.iloc[-1] - values.iloc[-2]:,.2f}"
+
+
+def decorated_trace_rows(decisions):
+    rows = []
+    for row in build_decision_trace_rows(decisions):
+        signal = row.get("Signal")
+        decision = row.get("Decision")
+        row["Signal Badge"] = (
+            f"BUY" if signal == "BUY" else "SELL" if signal == "SELL" else "HOLD"
+        )
+        row["Decision Badge"] = "TRADED" if decision == "TRADE_EXECUTED" else "NO TRADE"
+        rows.append(row)
+    return rows
+
+
 def run_git_command(args):
     try:
         result = subprocess.run(
@@ -1227,6 +2240,10 @@ holdings_value = numeric_sum(holdings, "market_value")
 open_holdings_count = len(portfolio)
 
 st.title("⚙️ Admin / System Health")
+if auto_refresh["enabled"]:
+    st.caption(f"Auto-refresh: ON | Every {auto_refresh['interval_seconds']}s")
+else:
+    st.caption("Auto-refresh: OFF")
 
 summary_cols = responsive_columns(7)
 summary_cols[0].metric("Overall status", overall_status)
@@ -1324,6 +2341,7 @@ st.divider()
 st.subheader("Live Control Centre")
 runtime_status = load_json_file("data/live_runtime_status.json")
 runtime_config = load_json_file("runtime/live_runtime_config.json")
+decision_trace = load_json_file("data/runtime_decision_trace.json")
 last_cycle = get_last_cycle()
 recent_cycles = get_recent_cycles(limit=50)
 runtime_stats = get_runtime_statistics()
@@ -1347,6 +2365,276 @@ st.caption(
     "runtime heartbeat, market state, and operations log written by "
     "runtime/live_runtime.py."
 )
+
+inject_mission_control_css()
+execution_summary = runtime_status.get("execution_summary") or {}
+strategy_summary, strategy_summary_source = latest_completed_execution_summary(
+    execution_summary
+)
+last_successful = latest_successful_cycle(recent_cycles)
+mode_label = (
+    runtime_status.get("mode")
+    or runtime_config.get("mode")
+    or "monitor_only"
+).replace("_", " ").title()
+active_market_label = (
+    f"{', '.join(expand_market_names(active_markets))} OPEN"
+    if active_markets
+    else "Markets Closed"
+)
+runtime_live = runtime_status.get("status") == "running" and heartbeat_ok
+trace_decisions = safe_list(decision_trace.get("decisions"))
+
+current_mission_stage = render_hero_status(
+    runtime_status,
+    runtime_config,
+    heartbeat_ok,
+    active_markets,
+)
+
+today_trade_rows = today_trades_from_sources(journal)
+st.info(
+    runtime_status_sentence(
+        runtime_status,
+        strategy_summary,
+        today_trade_rows,
+        notification_health,
+    )
+)
+
+st.markdown("**Data Freshness**")
+freshness_items = data_freshness_items()
+render_data_freshness_card(freshness_items)
+st.caption(data_freshness_summary(freshness_items))
+
+st.markdown("**Live Pipeline**")
+render_pipeline(current_mission_stage)
+
+open_market_names, closed_market_names = market_groups()
+market_panel_cols = responsive_columns(2)
+with market_panel_cols[0]:
+    st.markdown("**Markets Currently Open**")
+    if open_market_names:
+        st.success("  ".join(f"🟢 {name}" for name in open_market_names))
+    else:
+        st.info("No configured markets are currently open.")
+with market_panel_cols[1]:
+    st.markdown("**Closed**")
+    if closed_market_names:
+        st.warning("  ".join(f"🔴 {name}" for name in closed_market_names))
+    else:
+        st.success("All configured markets are open.")
+st.caption(f"Next Market Event: {next_market_to_open(configured_markets)}")
+
+st.markdown("**Latest Completed Strategy**")
+st.caption(
+    "Using the latest successful runtime execution log when the live cycle is still in progress."
+    if strategy_summary_source == "execution_log"
+    else "Using the latest completed runtime status summary."
+)
+strategy_cols = responsive_columns(6)
+strategy_cols[0].metric("Symbols Scanned", strategy_summary.get("symbols_scanned", 0))
+strategy_cols[1].metric("BUY Signals", strategy_summary.get("buy_signals", 0))
+strategy_cols[2].metric("SELL Signals", strategy_summary.get("sell_signals", 0))
+strategy_cols[3].metric(
+    "Portfolio Changes",
+    strategy_summary.get("paper_trades", strategy_summary.get("trades_recorded", 0)),
+)
+strategy_cols[4].metric(
+    "Completed In",
+    f"{float(strategy_summary.get('execution_time_seconds', 0) or 0):.2f}s",
+)
+strategy_cols[5].metric("Current Holdings", f"{open_holdings_count} positions")
+
+latest_trade_today = latest_trade_from_journal(journal)
+latest_notification_title, latest_notification_ticker, latest_notification_time = (
+    latest_notification_label()
+)
+
+trade_cols = responsive_columns(2)
+with trade_cols[0]:
+    st.markdown("**Latest Paper Trade**")
+    if latest_trade_today:
+        latest_trade_time = latest_trade_today.get("timestamp")
+        st.metric(
+            latest_trade_today.get("action", "TRADE"),
+            latest_trade_today.get("ticker", "Unknown"),
+            short_time(latest_trade_time),
+        )
+        trade_weight = None
+        trade_value = safe_float(latest_trade_today.get("value"))
+        if trade_value is not None and portfolio_value:
+            trade_weight = f"{(trade_value / portfolio_value) * 100:.2f}%"
+        detail_cols = responsive_columns(5)
+        detail_cols[0].metric("Price", price_label(latest_trade_today.get("price")))
+        detail_cols[1].metric("Value", money_label(latest_trade_today.get("value")))
+        detail_cols[2].metric(
+            "Shares",
+            (
+                f"{safe_float(latest_trade_today.get('shares')):.4f}"
+                if safe_float(latest_trade_today.get("shares")) is not None
+                else "Unavailable"
+            ),
+        )
+        detail_cols[3].metric("Weight", trade_weight or "Unavailable")
+        detail_cols[4].metric(
+            "Notification",
+            latest_trade_today.get("telegram_status", "No/Unknown"),
+        )
+    else:
+        st.info("No paper trade today.")
+with trade_cols[1]:
+    st.markdown("**Telegram**")
+    telegram_status, telegram_detail = telegram_panel_state(notification_health)
+    st.metric(
+        telegram_status,
+        latest_notification_title,
+        (
+            f"{latest_notification_ticker} | {latest_notification_time}"
+            if latest_notification_ticker
+            else telegram_detail
+        ),
+    )
+    st.caption(
+        f"Total notifications today: {notification_health.get('notifications_sent_today', 0)}"
+    )
+
+st.markdown("**Today's Trades**")
+if today_trade_rows:
+    today_trade_display = []
+    for row in today_trade_rows:
+        today_trade_display.append(
+            {
+                "Time": short_time(row.get("timestamp")),
+                "Action": row.get("action"),
+                "Ticker": row.get("ticker"),
+                "Price": price_label(row.get("price")),
+                "Shares": (
+                    f"{safe_float(row.get('shares')):.4f}"
+                    if safe_float(row.get("shares")) is not None
+                    else "Unavailable"
+                ),
+                "Value": money_label(row.get("value")),
+                "PnL": money_label(row.get("pnl")),
+                "Telegram Sent": row.get("telegram_status", "No/Unknown"),
+            }
+        )
+    responsive_table(pd.DataFrame(today_trade_display), hide_index=True)
+else:
+    st.info("No paper trades recorded today.")
+
+render_performance_strip(
+    [
+        ("Today's PnL", tracker_day_pnl(tracker)),
+        ("This Week", tracker_period_return(tracker, 7)),
+        ("This Month", tracker_period_return(tracker, 30)),
+        ("Portfolio Value", money_label(portfolio_value)),
+        ("Cash Remaining", money_label(cash)),
+    ]
+)
+
+portfolio_rows = portfolio_snapshot_rows(portfolio, holdings, portfolio_value)
+st.markdown("**Mini Portfolio**")
+if portfolio_rows:
+    responsive_table(pd.DataFrame(portfolio_rows), hide_index=True)
+else:
+    st.info("No open paper holdings.")
+
+st.markdown("**Mission Control Diagnostics**")
+operator_cols = responsive_columns(8)
+operator_cols[0].metric("State", "🟢 LIVE" if runtime_live else "🔴 OFFLINE")
+operator_cols[1].metric("Mode", mode_label)
+operator_cols[2].metric("Market", active_market_label)
+operator_cols[3].metric("Runtime", "Healthy" if heartbeat_ok else heartbeat_label)
+operator_cols[4].metric("Last Cycle", short_time(runtime_status.get("last_cycle_at")))
+operator_cols[5].metric("Next Cycle", short_time(runtime_status.get("next_cycle_at")))
+operator_cols[6].metric("Next Scan", next_scan_label(runtime_status))
+operator_cols[7].metric("Heartbeat", heartbeat_label)
+
+st.info(
+    operator_summary(
+        runtime_status,
+        runtime_config,
+        heartbeat_ok,
+        configured_markets,
+        execution_summary,
+        notification_health,
+    )
+)
+
+st.markdown("**Global Market Banner**")
+render_market_banner(configured_markets)
+
+latest_notification_title, latest_notification_ticker, latest_notification_time = (
+    latest_notification_label()
+)
+
+st.markdown("**Quick Stats**")
+quick_cols = responsive_columns(6)
+quick_cols[0].metric("Today's Strategy Runs", runtime_stats.get("today_strategy_runs", 0))
+quick_cols[1].metric("Today's Paper Trades", runtime_stats.get("today_paper_trades", 0))
+quick_cols[2].metric("Today's Notifications", runtime_stats.get("today_notifications", 0))
+quick_cols[3].metric("Runtime Uptime", runtime_uptime_label(runtime_status))
+quick_cols[4].metric(
+    "Average Cycle Time",
+    f"{runtime_stats.get('average_cycle_duration', 0):.2f}s",
+)
+quick_cols[5].metric("Current Holdings", open_holdings_count)
+
+run_cols = responsive_columns(3)
+if last_successful is None:
+    run_cols[0].metric("Last Successful Strategy", "Unavailable")
+    run_cols[1].metric("Completed", "Unavailable")
+else:
+    run_cols[0].metric(
+        "Last Successful Strategy",
+        short_time(last_successful.get("finished_at")),
+    )
+    run_cols[1].metric("Completed", human_age(last_successful.get("finished_at")))
+run_cols[2].metric(
+    "Latest Notification",
+    latest_notification_title,
+    (
+        f"{latest_notification_ticker} | {latest_notification_time}"
+        if latest_notification_ticker
+        else ""
+    ),
+)
+
+st.markdown("**Operations Health**")
+health_rows = [
+    health_item("Runtime", runtime_live),
+    health_item("Heartbeat", heartbeat_ok),
+    health_item(
+        "Paper Execution",
+        paper_execution_enabled(runtime_status, runtime_config),
+        healthy_text="Enabled",
+        bad_text="Disabled",
+        bad_level="yellow",
+    ),
+    health_item(
+        "Telegram",
+        notification_health.get("telegram_configured"),
+        healthy_text="Connected",
+        bad_text="Not configured",
+        bad_level="yellow",
+    ),
+    health_item(
+        "Decision Trace",
+        bool(trace_decisions),
+        healthy_text="Working",
+        bad_text="No trace yet",
+        bad_level="yellow",
+    ),
+    health_item(
+        "Auto Refresh",
+        auto_refresh.get("enabled"),
+        healthy_text="Enabled",
+        bad_text="Disabled",
+        bad_level="yellow",
+    ),
+]
+health_card_rows(health_rows)
 
 render_activity_panel(activity, runtime_status)
 
@@ -1507,12 +2795,140 @@ st.caption(
     "explicitly enabled in the runtime config. It never places real broker orders."
 )
 
-st.markdown("**Live Event Feed**")
-event_feed = build_live_event_feed(recent_cycles, limit=20)
-if event_feed:
-    responsive_table(pd.DataFrame(event_feed), hide_index=True)
+st.markdown("**Runtime Activity Timeline**")
+timeline_rows = build_timeline_rows(recent_cycles, runtime_status, limit=14)
+if timeline_rows:
+    responsive_table(pd.DataFrame(timeline_rows), hide_index=True)
 else:
-    st.info("No runtime events have been recorded yet.")
+    st.info("No runtime timeline events have been recorded yet.")
+
+st.markdown("**Strategy Decision Trace**")
+st.caption("This explains why signals did or did not become paper trades.")
+st.caption(
+    "Signals are strategy opinions. Trades only happen when the portfolio "
+    "manager needs to change the paper portfolio."
+)
+
+trace_decisions = safe_list(decision_trace.get("decisions"))
+trace_summary = runtime_status.get("execution_summary") or {}
+trace_count = int(
+    trace_summary.get(
+        "decision_trace_count",
+        decision_trace.get("decision_trace_count", len(trace_decisions)),
+    )
+    or 0
+)
+trace_trades = int(
+    trace_summary.get(
+        "trade_count",
+        decision_trace.get(
+            "trade_count",
+            decision_trace.get("trades_recorded", 0),
+        ),
+    )
+    or 0
+)
+trace_no_trades = int(
+    trace_summary.get(
+        "no_trade_count",
+        decision_trace.get("no_trade_count", max(0, trace_count - trace_trades)),
+    )
+    or 0
+)
+trace_reasons = (
+    trace_summary.get("top_no_trade_reasons")
+    or decision_trace.get("top_no_trade_reasons")
+    or {}
+)
+
+if trace_decisions:
+    st.info(
+        "Garner Quant generated "
+        f"{trace_count} signals and recorded {trace_trades} paper trades. "
+        f"{trace_no_trades} signals did not become trades because the "
+        "portfolio manager found no required portfolio changes or a safety "
+        "condition blocked the candidate."
+    )
+    trace_cols = responsive_columns(4)
+    trace_cols[0].metric("Signals evaluated", trace_count)
+    trace_cols[1].metric("Trades recorded", trace_trades)
+    trace_cols[2].metric("No-trade decisions", trace_no_trades)
+    trace_cols[3].metric(
+        "Top no-trade reasons",
+        format_reason_counts(trace_reasons),
+    )
+    filter_cols = responsive_columns([1, 1])
+    trace_filter = filter_cols[0].radio(
+        "Trace filter",
+        ["All", "BUY", "SELL", "NO TRADE", "TRADED"],
+        horizontal=True,
+        key="decision_trace_filter",
+    )
+    trace_search = filter_cols[1].text_input(
+        "Ticker search",
+        key="decision_trace_search",
+        placeholder="Search ticker",
+    )
+    trace_rows = pd.DataFrame(decorated_trace_rows(trace_decisions))
+
+    if trace_filter == "BUY":
+        trace_rows = trace_rows[trace_rows["Signal"] == "BUY"]
+    elif trace_filter == "SELL":
+        trace_rows = trace_rows[trace_rows["Signal"] == "SELL"]
+    elif trace_filter == "NO TRADE":
+        trace_rows = trace_rows[trace_rows["Decision"] == "NO_TRADE"]
+    elif trace_filter == "TRADED":
+        trace_rows = trace_rows[trace_rows["Decision"] == "TRADE_EXECUTED"]
+
+    if trace_search:
+        trace_rows = trace_rows[
+            trace_rows["Ticker"].astype(str).str.contains(
+                trace_search,
+                case=False,
+                na=False,
+            )
+        ]
+
+    if trace_rows.empty:
+        st.info("No decision trace rows match the selected filters.")
+    else:
+        def highlight_traded(row):
+            if row.get("Decision") == "TRADE_EXECUTED":
+                return ["background-color: rgba(34, 197, 94, 0.16)"] * len(row)
+            return [""] * len(row)
+
+        def colour_badges(value):
+            if value == "BUY":
+                return "background-color: #dcfce7; color: #166534; font-weight: 700;"
+            if value == "SELL":
+                return "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
+            if value == "TRADED":
+                return "background-color: #dbeafe; color: #1d4ed8; font-weight: 700;"
+            if value == "NO TRADE":
+                return "background-color: #e5e7eb; color: #374151; font-weight: 700;"
+            return ""
+
+        display_columns = [
+            "Ticker",
+            "Signal Badge",
+            "Holding?",
+            "Target Weight",
+            "Current Weight",
+            "Decision Badge",
+            "Reason",
+        ]
+        responsive_table(
+            trace_rows[display_columns]
+            .style
+            .apply(highlight_traded, axis=1)
+            .map(colour_badges, subset=["Signal Badge", "Decision Badge"]),
+            hide_index=True,
+        )
+else:
+    st.info(
+        "No decision trace has been written yet. It will appear after the "
+        "paper execution pipeline evaluates strategy signals."
+    )
 
 st.markdown("**Runtime Health**")
 total_cycles = runtime_stats.get("total_cycles", 0)
@@ -1710,13 +3126,6 @@ else:
         runtime_update["next_refresh"] = None
         save_monitor_runtime(runtime_update)
         next_refresh = None
-
-if live_time_mode:
-    refresh_seconds = min(30, int(refresh_interval) * 60)
-    st.markdown(
-        f"<meta http-equiv='refresh' content='{refresh_seconds}'>",
-        unsafe_allow_html=True,
-    )
 
 status_cols = responsive_columns(6)
 status_cols[0].metric(

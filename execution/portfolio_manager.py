@@ -3,11 +3,13 @@ from pathlib import Path
 from config import STARTING_CASH
 from execution.broker_account import load_account, update_account
 from datetime import datetime
+import json
 
 PORTFOLIO_FILE = "paper_portfolio_v3.csv"
 TRADE_JOURNAL_FILE = "trade_journal_v3.csv"
 TRANSACTION_LOG_FILE = "trade_transactions_v1.csv"
 TRADE_SNAPSHOTS_FILE = "trade_snapshots.csv"
+DECISION_TRACE_FILE = Path("data") / "runtime_decision_trace.json"
 
 
 def load_portfolio():
@@ -150,6 +152,131 @@ def calculate_cash(portfolio, journal=None):
     return STARTING_CASH - invested + realised_pnl
 
 
+def json_safe(value):
+    if pd.isna(value):
+        return None
+
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:
+            pass
+
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+
+    return value
+
+
+def signal_label(value):
+    if value == 1:
+        return "BUY"
+    if value == 0:
+        return "SELL"
+    return "HOLD"
+
+
+def safe_lookup(series, key):
+    try:
+        if key in series.index:
+            return json_safe(series[key])
+    except Exception:
+        pass
+    return None
+
+
+def current_weights_by_ticker(portfolio, cash):
+    if portfolio.empty or "ticker" not in portfolio.columns:
+        return {}
+
+    position_values = pd.to_numeric(
+        portfolio.get("position_value", pd.Series(dtype=float)),
+        errors="coerce",
+    ).fillna(0)
+    total_value = float(cash + position_values.sum())
+    if total_value <= 0:
+        return {}
+
+    weights = {}
+    for index, position in portfolio.iterrows():
+        ticker = position.get("ticker")
+        if pd.isna(ticker):
+            continue
+        weights[str(ticker)] = float(position_values.loc[index] / total_value)
+    return weights
+
+
+def decision_trace_record(
+    timestamp,
+    ticker,
+    signal,
+    current_holding,
+    target_weight,
+    current_weight,
+    portfolio_decision="NO_TRADE",
+    trade_action=None,
+    trade_recorded=False,
+    reason="unknown",
+    details=None,
+):
+    return {
+        "timestamp": timestamp,
+        "ticker": ticker,
+        "signal": signal_label(signal),
+        "current_holding": bool(current_holding),
+        "target_weight": json_safe(target_weight),
+        "current_weight": json_safe(current_weight),
+        "portfolio_decision": portfolio_decision,
+        "trade_action": trade_action,
+        "trade_recorded": bool(trade_recorded),
+        "reason": reason,
+        "details": details or {},
+    }
+
+
+def decision_trace_summary(decisions):
+    no_trade_reasons = {}
+    for decision in decisions:
+        if decision.get("trade_recorded"):
+            continue
+        reason = decision.get("reason") or "unknown"
+        no_trade_reasons[reason] = no_trade_reasons.get(reason, 0) + 1
+
+    top_reasons = dict(
+        sorted(
+            no_trade_reasons.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:5]
+    )
+    trade_count = len([d for d in decisions if d.get("trade_recorded")])
+
+    return {
+        "decision_trace_count": len(decisions),
+        "no_trade_count": len(decisions) - trade_count,
+        "trade_count": trade_count,
+        "top_no_trade_reasons": top_reasons,
+    }
+
+
+def save_decision_trace(generated_at, run_id, mode, signals_count, trades_recorded, decisions):
+    DECISION_TRACE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "generated_at": generated_at,
+        "run_id": run_id,
+        "mode": mode,
+        "signals_count": int(signals_count),
+        "trades_recorded": int(trades_recorded),
+        "decisions": decisions,
+    }
+    payload.update(decision_trace_summary(decisions))
+    DECISION_TRACE_FILE.write_text(
+        json.dumps(payload, indent=2, default=str),
+        encoding="utf-8",
+    )
+    return payload
+
+
 def update_portfolio(signals, prices, weights, risk_levels):
     portfolio = load_portfolio()
     journal = load_trade_journal()
@@ -170,12 +297,57 @@ def update_portfolio(signals, prices, weights, risk_levels):
     held_tickers = set(portfolio["ticker"]) if not portfolio.empty else set()
 
     cash = calculate_cash(portfolio, journal)
+    initial_portfolio = portfolio.copy()
+    initial_held_tickers = set(initial_portfolio["ticker"]) if not initial_portfolio.empty else set()
+    initial_weights = current_weights_by_ticker(initial_portfolio, cash)
+    trace_timestamp = datetime.now().isoformat(timespec="seconds")
+    run_id = f"{pd.Timestamp(latest_date).strftime('%Y%m%d')}_{datetime.now().strftime('%H%M%S')}"
+    decisions = {}
+
+    for ticker in signals.columns:
+        signal = safe_lookup(latest_signals, ticker)
+        target_weight = safe_lookup(latest_weights, ticker)
+        current_holding = ticker in initial_held_tickers
+        current_weight = initial_weights.get(ticker, 0.0 if current_holding else 0.0)
+        details = {
+            "price": safe_lookup(latest_prices, ticker),
+            "stop_loss": safe_lookup(stop_losses, ticker),
+            "take_profit": safe_lookup(take_profits, ticker),
+        }
+
+        if ticker not in latest_prices.index:
+            reason = "risk data missing"
+            details["missing"] = "price"
+        elif signal == 0 and not current_holding:
+            reason = "sell signal but not held"
+        elif signal == 1 and current_holding:
+            reason = "already held"
+        elif signal == 1 and (target_weight is None or float(target_weight or 0) <= 0):
+            reason = "insufficient target weight"
+        elif signal == 1:
+            reason = "unknown"
+        else:
+            reason = "no allocation change required"
+
+        decisions[ticker] = decision_trace_record(
+            trace_timestamp,
+            ticker,
+            signal,
+            current_holding,
+            target_weight,
+            current_weight,
+            reason=reason,
+            details=details,
+        )
 
     # SELL logic
     for _, position in portfolio.copy().iterrows():
         ticker = position["ticker"]
 
         if ticker not in latest_prices.index:
+            if ticker in decisions:
+                decisions[ticker]["reason"] = "risk data missing"
+                decisions[ticker]["details"]["missing"] = "price"
             continue
 
         current_price = latest_prices[ticker]
@@ -284,6 +456,25 @@ def update_portfolio(signals, prices, weights, risk_levels):
                     ],
                 }
             )
+            if ticker in decisions:
+                decisions[ticker].update(
+                    {
+                        "portfolio_decision": "TRADE_EXECUTED",
+                        "trade_action": "SELL",
+                        "trade_recorded": True,
+                        "reason": str(sell_reason).lower(),
+                    }
+                )
+                decisions[ticker]["details"].update(
+                    {
+                        "trade_id": trade_id,
+                        "price": json_safe(current_price),
+                        "shares": json_safe(position["shares"]),
+                        "position_value": json_safe(value),
+                        "pnl": json_safe(pnl),
+                        "pnl_percent": json_safe(pnl_percent),
+                    }
+                )
 
             portfolio = portfolio[
                 portfolio["ticker"] != ticker
@@ -300,6 +491,9 @@ def update_portfolio(signals, prices, weights, risk_levels):
         weight = latest_weights[ticker]
 
         if ticker not in latest_prices.index:
+            if ticker in decisions:
+                decisions[ticker]["reason"] = "risk data missing"
+                decisions[ticker]["details"]["missing"] = "price"
             continue
 
         price = latest_prices[ticker]
@@ -316,6 +510,14 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 position_value = cash
 
             if position_value <= 0:
+                if ticker in decisions:
+                    decisions[ticker]["reason"] = "max positions reached"
+                    decisions[ticker]["details"].update(
+                        {
+                            "cash": json_safe(cash),
+                            "target_position_value": json_safe(STARTING_CASH * weight),
+                        }
+                    )
                 continue
 
             shares = position_value / price
@@ -408,6 +610,24 @@ def update_portfolio(signals, prices, weights, risk_levels):
                     ],
                 }
             )
+            if ticker in decisions:
+                decisions[ticker].update(
+                    {
+                        "portfolio_decision": "TRADE_EXECUTED",
+                        "trade_action": "BUY",
+                        "trade_recorded": True,
+                        "reason": "signal entry",
+                    }
+                )
+                decisions[ticker]["details"].update(
+                    {
+                        "trade_id": trade_id,
+                        "price": json_safe(price),
+                        "shares": json_safe(shares),
+                        "position_value": json_safe(position_value),
+                        "cash_after_trade": json_safe(cash),
+                    }
+                )
 
     save_portfolio(portfolio)
     save_trade_journal(journal)
@@ -430,6 +650,25 @@ def update_portfolio(signals, prices, weights, risk_levels):
             print(f"Trade notification failed after trade save: {exc}")
 
     trades_df.attrs["notification_summary"] = notification_summary
+    decision_trace = list(decisions.values())
+    trace_payload = save_decision_trace(
+        trace_timestamp,
+        run_id,
+        "paper_execution",
+        len(decision_trace),
+        len(trades),
+        decision_trace,
+    )
+    trades_df.attrs["decision_trace"] = decision_trace
+    trades_df.attrs["decision_trace_summary"] = {
+        key: trace_payload.get(key)
+        for key in [
+            "decision_trace_count",
+            "no_trade_count",
+            "trade_count",
+            "top_no_trade_reasons",
+        ]
+    }
 
     return portfolio, journal, trades_df
 
