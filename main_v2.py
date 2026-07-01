@@ -26,9 +26,10 @@ from reporting.paper_performance import (
     calculate_30_day_performance,
     print_30_day_performance
 )
+from runtime.locks import acquire_execution_lock
 
 
-def main(show_charts=True, send_telegram=True, sync_remote=True):
+def _run_main_unlocked(show_charts=True, send_telegram=True, sync_remote=True):
     run_started = time.perf_counter()
     pipeline_events = []
 
@@ -263,6 +264,50 @@ def main(show_charts=True, send_telegram=True, sync_remote=True):
             else None
         ),
     }
+
+
+def main(show_charts=True, send_telegram=True, sync_remote=True):
+    execution_lock = acquire_execution_lock(context="main_v2.main")
+
+    if not execution_lock.acquired:
+        print("Another execution is already running")
+        return {
+            "status": "skipped",
+            "reason": "Another execution is already running",
+            "signals_count": 0,
+            "symbols_scanned": 0,
+            "buy_signals": 0,
+            "sell_signals": 0,
+            "hold_signals": 0,
+            "trades_recorded": 0,
+            "paper_trades": 0,
+            "portfolio_changed": False,
+            "trade_notifications_sent": 0,
+            "notifications_sent": 0,
+            "decision_trace_count": 0,
+            "no_trade_count": 0,
+            "trade_count": 0,
+            "top_no_trade_reasons": {},
+            "execution_time_seconds": 0,
+            "events": [
+                {
+                    "type": "Execution Skipped",
+                    "severity": "warning",
+                    "message": "Another execution is already running",
+                    "details": execution_lock.existing,
+                }
+            ],
+            "latest_paper_trade": None,
+        }
+
+    try:
+        return _run_main_unlocked(
+            show_charts=show_charts,
+            send_telegram=send_telegram,
+            sync_remote=sync_remote,
+        )
+    finally:
+        execution_lock.release()
 
 
 if __name__ == "__main__":
