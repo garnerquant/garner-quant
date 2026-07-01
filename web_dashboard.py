@@ -14,7 +14,63 @@ from ui.responsive import (
     responsive_columns,
     responsive_table,
 )
-from ui.auto_refresh import fragment_runner, live_mode_controls
+
+try:
+    from ui.auto_refresh import (
+        fragment_runner as _shared_fragment_runner,
+        live_mode_controls as _shared_live_mode_controls,
+    )
+except ImportError:
+    _shared_fragment_runner = None
+    _shared_live_mode_controls = None
+
+
+def fragment_runner():
+    if _shared_fragment_runner is not None:
+        return _shared_fragment_runner()
+    if hasattr(st, "fragment"):
+        return st.fragment
+    if hasattr(st, "experimental_fragment"):
+        return st.experimental_fragment
+    return None
+
+
+def live_mode_controls(interval_seconds=60, key="dashboard_live_mode", default_enabled=False):
+    if _shared_live_mode_controls is not None:
+        return _shared_live_mode_controls(
+            interval_seconds=interval_seconds,
+            key=key,
+            default_enabled=default_enabled,
+        )
+
+    enabled_key = f"{key}_enabled"
+    control_key = f"{enabled_key}_control"
+    if enabled_key not in st.session_state:
+        st.session_state[enabled_key] = bool(default_enabled)
+    if control_key not in st.session_state:
+        st.session_state[control_key] = bool(st.session_state[enabled_key])
+
+    enabled = st.checkbox(
+        "Live mode",
+        key=control_key,
+        help="Updates key cards without forcing full-page navigation where possible.",
+    )
+    st.caption(
+        "Updates key cards without forcing full-page navigation where possible."
+    )
+
+    fragments_available = fragment_runner() is not None
+    if enabled and not fragments_available:
+        st.caption("Live mode unavailable in this Streamlit version.")
+        enabled = False
+
+    st.session_state[enabled_key] = bool(enabled)
+    return {
+        "enabled": bool(enabled),
+        "interval_seconds": int(interval_seconds),
+        "fragments_available": fragments_available,
+        "method": "streamlit_fragment" if enabled and fragments_available else "manual",
+    }
 
 
 def inject_mobile_css():
