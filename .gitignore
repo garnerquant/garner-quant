@@ -15,3 +15,7 @@ __pycache__/
 old_files/
 .streamlit/secrets.toml
 .env
+
+# Runtime-generated files
+data/runtime_decision_trace.json
+logs/
