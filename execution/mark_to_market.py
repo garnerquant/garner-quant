@@ -409,6 +409,16 @@ def mark_to_market_refresh(monitor_result=None, sync_remote=True, base_dir="."):
             "sync_errors": [],
         }
 
+    if missing_tickers:
+        return {
+            "status": "skipped",
+            "reason": "missing prices for open holdings",
+            "changed_files": [],
+            "holdings_refreshed": 0,
+            "missing_tickers": missing_tickers,
+            "sync_errors": [],
+        }
+
     valued_portfolio, holdings, positions_value, unrealised_pnl = _build_valuation(
         portfolio,
         latest_prices,
