@@ -135,7 +135,11 @@ def _scroll_script(key, interval_seconds=None):
     )
 
 
-def enable_auto_refresh(interval_seconds=60, key="dashboard_auto_refresh"):
+def enable_auto_refresh(
+    interval_seconds=60,
+    key="dashboard_auto_refresh",
+    default_enabled=False,
+):
     interval_seconds = _valid_interval(interval_seconds, interval_seconds)
     enabled_key = f"{key}_enabled"
     interval_key = f"{key}_interval"
@@ -145,7 +149,11 @@ def enable_auto_refresh(interval_seconds=60, key="dashboard_auto_refresh"):
     query_interval = _query_value(interval_key)
 
     if enabled_key not in st.session_state:
-        st.session_state[enabled_key] = True if query_enabled is None else query_enabled
+        st.session_state[enabled_key] = (
+            bool(default_enabled)
+            if query_enabled is None
+            else query_enabled
+        )
     if interval_key not in st.session_state:
         st.session_state[interval_key] = _valid_interval(
             query_interval,
@@ -163,7 +171,7 @@ def enable_auto_refresh(interval_seconds=60, key="dashboard_auto_refresh"):
 
     with st.sidebar.expander("Auto-refresh", expanded=False):
         enabled = st.checkbox(
-            "Auto-refresh",
+            "Enable auto-refresh",
             key=enabled_control_key,
         )
         interval = st.selectbox(

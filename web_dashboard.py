@@ -99,7 +99,7 @@ def metric_card(label, value, green=False):
     )
 
 
-def format_last_updated(value):
+def format_last_updated():
     now = pd.Timestamp.now(tz="Europe/London")
     timezone_label = now.tzname()
     return f"Today \u2022 {now:%H:%M} {timezone_label}"
@@ -131,6 +131,7 @@ apply_responsive_styles()
 auto_refresh = enable_auto_refresh(
     interval_seconds=60,
     key="main_dashboard_auto_refresh",
+    default_enabled=False,
 )
 
 load_dotenv()
@@ -187,16 +188,18 @@ if broker.empty:
     st.stop()
 
 broker_row = broker.iloc[0]
-last_updated = format_last_updated(broker_row.get("updated_at", None))
+last_updated = format_last_updated()
 
 status_card(last_updated)
 
 st.title("📈 Garner Quant")
 st.caption("Personal investment research and paper trading dashboard.")
+if st.button("Refresh now", type="primary"):
+    st.rerun()
 if auto_refresh["enabled"]:
     st.caption(f"Auto-refresh: ON | Every {auto_refresh['interval_seconds']}s")
 else:
-    st.caption("Auto-refresh: OFF")
+    st.caption("Auto-refresh paused to preserve scroll position")
 
 page = "Home"
 
