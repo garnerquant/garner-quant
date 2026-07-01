@@ -1,16 +1,14 @@
-import requests
-
-
-BOT_TOKEN = "8855883281:AAFGBScxjDRfHXUDMOEf7j4HRxhZpa-yxtQ"
-CHAT_ID = "5467581740"
+from notifications.alert_notifier import notify_plain_message
 
 
 def send_message(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    result = notify_plain_message(message, label="Daily Telegram report")
 
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message
-    }
+    if result.get("sent"):
+        print("Telegram message sent.")
+    elif result.get("skipped"):
+        print("Telegram not configured.")
+    else:
+        print(f"Telegram send failed: {result.get('reason')}")
 
-    requests.post(url, data=payload)
+    return result

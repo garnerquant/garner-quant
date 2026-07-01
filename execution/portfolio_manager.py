@@ -121,6 +121,19 @@ def load_trade_snapshots():
 def save_trade_snapshots(snapshots):
     snapshots.to_csv(TRADE_SNAPSHOTS_FILE, index=False)
 
+
+def holding_period_label(entry_date, exit_date):
+    entry = pd.to_datetime(entry_date, errors="coerce")
+    exit_value = pd.to_datetime(exit_date, errors="coerce")
+
+    if pd.isna(entry) or pd.isna(exit_value):
+        return ""
+
+    days = max(0, int((exit_value - entry).days))
+    unit = "day" if days == 1 else "days"
+    return f"{days} {unit}"
+
+
 def calculate_cash(portfolio, journal=None):
     realised_pnl = 0
 
@@ -242,18 +255,33 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 take_profit,
             ]
 
+            trade_id = f"{ticker}_{position['entry_date']}_SELL"
+
             trades.append(
                 {
+                    "trade_id": trade_id,
                     "date": latest_date,
                     "time": trade_time,
+                    "timestamp": timestamp,
                     "ticker": ticker,
                     "action": "SELL",
                     "price": current_price,
+                    "exit_price": current_price,
                     "reason": sell_reason,
                     "position_value": value,
+                    "value": value,
                     "shares": position["shares"],
                     "pnl": pnl,
                     "pnl_percent": pnl_percent,
+                    "holding_period": holding_period_label(
+                        position["entry_date"],
+                        latest_date,
+                    ),
+                    "justification": [
+                        "Exit condition triggered",
+                        "Trade recorded in journal",
+                        "Portfolio updated",
+                    ],
                 }
             )
 
@@ -352,18 +380,32 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 take_profits[ticker],
             ]
 
+            trade_id = f"{ticker}_{latest_date}_BUY"
+
             cash -= position_value
 
             trades.append(
                 {
+                    "trade_id": trade_id,
                     "date": latest_date,
                     "time": trade_time,
+                    "timestamp": timestamp,
                     "ticker": ticker,
                     "action": "BUY",
                     "price": price,
+                    "entry_price": price,
                     "reason": "SIGNAL ENTRY",
                     "position_value": position_value,
+                    "value": position_value,
                     "shares": shares,
+                    "stop_loss": stop_losses[ticker],
+                    "take_profit": take_profits[ticker],
+                    "justification": [
+                        "Signal passed",
+                        "Weight assigned",
+                        "Risk level available",
+                        "Position added to paper portfolio",
+                    ],
                 }
             )
 
@@ -372,8 +414,24 @@ def update_portfolio(signals, prices, weights, risk_levels):
     save_transaction_log(transaction_log)
     save_trade_snapshots(snapshots)
 
+    trades_df = pd.DataFrame(trades)
+    notification_summary = {
+        "sent": 0,
+        "skipped": 0,
+        "errors": [],
+    }
 
-    return portfolio, journal, pd.DataFrame(trades)
+    if trades:
+        try:
+            from notifications.alert_notifier import notify_trade_events
+
+            notification_summary = notify_trade_events(trades)
+        except Exception as exc:
+            print(f"Trade notification failed after trade save: {exc}")
+
+    trades_df.attrs["notification_summary"] = notification_summary
+
+    return portfolio, journal, trades_df
 
 
 def portfolio_summary(portfolio, prices):

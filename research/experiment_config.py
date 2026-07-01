@@ -1,32 +1,14 @@
 from copy import deepcopy
 
+from research.parameter_schema import (
+    PARAMETER_ALIASES,
+    PARAMETER_SCHEMA,
+    parameter_default,
+)
 
 DEFAULT_RESEARCH_CONFIG = {
-    "technical_score_threshold": 3,
-    "max_positions": None,
-    "position_size": None,
-    "stop_loss_pct": None,
-    "take_profit_pct": None,
-    "min_volume": None,
-    "exit_mode": "signals_and_stops",
-}
-
-
-PARAMETER_ALIASES = {
-    "Technical score threshold": "technical_score_threshold",
-    "technical_score_threshold": "technical_score_threshold",
-    "Maximum positions": "max_positions",
-    "max_positions": "max_positions",
-    "Position size": "position_size",
-    "position_size": "position_size",
-    "Stop loss %": "stop_loss_pct",
-    "stop_loss_pct": "stop_loss_pct",
-    "Take profit %": "take_profit_pct",
-    "take_profit_pct": "take_profit_pct",
-    "Minimum volume": "min_volume",
-    "min_volume": "min_volume",
-    "Exit mode": "exit_mode",
-    "exit_mode": "exit_mode",
+    key: parameter_default(key)
+    for key in PARAMETER_SCHEMA
 }
 
 
@@ -111,10 +93,9 @@ def build_experiment_config(live_config, experiment_params):
         if target_key is None:
             continue
 
-        if target_key in {
-            "technical_score_threshold",
-            "max_positions",
-        }:
+        metadata = PARAMETER_SCHEMA[target_key]
+
+        if metadata["type"] == "integer":
             research_config[target_key] = _as_int(value)
         elif target_key in {
             "position_size",
@@ -122,9 +103,14 @@ def build_experiment_config(live_config, experiment_params):
             "take_profit_pct",
         }:
             research_config[target_key] = _normalise_percent(value)
-        elif target_key == "min_volume":
+        elif metadata["type"] == "float":
             research_config[target_key] = _as_float(value)
-        elif target_key == "exit_mode":
-            research_config[target_key] = _clean_value(value) or "signals_and_stops"
+        elif metadata["type"] == "select":
+            cleaned = _clean_value(value)
+            research_config[target_key] = (
+                cleaned
+                if cleaned in metadata["options"]
+                else metadata["default"]
+            )
 
     return research_config

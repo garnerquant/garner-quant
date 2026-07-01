@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "mode": "monitor_only",
+  "allowed_modes": [
+    "monitor_only",
+    "paper_execution"
+  ],
+  "cycle_seconds": 300,
+  "markets": ["LSE", "US", "TSE"],
+  "send_notifications": true,
+  "paper_execution_enabled": false
+}

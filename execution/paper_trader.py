@@ -1,39 +1,13 @@
-import os
-import requests
 import pandas as pd
 from pathlib import Path
+
+from notifications.alert_notifier import notify_plain_message
 
 
 PORTFOLIO_FILE = "paper_portfolio.csv"
 
 def send_telegram_alert(message):
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-
-    print("BOT TOKEN EXISTS:", bool(bot_token))
-    print("CHAT ID EXISTS:", bool(chat_id))
-
-    if not bot_token or not chat_id:
-        print("Missing Telegram environment variables")
-        return
-
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-
-    try:
-        response = requests.post(
-            url,
-            data={
-                "chat_id": chat_id,
-                "text": message
-            },
-            timeout=10
-        )
-
-        print("Telegram status:", response.status_code)
-        print("Telegram response:", response.text)
-
-    except Exception as e:
-        print(f"Telegram alert failed: {e}")
+    return notify_plain_message(message, label="Legacy paper trade alert")
 
 def load_portfolio():
 

@@ -1,0 +1,15 @@
+[Unit]
+Description=Garner Quant Streamlit Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/garner-quant
+EnvironmentFile=/opt/garner-quant/.env
+ExecStart=/opt/garner-quant/.venv/bin/python -m streamlit run web_dashboard.py --server.address 0.0.0.0 --server.port 8501
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

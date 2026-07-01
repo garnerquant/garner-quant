@@ -6,6 +6,11 @@ from supabase import create_client
 
 from dashboard.data_loader import load_csv
 from execution.trade_audit import build_trade_audit_trail
+from ui.responsive import (
+    apply_responsive_styles,
+    responsive_columns,
+    responsive_table,
+)
 
 
 def inject_mobile_css():
@@ -16,7 +21,7 @@ def inject_mobile_css():
             padding-top: 3rem;
             padding-left: 1rem;
             padding-right: 1rem;
-            max-width: 900px;
+            max-width: 1280px;
         }
 
         .status-card {
@@ -113,10 +118,11 @@ def format_last_updated(value):
 st.set_page_config(
     page_title="Garner Quant",
     page_icon="📊",
-    layout="centered",
+    layout="wide",
 )
 
 inject_mobile_css()
+apply_responsive_styles()
 
 load_dotenv()
 
@@ -211,7 +217,7 @@ if page == "Home":
         today = pd.Timestamp.now().date()
         days_tracked = (today - start_date).days + 1
 
-        col1, col2 = st.columns(2)
+        col1, col2 = responsive_columns(2)
 
         with col1:
             metric_card("Day", f"{days_tracked}/30", True)
@@ -248,7 +254,7 @@ if page == "Home":
     portfolio_value = broker_row["portfolio_value"]
     cash_percent = cash_value / portfolio_value if portfolio_value > 0 else 0
 
-    col1, col2 = st.columns(2)
+    col1, col2 = responsive_columns(2)
 
     with col1:
         metric_card("Total Return", f"{total_return:.2%}", True)
@@ -275,7 +281,7 @@ if page == "Home":
 
         alpha = total_return - benchmark_return
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3 = responsive_columns(3)
 
         with col1:
             metric_card("Garner Quant", f"{total_return:.2%}", True)
@@ -291,7 +297,7 @@ if page == "Home":
 
     st.subheader("Portfolio")
 
-    col1, col2 = st.columns(2)
+    col1, col2 = responsive_columns(2)
 
     with col1:
         metric_card(
@@ -323,7 +329,7 @@ if page == "Home":
         drawdown = (paper_30["portfolio_value"] / rolling_peak) - 1
         max_drawdown = drawdown.min()
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3 = responsive_columns(3)
 
         with col1:
             metric_card("Best Day", f"{best_day:.2%}", True)
@@ -394,7 +400,7 @@ if page == "Home":
 
             st.caption(f"Comparing {yesterday} → {today}")
 
-            st.dataframe(
+            responsive_table(
                 attribution.style.format(
                     {
                         "Yesterday Value": "£{:,.2f}",
@@ -403,7 +409,6 @@ if page == "Home":
                         "Contribution %": "{:.2f}%",
                     }
                 ),
-                use_container_width=True,
                 hide_index=True,
             )
 
@@ -486,7 +491,7 @@ if page == "Home":
             }
         )
 
-        st.dataframe(
+        responsive_table(
             display_holdings.style.format(
                 {
                     "Shares": "{:.2f}",
@@ -497,7 +502,6 @@ if page == "Home":
                     "PnL": "£{:,.2f}",
                 }
             ),
-            use_container_width=True,
             hide_index=True,
         )
 
@@ -508,9 +512,9 @@ if page == "Home":
     if signals.empty:
         st.info("No signal report available.")
     else:
-        st.dataframe(
+        responsive_table(
             signals,
-            use_container_width=True,
+            hide_index=False,
         )
 
     st.divider()
@@ -522,7 +526,7 @@ if page == "Home":
     else:
         analytics_row = analytics.iloc[0]
 
-        col1, col2 = st.columns(2)
+        col1, col2 = responsive_columns(2)
 
         with col1:
             metric_card(
@@ -585,9 +589,8 @@ if page == "Home":
             }
         )
 
-        st.dataframe(
+        responsive_table(
             display_signals,
-            use_container_width=True,
             hide_index=True,
         )
 
@@ -655,7 +658,7 @@ if page == "Home":
             else 0
         )
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3 = responsive_columns(3)
 
         with c1:
             metric_card("Completed BUY -> SELL Pairs", total_trades)
@@ -669,7 +672,7 @@ if page == "Home":
             metric_card("Total PnL", f"£{total_pnl:,.2f}", total_pnl >= 0)
             metric_card("Profit Factor", f"{profit_factor:.2f}", profit_factor >= 1)
 
-        c4, c5, c6 = st.columns(3)
+        c4, c5, c6 = responsive_columns(3)
 
         with c4:
             metric_card("Average PnL", f"£{avg_pnl:,.2f}", avg_pnl >= 0)
@@ -715,7 +718,7 @@ if page == "Home":
             with st.container(border=True):
                 st.subheader(f"{symbol} — {result}")
 
-                col1, col2 = st.columns(2)
+                col1, col2 = responsive_columns(2)
 
             with col1:
                 st.write(f"**Opened:** {opened}")
@@ -764,7 +767,7 @@ if page == "Home":
 
                     st.markdown("### 🟢 Entry")
 
-                    c1, c2 = st.columns(2)
+                    c1, c2 = responsive_columns(2)
 
                     with c1:
                         st.metric("Cash", f"£{buy['cash']:,.2f}")
@@ -794,7 +797,7 @@ if page == "Home":
 
                     st.markdown("### 📈 Result")
 
-                    c1, c2 = st.columns(2)
+                    c1, c2 = responsive_columns(2)
 
                     with c1:
                         st.metric("PnL", f"£{pnl:,.2f}")
@@ -822,7 +825,7 @@ if page == "Home":
 
         st.line_chart(
             equity.set_index("close_time")["Cumulative PnL"],
-            use_container_width=True,
+            width="stretch",
         )
     if audit.empty or "pnl" not in audit.columns:
         st.info("No trade statistics available yet.")
@@ -851,7 +854,7 @@ if page == "Home":
             else "None"
         )
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3 = responsive_columns(3)
 
         with c1:
             metric_card("Average Hold", f"{avg_hold:.1f} days")
@@ -921,7 +924,7 @@ if page == "Home":
 
         display_trades = display_trades.tail(20).iloc[::-1]
 
-        st.dataframe(
+        responsive_table(
             display_trades.style.format(
                 {
                     "Shares": "{:.2f}",
@@ -930,7 +933,6 @@ if page == "Home":
                     "PnL": "£{:,.2f}",
                 }
             ),
-            use_container_width=True,
             hide_index=True,
         )
 

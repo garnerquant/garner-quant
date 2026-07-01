@@ -12,16 +12,25 @@ try:
 except Exception:
     technical_score = None
 
+try:
+    from research.parameter_schema import PARAMETER_SCHEMA, parameter_default
+except Exception:
+    PARAMETER_SCHEMA = {}
+    parameter_default = None
 
-DEFAULT_EXPERIMENT_CONFIG = {
-    "technical_score_threshold": 3,
-    "max_positions": None,
-    "position_size": None,
-    "stop_loss_pct": None,
-    "take_profit_pct": None,
-    "min_volume": None,
-    "exit_mode": "signals_and_stops",
-}
+DEFAULT_EXPERIMENT_CONFIG = (
+    {key: parameter_default(key) for key in PARAMETER_SCHEMA}
+    if parameter_default is not None
+    else {
+        "technical_score_threshold": 3,
+        "max_positions": 5,
+        "position_size": 0,
+        "stop_loss_pct": 0,
+        "take_profit_pct": 0,
+        "min_volume": 0,
+        "exit_mode": "signals_and_stops",
+    }
+)
 
 
 def _as_datetime_index(df):
@@ -198,11 +207,19 @@ def _calculate_metrics(equity_curve, trade_journal, holdings, latest_prices, sta
         else 0
     )
 
-    sells = trade_journal[trade_journal["action"] == "SELL"]
+    if trade_journal.empty or "action" not in trade_journal.columns:
+        sells = pd.DataFrame()
+    else:
+        sells = trade_journal[trade_journal["action"] == "SELL"]
     completed_trades = len(sells)
-    winners = sells[sells["pnl"] > 0]
-    win_rate = len(winners) / completed_trades if completed_trades else 0
-    realised_pnl = sells["pnl"].sum() if completed_trades else 0
+
+    if completed_trades and "pnl" in sells.columns:
+        winners = sells[sells["pnl"] > 0]
+        win_rate = len(winners) / completed_trades
+        realised_pnl = sells["pnl"].sum()
+    else:
+        win_rate = 0
+        realised_pnl = 0
 
     unrealised_pnl = 0
     if holdings and latest_prices is not None:

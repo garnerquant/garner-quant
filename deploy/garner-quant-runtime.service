@@ -1,0 +1,15 @@
+[Unit]
+Description=Garner Quant Live Runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/garner-quant
+EnvironmentFile=/opt/garner-quant/.env
+ExecStart=/opt/garner-quant/.venv/bin/python runtime/live_runtime.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

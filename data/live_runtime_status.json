@@ -1,0 +1,43 @@
+{
+  "status": "stopped",
+  "mode": "paper_execution",
+  "started_at": "2026-06-30T22:17:50+00:00",
+  "last_cycle_at": "2026-06-30T22:17:50+00:00",
+  "next_cycle_at": null,
+  "cycle_count": 1,
+  "markets_checked": [
+    "LSE"
+  ],
+  "markets_open": [],
+  "holdings_monitored": 0,
+  "alerts_found": 0,
+  "notifications_sent": 0,
+  "last_error": null,
+  "paper_only": true,
+  "unknown_tickers": [],
+  "notification_summary": {
+    "sent": 0,
+    "skipped": 0,
+    "errors": [],
+    "skipped_due_to_cooldown": 0,
+    "skipped_due_to_deduplication": 0
+  },
+  "paper_execution_enabled": true,
+  "paper_execution_blocked_reason": "market closed",
+  "last_execution_at": null,
+  "last_execution_status": null,
+  "trades_recorded_last_cycle": 0,
+  "execution_log_count": 0,
+  "current_strategy_stage": "Paper Execution Blocked",
+  "latest_runtime_event": {
+    "timestamp": "2026-06-30T22:17:50+00:00",
+    "type": "Paper Execution Blocked",
+    "severity": "info",
+    "message": "Paper execution did not run because safety controls blocked it.",
+    "details": {
+      "reason": "market closed"
+    }
+  },
+  "latest_paper_trade": null,
+  "execution_summary": null
+}

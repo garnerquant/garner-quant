@@ -1,0 +1,84 @@
+{
+  "sent_alerts": {
+    "TEST|TEST_NOTIFICATION|1782854685.829937": "2026-06-30T21:24:45",
+    "TEST|TEST_NOTIFICATION|100.000000": "2026-06-30T21:31:13"
+  },
+  "last_notification_sent": "2026-06-30T21:31:29",
+  "sent_log": [
+    {
+      "timestamp": "2026-06-30T21:24:45",
+      "type": "monitor_alert",
+      "ticker": "TEST",
+      "alert_type": "TEST_NOTIFICATION",
+      "trigger_price": 1782854685.829937,
+      "delivery": "fallback"
+    },
+    {
+      "timestamp": "2026-06-30T21:25:00",
+      "type": "trade_event",
+      "action": "BUY",
+      "ticker": "TEST.L",
+      "trade_key": "trade_id:TEST_BUY_20260630212500",
+      "delivery": "fallback"
+    },
+    {
+      "timestamp": "2026-06-30T21:25:10",
+      "type": "trade_event",
+      "action": "SELL",
+      "ticker": "TEST.L",
+      "trade_key": "trade_id:TEST_SELL_20260630212510",
+      "delivery": "fallback"
+    },
+    {
+      "timestamp": "2026-06-30T21:31:13",
+      "type": "monitor_alert",
+      "ticker": "TEST",
+      "alert_type": "TEST_NOTIFICATION",
+      "trigger_price": 100.0,
+      "delivery": "channel"
+    },
+    {
+      "timestamp": "2026-06-30T21:31:22",
+      "type": "trade_event",
+      "action": "BUY",
+      "ticker": "TEST.L",
+      "trade_key": "trade_id:TEST_BUY_20260630213121",
+      "delivery": "channel"
+    },
+    {
+      "timestamp": "2026-06-30T21:31:29",
+      "type": "trade_event",
+      "action": "SELL",
+      "ticker": "TEST.L",
+      "trade_key": "trade_id:TEST_SELL_20260630213129",
+      "delivery": "channel"
+    }
+  ],
+  "last_summary": {
+    "sent": 0,
+    "skipped": 0,
+    "errors": [],
+    "last_notification_sent": "2026-06-30T21:31:29",
+    "notifications_sent_today": 6,
+    "skipped_due_to_cooldown": 0,
+    "skipped_due_to_deduplication": 0
+  },
+  "sent_trades": {
+    "trade_id:TEST_BUY_20260630212500": "2026-06-30T21:25:00",
+    "trade_id:TEST_SELL_20260630212510": "2026-06-30T21:25:10",
+    "trade_id:TEST_BUY_20260630213121": "2026-06-30T21:31:22",
+    "trade_id:TEST_SELL_20260630213129": "2026-06-30T21:31:29"
+  },
+  "last_monitor_alert_sent": "2026-06-30T21:31:13",
+  "last_trade_notification_sent": "2026-06-30T21:31:29",
+  "last_notification_error": null,
+  "last_trade_summary": {
+    "sent": 1,
+    "skipped": 0,
+    "errors": [],
+    "last_notification_sent": "2026-06-30T21:31:29",
+    "notifications_sent_today": 6,
+    "skipped_due_to_cooldown": 0,
+    "skipped_due_to_deduplication": 0
+  }
+}

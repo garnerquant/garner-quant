@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "refresh_interval_minutes": 1,
+  "last_refresh": "2026-06-30T21:45:57.815235+01:00",
+  "next_refresh": null,
+  "market_status": "Outside Monitoring Hours",
+  "market": "uk",
+  "updated_at": "2026-06-30T23:12:17.499830+01:00"
+}

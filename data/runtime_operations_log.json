@@ -1,0 +1,228 @@
+{
+  "cycles": [
+    {
+      "cycle_id": "20260630T213053Z_1",
+      "started_at": "2026-06-30T21:30:53+00:00",
+      "finished_at": "2026-06-30T21:30:53+00:00",
+      "duration_seconds": 0.02,
+      "mode": "monitor_only",
+      "markets_checked": [
+        "LSE"
+      ],
+      "markets_open": [],
+      "symbols_scanned": 2,
+      "holdings_monitored": 0,
+      "signals_generated": 0,
+      "buy_signals": 0,
+      "sell_signals": 0,
+      "hold_signals": 0,
+      "paper_execution_attempted": false,
+      "paper_execution_completed": false,
+      "trades_recorded": 0,
+      "alerts_found": 0,
+      "notifications_sent": 0,
+      "status": "success",
+      "error": null
+    },
+    {
+      "cycle_id": "20260630T213319Z_1",
+      "started_at": "2026-06-30T21:33:19+00:00",
+      "finished_at": "2026-06-30T21:33:19+00:00",
+      "duration_seconds": 0.02,
+      "mode": "monitor_only",
+      "markets_checked": [
+        "LSE"
+      ],
+      "markets_open": [],
+      "symbols_scanned": 2,
+      "holdings_monitored": 0,
+      "signals_generated": 0,
+      "buy_signals": 0,
+      "sell_signals": 0,
+      "hold_signals": 0,
+      "paper_execution_attempted": false,
+      "paper_execution_completed": false,
+      "trades_recorded": 0,
+      "alerts_found": 0,
+      "notifications_sent": 0,
+      "status": "success",
+      "error": null
+    },
+    {
+      "cycle_id": "20260630T213754Z_1",
+      "started_at": "2026-06-30T21:37:54+00:00",
+      "finished_at": "2026-06-30T21:37:54+00:00",
+      "duration_seconds": 0.02,
+      "mode": "monitor_only",
+      "markets_checked": [
+        "LSE"
+      ],
+      "markets_open": [],
+      "symbols_scanned": 2,
+      "holdings_monitored": 0,
+      "signals_generated": 0,
+      "buy_signals": 0,
+      "sell_signals": 0,
+      "hold_signals": 0,
+      "paper_execution_attempted": false,
+      "paper_execution_completed": false,
+      "trades_recorded": 0,
+      "alerts_found": 0,
+      "notifications_sent": 0,
+      "status": "success",
+      "error": null,
+      "cycle_summary": "Runtime completed successfully. No markets were open.",
+      "reason": "All configured markets were closed during this cycle.",
+      "action_taken": "No monitoring or paper execution was required.",
+      "next_expected_action": "Runtime will check again on the next scheduled cycle."
+    },
+    {
+      "cycle_id": "20260630T213908Z_1",
+      "started_at": "2026-06-30T21:39:08+00:00",
+      "finished_at": "2026-06-30T21:39:08+00:00",
+      "duration_seconds": 0.02,
+      "mode": "monitor_only",
+      "markets_checked": [
+        "LSE"
+      ],
+      "markets_open": [],
+      "symbols_scanned": 2,
+      "holdings_monitored": 0,
+      "signals_generated": 0,
+      "buy_signals": 0,
+      "sell_signals": 0,
+      "hold_signals": 0,
+      "paper_execution_attempted": false,
+      "paper_execution_completed": false,
+      "trades_recorded": 0,
+      "alerts_found": 0,
+      "notifications_sent": 0,
+      "status": "success",
+      "error": null,
+      "cycle_summary": "Runtime completed successfully. No markets were open.",
+      "reason": "All configured markets were closed during this cycle.",
+      "action_taken": "No monitoring or paper execution was required.",
+      "next_expected_action": "Runtime will check again on the next scheduled cycle."
+    },
+    {
+      "cycle_id": "20260630T221205Z_1",
+      "started_at": "2026-06-30T22:12:05+00:00",
+      "finished_at": "2026-06-30T22:12:05+00:00",
+      "duration_seconds": 0.02,
+      "mode": "monitor_only",
+      "markets_checked": [
+        "LSE"
+      ],
+      "markets_open": [],
+      "symbols_scanned": 2,
+      "holdings_monitored": 0,
+      "signals_generated": 0,
+      "buy_signals": 0,
+      "sell_signals": 0,
+      "hold_signals": 0,
+      "paper_execution_attempted": false,
+      "paper_execution_completed": false,
+      "trades_recorded": 0,
+      "alerts_found": 0,
+      "notifications_sent": 0,
+      "execution_summary": null,
+      "events": [
+        {
+          "timestamp": "2026-06-30T22:12:05+00:00",
+          "type": "Runtime Resumed",
+          "severity": "info",
+          "message": "Runtime cycle started.",
+          "details": {
+            "cycle_id": "20260630T221205Z_1"
+          }
+        },
+        {
+          "timestamp": "2026-06-30T22:12:05+00:00",
+          "type": "Runtime Sleeping",
+          "severity": "info",
+          "message": "No configured markets are open.",
+          "details": {
+            "markets_checked": [
+              "LSE"
+            ]
+          }
+        },
+        {
+          "timestamp": "2026-06-30T22:12:05+00:00",
+          "type": "Paper Execution Blocked",
+          "severity": "info",
+          "message": "Paper execution did not run because safety controls blocked it.",
+          "details": {
+            "reason": "mode is monitor_only"
+          }
+        }
+      ],
+      "status": "success",
+      "error": null,
+      "cycle_summary": "Runtime completed successfully. No markets were open.",
+      "reason": "All configured markets were closed during this cycle.",
+      "action_taken": "No monitoring or paper execution was required.",
+      "next_expected_action": "Runtime will check again on the next scheduled cycle."
+    },
+    {
+      "cycle_id": "20260630T221750Z_1",
+      "started_at": "2026-06-30T22:17:50+00:00",
+      "finished_at": "2026-06-30T22:17:50+00:00",
+      "duration_seconds": 0.02,
+      "mode": "paper_execution",
+      "markets_checked": [
+        "LSE"
+      ],
+      "markets_open": [],
+      "symbols_scanned": 2,
+      "holdings_monitored": 0,
+      "signals_generated": 0,
+      "buy_signals": 0,
+      "sell_signals": 0,
+      "hold_signals": 0,
+      "paper_execution_attempted": false,
+      "paper_execution_completed": false,
+      "trades_recorded": 0,
+      "alerts_found": 0,
+      "notifications_sent": 0,
+      "execution_summary": null,
+      "events": [
+        {
+          "timestamp": "2026-06-30T22:17:50+00:00",
+          "type": "Runtime Resumed",
+          "severity": "info",
+          "message": "Runtime cycle started.",
+          "details": {
+            "cycle_id": "20260630T221750Z_1"
+          }
+        },
+        {
+          "timestamp": "2026-06-30T22:17:50+00:00",
+          "type": "Runtime Sleeping",
+          "severity": "info",
+          "message": "No configured markets are open.",
+          "details": {
+            "markets_checked": [
+              "LSE"
+            ]
+          }
+        },
+        {
+          "timestamp": "2026-06-30T22:17:50+00:00",
+          "type": "Paper Execution Blocked",
+          "severity": "info",
+          "message": "Paper execution did not run because safety controls blocked it.",
+          "details": {
+            "reason": "market closed"
+          }
+        }
+      ],
+      "status": "success",
+      "error": null,
+      "cycle_summary": "Runtime completed successfully. No markets were open.",
+      "reason": "All configured markets were closed during this cycle.",
+      "action_taken": "No monitoring or paper execution was required.",
+      "next_expected_action": "Runtime will check again on the next scheduled cycle."
+    }
+  ]
+}

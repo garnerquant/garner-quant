@@ -1,4 +1,5 @@
 import pandas as pd
+import time
 
 from config import ASSETS, BENCHMARK_TICKER
 
@@ -27,7 +28,19 @@ from reporting.paper_performance import (
 )
 
 
-def main(show_charts=True, send_telegram=True):
+def main(show_charts=True, send_telegram=True, sync_remote=True):
+    run_started = time.perf_counter()
+    pipeline_events = []
+
+    def record_event(event_type, message, details=None):
+        pipeline_events.append(
+            {
+                "type": event_type,
+                "severity": "info",
+                "message": message,
+                "details": details or {},
+            }
+        )
 
     from config import BENCHMARK_TICKER
 
@@ -35,6 +48,11 @@ def main(show_charts=True, send_telegram=True):
 
     print("Downloading market data...")
     market_data = download_market_data(tickers)
+    record_event(
+        "Downloaded Prices",
+        "Downloaded latest market data.",
+        {"symbols": tickers},
+    )
 
     prices = get_price_field(market_data, "Close")
     highs = get_price_field(market_data, "High")
@@ -50,14 +68,30 @@ def main(show_charts=True, send_telegram=True):
 
     print("Building signals...")
     signals = build_signals(asset_prices, asset_volumes)
+    latest_signals = signals.loc[signals.index[-1]]
+    buy_signals = int((latest_signals == 1).sum())
+    sell_signals = int((latest_signals == 0).sum())
+    hold_signals = int(len(latest_signals) - buy_signals - sell_signals)
+    record_event(
+        "Generated Signals",
+        "Generated latest strategy signals.",
+        {
+            "buy_signals": buy_signals,
+            "sell_signals": sell_signals,
+            "hold_signals": hold_signals,
+        },
+    )
     print("Building risk levels...")
     risk_levels = build_risk_levels(asset_prices, asset_highs, asset_lows)
+    record_event("Built Risk Levels", "Calculated stop loss and take profit levels.")
 
     print("Building portfolio weights...")
     weights = build_weights(signals, prices, risk_levels)
+    record_event("Calculated Weights", "Calculated portfolio weights.")
 
     print("Running backtest...")
     portfolio = run_backtest(asset_prices, weights, risk_levels)
+    record_event("Ran Backtest", "Updated backtest portfolio series.")
 
     print("Updating Portfolio Manager V3...")
     paper_portfolio, trade_journal, v3_trades = update_portfolio(
@@ -66,6 +100,26 @@ def main(show_charts=True, send_telegram=True):
         weights,
         risk_levels
     )
+    record_event(
+        "Paper Portfolio Updated",
+        "Updated paper portfolio, trade journal, and transaction log.",
+        {"paper_trades": len(v3_trades)},
+    )
+
+    for _, trade in v3_trades.iterrows():
+        record_event(
+            f"{trade.get('action', 'TRADE')} {trade.get('ticker', '')}".strip(),
+            (
+                f"{trade.get('action', 'TRADE')} "
+                f"{trade.get('ticker', 'UNKNOWN')} recorded in paper portfolio."
+            ),
+            {
+                "ticker": trade.get("ticker"),
+                "action": trade.get("action"),
+                "price": trade.get("price"),
+                "shares": trade.get("shares"),
+            },
+        )
 
     summary = portfolio_summary(paper_portfolio, prices)
 
@@ -87,6 +141,7 @@ def main(show_charts=True, send_telegram=True):
     audit_trail.to_csv("trade_audit_trail.csv", index=False)
     print("Saved trade_audit_trail.csv")
     holdings_report.to_csv("holdings_report.csv", index=False)
+    record_event("Saved Reports", "Saved portfolio, signal, audit, and holding files.")
 
     fundamental_scores = pd.read_csv("fundamental_scores.csv")
 
@@ -129,12 +184,13 @@ def main(show_charts=True, send_telegram=True):
     paper_30_day = calculate_30_day_performance(tracker)
     print_30_day_performance(paper_30_day)
 
-    sync_broker_account()
-    sync_holdings()
-    sync_30_day_tracker()
-    sync_holdings_history()
-    sync_trade_journal()
-    sync_signals()
+    if sync_remote:
+        sync_broker_account()
+        sync_holdings()
+        sync_30_day_tracker()
+        sync_holdings_history()
+        sync_trade_journal()
+        sync_signals()
 
     telegram_message = build_telegram_message(
         report,
@@ -151,11 +207,45 @@ def main(show_charts=True, send_telegram=True):
     if send_telegram:
         print("Sending Telegram update...")
         send_message(telegram_message)
+        record_event("Telegram Notification Sent", "Sent daily Telegram report.")
 
     if show_charts:
         show_dashboard(portfolio, weights, report)
 
     print("\nGarner Quant V2.1 run complete.")
+    trade_notification_summary = v3_trades.attrs.get(
+        "notification_summary",
+        {},
+    )
+    trade_notifications_sent = int(
+        trade_notification_summary.get("sent", 0)
+    )
+    if trade_notifications_sent:
+        record_event(
+            "Telegram Notification Sent",
+            "Sent trade notification alerts.",
+            {"sent": trade_notifications_sent},
+        )
+
+    return {
+        "signals_count": len(signal_rows),
+        "symbols_scanned": len(asset_tickers),
+        "buy_signals": buy_signals,
+        "sell_signals": sell_signals,
+        "hold_signals": hold_signals,
+        "trades_recorded": len(v3_trades),
+        "paper_trades": len(v3_trades),
+        "portfolio_changed": bool(len(v3_trades) > 0),
+        "trade_notifications_sent": trade_notifications_sent,
+        "notifications_sent": trade_notifications_sent,
+        "execution_time_seconds": round(time.perf_counter() - run_started, 2),
+        "events": pipeline_events,
+        "latest_paper_trade": (
+            v3_trades.iloc[-1].to_dict()
+            if len(v3_trades)
+            else None
+        ),
+    }
 
 
 if __name__ == "__main__":

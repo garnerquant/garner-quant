@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-06-30T21:50:32",
+  "holdings_monitored": 2,
+  "latest_prices": {
+    "VWRL.L": {
+      "price": 137.82000732421875,
+      "timestamp": "2026-06-30 16:29:00+01:00"
+    },
+    "IUSA.L": {
+      "price": 5613.0,
+      "timestamp": "2026-06-30 16:29:00+01:00"
+    }
+  },
+  "live_portfolio_value_estimate": 4558.917841863705,
+  "live_unrealised_pnl": 58.91784186370501,
+  "alerts": [],
+  "errors": [],
+  "positions": [
+    {
+      "ticker": "VWRL.L",
+      "entry_price": 135.74000549316406,
+      "shares": 18.417562242738388,
+      "original_position_value": 2500.0,
+      "current_price": 137.82000732421875,
+      "price_timestamp": "2026-06-30 16:29:00+01:00",
+      "market_value": 2538.308563188459,
+      "unrealised_pnl": 38.308563188459175,
+      "unrealised_pnl_percent": 0.015323425275383773,
+      "stop_loss": 132.88731794765457,
+      "take_profit": 140.0190368114283,
+      "status": "ok",
+      "monitored_at": "2026-06-30T21:50:32"
+    },
+    {
+      "ticker": "IUSA.L",
+      "entry_price": 5555.75,
+      "shares": 0.3599874004409845,
+      "original_position_value": 2000.0,
+      "current_price": 5613.0,
+      "price_timestamp": "2026-06-30 16:29:00+01:00",
+      "market_value": 2020.6092786752458,
+      "unrealised_pnl": 20.609278675245832,
+      "unrealised_pnl_percent": 0.010304639337623156,
+      "stop_loss": 5449.764748388936,
+      "take_profit": 5714.727877416597,
+      "status": "ok",
+      "monitored_at": "2026-06-30T21:50:32"
+    }
+  ],
+  "paper_only": true
+}
