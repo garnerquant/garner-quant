@@ -3,7 +3,7 @@
     "TEST|TEST_NOTIFICATION|1782854685.829937": "2026-06-30T21:24:45",
     "TEST|TEST_NOTIFICATION|100.000000": "2026-06-30T21:31:13"
   },
-  "last_notification_sent": "2026-06-30T21:31:29",
+  "last_notification_sent": "2026-07-01T16:12:08",
   "sent_log": [
     {
       "timestamp": "2026-06-30T21:24:45",
@@ -52,6 +52,22 @@
       "ticker": "TEST.L",
       "trade_key": "trade_id:TEST_SELL_20260630213129",
       "delivery": "channel"
+    },
+    {
+      "timestamp": "2026-07-01T16:12:08",
+      "type": "trade_event",
+      "action": "BUY",
+      "ticker": "AAPL",
+      "trade_key": "trade_id:AAPL_2026-07-01 00:00:00_BUY",
+      "delivery": "channel"
+    },
+    {
+      "timestamp": "2026-07-01T16:12:08",
+      "type": "trade_event",
+      "action": "BUY",
+      "ticker": "MSFT",
+      "trade_key": "trade_id:MSFT_2026-07-01 00:00:00_BUY",
+      "delivery": "channel"
     }
   ],
   "last_summary": {
@@ -67,17 +83,19 @@
     "trade_id:TEST_BUY_20260630212500": "2026-06-30T21:25:00",
     "trade_id:TEST_SELL_20260630212510": "2026-06-30T21:25:10",
     "trade_id:TEST_BUY_20260630213121": "2026-06-30T21:31:22",
-    "trade_id:TEST_SELL_20260630213129": "2026-06-30T21:31:29"
+    "trade_id:TEST_SELL_20260630213129": "2026-06-30T21:31:29",
+    "trade_id:AAPL_2026-07-01 00:00:00_BUY": "2026-07-01T16:12:08",
+    "trade_id:MSFT_2026-07-01 00:00:00_BUY": "2026-07-01T16:12:08"
   },
   "last_monitor_alert_sent": "2026-06-30T21:31:13",
-  "last_trade_notification_sent": "2026-06-30T21:31:29",
+  "last_trade_notification_sent": "2026-07-01T16:12:08",
   "last_notification_error": null,
   "last_trade_summary": {
-    "sent": 1,
+    "sent": 2,
     "skipped": 0,
     "errors": [],
-    "last_notification_sent": "2026-06-30T21:31:29",
-    "notifications_sent_today": 6,
+    "last_notification_sent": "2026-07-01T16:12:08",
+    "notifications_sent_today": 2,
     "skipped_due_to_cooldown": 0,
     "skipped_due_to_deduplication": 0
   }
