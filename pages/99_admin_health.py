@@ -1375,6 +1375,7 @@ def data_freshness_items(runtime_status=None):
         ("Portfolio", "paper_portfolio_v3.csv"),
         ("Decision Trace", "data/runtime_decision_trace.json"),
         ("Telegram Notifications", "data/notification_state.json"),
+        ("Market News", "data/news_events.json"),
     ]
     items = []
     for label, filename in files:
@@ -1429,6 +1430,24 @@ def render_data_freshness_card(items):
         )
     cards.append("</div>")
     st.markdown("".join(cards), unsafe_allow_html=True)
+
+
+def news_monitor_rows(limit=10):
+    news_data = load_json_file("data/news_events.json")
+    rows = []
+    for item in safe_list(news_data.get("items"))[:limit]:
+        rows.append(
+            {
+                "Time": short_time(item.get("timestamp")),
+                "Ticker": item.get("ticker") or item.get("query") or "Unknown",
+                "Source": item.get("source") or "Unknown",
+                "Headline": item.get("title") or "Untitled",
+                "Sentiment": item.get("sentiment") or "unknown",
+                "Importance": item.get("importance") or "unknown",
+                "URL": item.get("url") or "",
+            }
+        )
+    return rows, news_data
 
 
 def market_groups():
@@ -2348,6 +2367,27 @@ with market_panel_cols[1]:
     else:
         st.success("All configured markets are open.")
 st.caption(f"Next Market Event: {next_market_to_open(configured_markets)}")
+
+st.markdown("**Market News Monitor**")
+news_rows, news_data = news_monitor_rows(limit=10)
+news_cols = responsive_columns(3)
+news_cols[0].metric("Headlines Stored", news_data.get("items_count", 0))
+news_cols[1].metric(
+    "Sources",
+    ", ".join(safe_list(news_data.get("sources"))) or "Unavailable",
+)
+news_cols[2].metric(
+    "Last Updated",
+    short_time(news_data.get("generated_at")),
+)
+st.caption(
+    "Read-only RSS monitoring. News is displayed for operator context only "
+    "and does not change signals, portfolio decisions, or paper execution."
+)
+if news_rows:
+    responsive_table(pd.DataFrame(news_rows), hide_index=True)
+else:
+    st.info("No news headlines have been collected yet.")
 
 st.markdown("**Latest Completed Strategy**")
 st.caption(

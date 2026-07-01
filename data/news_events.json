@@ -1,0 +1,11 @@
+{
+  "generated_at": null,
+  "monitor_enabled": true,
+  "monitored_tickers": [],
+  "sources": [
+    "Google News"
+  ],
+  "items_count": 0,
+  "items": [],
+  "errors": []
+}

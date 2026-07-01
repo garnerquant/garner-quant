@@ -711,6 +711,7 @@ def run_cycle(config, started_at, cycle_count):
         )
     should_monitor = bool(markets_open)
     monitor_result = None
+    news_summary = None
     notification_summary = empty_notification_summary()
     last_error = None
     execution_entry = None
@@ -752,6 +753,31 @@ def run_cycle(config, started_at, cycle_count):
                 "Sent live monitor paper alert notifications.",
                 details=notification_summary,
             )
+
+    try:
+        from news.news_config import NEWS_MONITOR_ENABLED
+        from news.news_monitor import run_news_monitor
+
+        if NEWS_MONITOR_ENABLED:
+            news_summary = run_news_monitor(tickers=tickers)
+            append_event(
+                events,
+                "News Monitor Updated",
+                "Read-only market news monitor refreshed.",
+                details={
+                    "items_count": news_summary.get("items_count", 0),
+                    "sources": news_summary.get("sources", []),
+                    "errors": len(news_summary.get("errors", [])),
+                },
+            )
+    except Exception as exc:
+        append_event(
+            events,
+            "News Monitor Warning",
+            "Read-only market news monitor failed; runtime continued.",
+            severity="warning",
+            details={"error": str(exc)},
+        )
 
     if blocked_reason is None:
         execution_entry = run_paper_execution(
@@ -861,6 +887,15 @@ def run_cycle(config, started_at, cycle_count):
         "alerts_found": alerts_found,
         "notifications_sent": notifications_sent,
         "notification_summary": notification_summary,
+        "news_monitor": (
+            {
+                "items_count": news_summary.get("items_count", 0),
+                "generated_at": news_summary.get("generated_at"),
+                "errors": len(news_summary.get("errors", [])),
+            }
+            if news_summary is not None
+            else None
+        ),
         "current_strategy_stage": current_stage,
         "latest_runtime_event": latest_event,
         "latest_paper_trade": latest_paper_trade,
