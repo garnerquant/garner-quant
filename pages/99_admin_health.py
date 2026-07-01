@@ -231,7 +231,9 @@ def runtime_uptime_label(runtime_status):
 
 def heartbeat_status(runtime_status):
     heartbeat = runtime_state(runtime_status)["heartbeat"]
-    return heartbeat["display"], bool(heartbeat["healthy"])
+    return heartbeat.get("display", heartbeat.get("label", "Unknown")), bool(
+        heartbeat.get("healthy", False)
+    )
 
 
 def heartbeat_age_label(runtime_status):

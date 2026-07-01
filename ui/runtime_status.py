@@ -180,10 +180,14 @@ def runtime_heartbeat(status):
     if last_cycle_at is None:
         return {
             "label": "No heartbeat",
+            "display": "No heartbeat",
             "healthy": False,
             "level": "missing",
             "age": "Unknown",
             "age_seconds": None,
+            "delayed_after_seconds": max(int(status.get("cycle_seconds", 300) or 300) * 3, 900),
+            "overdue_after_seconds": max(int(status.get("cycle_seconds", 300) or 300) * 6, 1800),
+            "next_cycle_seconds": None,
         }
 
     now = pd.Timestamp.now(tz="Europe/London")
@@ -327,10 +331,10 @@ def runtime_state(status):
         display_stage = "Runtime reported an error"
         next_scan_display = next_cycle["scan"]
     elif running:
-        healthy = heartbeat["healthy"]
-        if heartbeat["level"] == "overdue":
+        healthy = bool(heartbeat.get("healthy", False))
+        if heartbeat.get("level") == "overdue":
             health = "Runtime needs attention"
-        elif heartbeat["level"] == "delayed":
+        elif heartbeat.get("level") == "delayed":
             health = "Runtime delayed"
         else:
             health = "Running normally"
