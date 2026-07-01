@@ -711,6 +711,7 @@ def run_cycle(config, started_at, cycle_count):
         )
     should_monitor = bool(markets_open)
     monitor_result = None
+    valuation_refresh = None
     news_summary = None
     notification_summary = empty_notification_summary()
     last_error = None
@@ -753,6 +754,33 @@ def run_cycle(config, started_at, cycle_count):
                 "Sent live monitor paper alert notifications.",
                 details=notification_summary,
             )
+
+    try:
+        from execution.mark_to_market import mark_to_market_refresh
+
+        valuation_refresh = mark_to_market_refresh(
+            monitor_result=monitor_result,
+            sync_remote=True,
+        )
+        append_event(
+            events,
+            "Portfolio Valuation Refreshed",
+            "Paper portfolio valuation refreshed from live monitor prices.",
+            details=valuation_refresh,
+        )
+    except Exception as exc:
+        valuation_refresh = {
+            "status": "error",
+            "error": str(exc),
+        }
+        print(f"Portfolio valuation refresh failed: {exc}")
+        append_event(
+            events,
+            "Portfolio Valuation Warning",
+            "Portfolio valuation refresh failed",
+            severity="warning",
+            details={"error": str(exc)},
+        )
 
     try:
         from market_intelligence.daily_brief import (
@@ -889,6 +917,7 @@ def run_cycle(config, started_at, cycle_count):
         "alerts_found": alerts_found,
         "notifications_sent": notifications_sent,
         "notification_summary": notification_summary,
+        "valuation_refresh": valuation_refresh,
         "market_intelligence": (
             {
                 "stories_count": news_summary.get("stories_count", 0),
@@ -997,6 +1026,7 @@ def run_cycle(config, started_at, cycle_count):
             "trades_recorded": trades_recorded,
             "alerts_found": alerts_found,
             "notifications_sent": notifications_sent,
+            "valuation_refresh": valuation_refresh,
             "execution_summary": status.get("execution_summary"),
             "events": events,
             "status": "error" if last_error else "success",
