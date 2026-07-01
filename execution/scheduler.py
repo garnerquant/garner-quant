@@ -20,11 +20,16 @@ def run_bot():
     print("\n===== COMPLETE =====\n")
 
 
-schedule.every().day.at("07:00").do(run_bot)
+def main():
+    schedule.every().day.at("07:00").do(run_bot)
 
-print("Garner Quant Scheduler Started")
-print("Waiting for 07:00...")
+    print("Garner Quant Scheduler Started")
+    print("Waiting for 07:00...")
 
-while True:
-    schedule.run_pending()
-    time.sleep(60)
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+
+if __name__ == "__main__":
+    main()
