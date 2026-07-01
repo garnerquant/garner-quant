@@ -1,3 +1,1 @@
-trade_id,date,time,timestamp,ticker,action,price,entry_price,reason,position_value,value,shares,stop_loss,take_profit,justification
-AAPL_2026-07-01 00:00:00_BUY,2026-07-01,16:12:07,2026-07-01 16:12:07,AAPL,BUY,295.5,295.5,SIGNAL ENTRY,1000.0,1000.0,3.3840947546531304,278.44498552594865,321.082521711077,"['Signal passed', 'Weight assigned', 'Risk level available', 'Position added to paper portfolio']"
-MSFT_2026-07-01 00:00:00_BUY,2026-07-01,16:12:07,2026-07-01 16:12:07,MSFT,BUY,385.8299865722656,385.8299865722656,SIGNAL ENTRY,1000.0,1000.0,2.591815138279048,357.9172058105469,427.69915771484375,"['Signal passed', 'Weight assigned', 'Risk level available', 'Position added to paper portfolio']"
+
