@@ -1,3 +1,5 @@
+import json
+
 import streamlit as st
 
 
@@ -38,10 +40,98 @@ def _valid_interval(value, default):
     return value if value in INTERVAL_OPTIONS else default
 
 
-def _meta_refresh(interval_seconds):
-    st.markdown(
-        f"<meta http-equiv='refresh' content='{int(interval_seconds)}'>",
-        unsafe_allow_html=True,
+def _scroll_script(key, interval_seconds=None):
+    storage_key = json.dumps(f"garner_quant_scroll_{key}")
+    timer_key = json.dumps(f"garner_quant_refresh_timer_{key}")
+    listener_key = json.dumps(f"garner_quant_scroll_listener_{key}")
+    interval_ms = (
+        "null"
+        if interval_seconds is None
+        else str(max(1, int(interval_seconds)) * 1000)
+    )
+
+    st.iframe(
+        f"""
+        <script>
+        (function() {{
+            try {{
+                const parentWindow = window.parent;
+                const storageKey = {storage_key};
+                const timerKey = {timer_key};
+                const listenerKey = {listener_key};
+                const intervalMs = {interval_ms};
+
+                function currentScrollY() {{
+                    return parentWindow.scrollY ||
+                        parentWindow.pageYOffset ||
+                        parentWindow.document.documentElement.scrollTop ||
+                        parentWindow.document.body.scrollTop ||
+                        0;
+                }}
+
+                function saveScroll() {{
+                    try {{
+                        parentWindow.sessionStorage.setItem(
+                            storageKey,
+                            String(currentScrollY())
+                        );
+                    }} catch (error) {{}}
+                }}
+
+                function restoreScroll() {{
+                    try {{
+                        const raw = parentWindow.sessionStorage.getItem(storageKey);
+                        if (raw === null) {{
+                            return;
+                        }}
+                        const y = parseInt(raw, 10);
+                        if (Number.isNaN(y)) {{
+                            return;
+                        }}
+                        parentWindow.requestAnimationFrame(function() {{
+                            parentWindow.scrollTo({{ top: y, behavior: "auto" }});
+                        }});
+                    }} catch (error) {{}}
+                }}
+
+                if (parentWindow[listenerKey]) {{
+                    parentWindow.removeEventListener(
+                        "scroll",
+                        parentWindow[listenerKey]
+                    );
+                }}
+                parentWindow[listenerKey] = saveScroll;
+                parentWindow.addEventListener(
+                    "scroll",
+                    parentWindow[listenerKey],
+                    {{ passive: true }}
+                );
+                parentWindow.addEventListener("beforeunload", saveScroll);
+                restoreScroll();
+
+                if (parentWindow[timerKey]) {{
+                    parentWindow.clearTimeout(parentWindow[timerKey]);
+                    parentWindow[timerKey] = null;
+                }}
+
+                // Fallback path for environments without streamlit-autorefresh.
+                // It must reload the page, but it preserves scroll position when
+                // the browser allows component JavaScript to access the parent.
+                if (intervalMs !== null) {{
+                    parentWindow[timerKey] = parentWindow.setTimeout(function() {{
+                        saveScroll();
+                        parentWindow.location.reload();
+                    }}, intervalMs);
+                }}
+            }} catch (error) {{
+                // Streamlit Cloud/browser sandbox changes can block parent access.
+                // In that case auto-refresh still falls back gracefully elsewhere.
+            }}
+        }})();
+        </script>
+        """,
+        height=1,
+        width=1,
     )
 
 
@@ -94,7 +184,10 @@ def enable_auto_refresh(interval_seconds=60, key="dashboard_auto_refresh"):
     _write_query_value(enabled_key, "1" if enabled else "0")
     _write_query_value(interval_key, interval)
 
+    method = "disabled"
+    fallback_interval = None
     if enabled:
+        method = "streamlit_autorefresh"
         try:
             from streamlit_autorefresh import st_autorefresh
 
@@ -103,10 +196,13 @@ def enable_auto_refresh(interval_seconds=60, key="dashboard_auto_refresh"):
                 key=f"{key}_tick",
             )
         except Exception:
-            _meta_refresh(interval)
+            method = "scroll_preserving_reload_fallback"
+            fallback_interval = interval
+
+    _scroll_script(key, interval_seconds=fallback_interval)
 
     return {
         "enabled": enabled,
         "interval_seconds": interval,
-        "method": "streamlit_autorefresh_or_meta_refresh",
+        "method": method,
     }
