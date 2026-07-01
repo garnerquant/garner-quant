@@ -1,6 +1,10 @@
 import pandas as pd
 from pathlib import Path
-from config import STARTING_CASH
+from config import (
+    MIN_HOLD_DAYS_FOR_SIGNAL_EXIT,
+    SELL_CONFIRMATION_RUNS,
+    STARTING_CASH,
+)
 from execution.broker_account import load_account, update_account
 from datetime import datetime
 import json
@@ -11,22 +15,38 @@ TRANSACTION_LOG_FILE = "trade_transactions_v1.csv"
 TRADE_SNAPSHOTS_FILE = "trade_snapshots.csv"
 DECISION_TRACE_FILE = Path("data") / "runtime_decision_trace.json"
 
+PORTFOLIO_COLUMNS = [
+    "ticker",
+    "entry_date",
+    "entry_price",
+    "shares",
+    "position_value",
+    "stop_loss",
+    "take_profit",
+    "signal_exit_count",
+    "last_signal_exit_check",
+]
+
 
 def load_portfolio():
     if Path(PORTFOLIO_FILE).exists():
-        return pd.read_csv(PORTFOLIO_FILE)
+        portfolio = pd.read_csv(PORTFOLIO_FILE)
 
-    return pd.DataFrame(
-        columns=[
-            "ticker",
-            "entry_date",
-            "entry_price",
-            "shares",
-            "position_value",
-            "stop_loss",
-            "take_profit",
-        ]
-    )
+        for col in PORTFOLIO_COLUMNS:
+            if col not in portfolio.columns:
+                portfolio[col] = 0 if col == "signal_exit_count" else ""
+
+        portfolio["signal_exit_count"] = pd.to_numeric(
+            portfolio["signal_exit_count"],
+            errors="coerce",
+        ).fillna(0).astype(int)
+        portfolio["last_signal_exit_check"] = (
+            portfolio["last_signal_exit_check"].fillna("").astype(str)
+        )
+
+        return portfolio[PORTFOLIO_COLUMNS]
+
+    return pd.DataFrame(columns=PORTFOLIO_COLUMNS)
 
 
 def save_portfolio(portfolio):
@@ -134,6 +154,64 @@ def holding_period_label(entry_date, exit_date):
     days = max(0, int((exit_value - entry).days))
     unit = "day" if days == 1 else "days"
     return f"{days} {unit}"
+
+
+def holding_period_days(entry_date, exit_date):
+    entry = pd.to_datetime(entry_date, errors="coerce")
+    exit_value = pd.to_datetime(exit_date, errors="coerce")
+
+    if pd.isna(entry) or pd.isna(exit_value):
+        return 0
+
+    return max(0, int((exit_value - entry).days))
+
+
+def signal_exit_status(position, signal, latest_date, check_id):
+    if signal == 1:
+        return {
+            "count": 0,
+            "last_check": "",
+            "confirmed": False,
+            "hold_days": holding_period_days(position["entry_date"], latest_date),
+            "reason": "signal restored",
+        }
+
+    current_count = int(position.get("signal_exit_count", 0) or 0)
+    last_check = position.get("last_signal_exit_check", "")
+
+    if signal != 0:
+        return {
+            "count": current_count,
+            "last_check": last_check,
+            "confirmed": False,
+            "hold_days": holding_period_days(position["entry_date"], latest_date),
+            "reason": "signal active",
+        }
+
+    if last_check != check_id:
+        current_count += 1
+        last_check = check_id
+
+    hold_days = holding_period_days(position["entry_date"], latest_date)
+    confirmed = (
+        hold_days >= MIN_HOLD_DAYS_FOR_SIGNAL_EXIT
+        and current_count >= SELL_CONFIRMATION_RUNS
+    )
+
+    if hold_days < MIN_HOLD_DAYS_FOR_SIGNAL_EXIT:
+        reason = "minimum hold period not met"
+    elif current_count < SELL_CONFIRMATION_RUNS:
+        reason = "awaiting signal exit confirmation"
+    else:
+        reason = "confirmed signal exit"
+
+    return {
+        "count": current_count,
+        "last_check": last_check,
+        "confirmed": confirmed,
+        "hold_days": hold_days,
+        "reason": reason,
+    }
 
 
 def calculate_cash(portfolio, journal=None):
@@ -341,7 +419,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
         )
 
     # SELL logic
-    for _, position in portfolio.copy().iterrows():
+    for position_index, position in portfolio.copy().iterrows():
         ticker = position["ticker"]
 
         if ticker not in latest_prices.index:
@@ -356,6 +434,33 @@ def update_portfolio(signals, prices, weights, risk_levels):
         take_profit = position["take_profit"]
 
         sell_reason = None
+        exit_status = signal_exit_status(
+            position,
+            signal,
+            latest_date,
+            trace_timestamp,
+        )
+
+        portfolio.loc[
+            position_index,
+            "signal_exit_count",
+        ] = exit_status["count"]
+        portfolio.loc[
+            position_index,
+            "last_signal_exit_check",
+        ] = exit_status["last_check"]
+
+        if ticker in decisions:
+            decisions[ticker]["details"].update(
+                {
+                    "signal_exit_count": exit_status["count"],
+                    "sell_confirmation_runs": SELL_CONFIRMATION_RUNS,
+                    "hold_days": exit_status["hold_days"],
+                    "min_hold_days_for_signal_exit": (
+                        MIN_HOLD_DAYS_FOR_SIGNAL_EXIT
+                    ),
+                }
+            )
 
         if current_price <= stop_loss:
             sell_reason = "STOP LOSS"
@@ -363,8 +468,11 @@ def update_portfolio(signals, prices, weights, risk_levels):
         elif current_price >= take_profit:
             sell_reason = "TAKE PROFIT"
 
-        elif signal == 0:
-            sell_reason = "SIGNAL EXIT"
+        elif signal == 0 and exit_status["confirmed"]:
+            sell_reason = "CONFIRMED SIGNAL EXIT"
+
+        elif signal == 0 and ticker in decisions:
+            decisions[ticker]["reason"] = exit_status["reason"]
 
         if sell_reason is not None:
             pnl = (
@@ -536,6 +644,8 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 position_value,
                 stop_losses[ticker],
                 take_profits[ticker],
+                0,
+                "",
             ]
 
             now = datetime.now()
