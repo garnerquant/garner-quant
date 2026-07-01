@@ -309,6 +309,12 @@ def write_status(update, path=STATUS_FILE):
     status = load_status(path)
     status.update(update)
     save_json(status, path)
+    try:
+        from execution.supabase_sync import sync_runtime_status
+
+        sync_runtime_status(path)
+    except Exception as exc:
+        print(f"Warning: runtime status Supabase mirror failed: {exc}")
     return status
 
 

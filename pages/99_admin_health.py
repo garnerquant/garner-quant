@@ -30,6 +30,7 @@ from ui.responsive import (
     responsive_table,
 )
 from ui.auto_refresh import enable_auto_refresh
+from ui.runtime_status import load_runtime_status, runtime_status_updated_at
 
 
 FILES = [
@@ -1450,7 +1451,7 @@ def render_performance_strip(items):
     st.markdown("".join(cards), unsafe_allow_html=True)
 
 
-def data_freshness_items():
+def data_freshness_items(runtime_status=None):
     files = [
         ("Runtime Status", "data/live_runtime_status.json"),
         ("Execution Log", "data/live_runtime_execution_log.json"),
@@ -1461,7 +1462,11 @@ def data_freshness_items():
     ]
     items = []
     for label, filename in files:
-        modified_at = file_mtime(filename)
+        modified_at = (
+            runtime_status_updated_at(runtime_status or {})
+            if label == "Runtime Status"
+            else file_mtime(filename)
+        )
         badge, level = freshness_badge(modified_at)
         items.append(
             {
@@ -1586,9 +1591,7 @@ def today_trades_from_sources(journal):
     if rows:
         return sorted(rows, key=lambda item: item.get("timestamp") or pd.Timestamp.min)
 
-    runtime_latest = load_json_file("data/live_runtime_status.json").get(
-        "latest_paper_trade"
-    )
+    runtime_latest = load_runtime_status().get("latest_paper_trade")
     if isinstance(runtime_latest, dict) and is_today_trade(runtime_latest):
         runtime_latest["source"] = "runtime_status"
         runtime_latest["timestamp"] = trade_datetime(runtime_latest)
@@ -2339,7 +2342,7 @@ portfolio_cols[5].metric("Open holdings", open_holdings_count)
 
 st.divider()
 st.subheader("Live Control Centre")
-runtime_status = load_json_file("data/live_runtime_status.json")
+runtime_status = load_runtime_status()
 runtime_config = load_json_file("runtime/live_runtime_config.json")
 decision_trace = load_json_file("data/runtime_decision_trace.json")
 last_cycle = get_last_cycle()
@@ -2403,7 +2406,7 @@ st.info(
 )
 
 st.markdown("**Data Freshness**")
-freshness_items = data_freshness_items()
+freshness_items = data_freshness_items(runtime_status)
 render_data_freshness_card(freshness_items)
 st.caption(data_freshness_summary(freshness_items))
 

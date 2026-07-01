@@ -1,6 +1,4 @@
 import os
-import json
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -14,6 +12,7 @@ from ui.responsive import (
     responsive_columns,
     responsive_table,
 )
+from ui.runtime_status import load_runtime_status, runtime_status_updated_at
 
 try:
     from ui.auto_refresh import (
@@ -179,15 +178,19 @@ def format_last_updated():
         return "Unknown"
 
 
-ROOT = Path(__file__).resolve().parent
+def age_freshness_from_timestamp(value):
+    if not value:
+        return None
 
+    try:
+        updated_at = pd.to_datetime(value, utc=True)
+    except Exception:
+        return None
 
-def file_freshness(path):
-    path = ROOT / path
-    if not path.exists():
-        return "Missing"
-
-    age_seconds = max(0, pd.Timestamp.now().timestamp() - path.stat().st_mtime)
+    age_seconds = max(
+        0,
+        (pd.Timestamp.now(tz="UTC") - updated_at).total_seconds(),
+    )
     if age_seconds <= 60:
         return "Live"
     if age_seconds <= 300:
@@ -195,14 +198,6 @@ def file_freshness(path):
     if age_seconds <= 900:
         return "Slightly stale"
     return "Stale"
-
-
-def read_json_file(path):
-    try:
-        with (ROOT / path).open("r", encoding="utf-8") as handle:
-            return json.load(handle)
-    except Exception:
-        return {}
 
 
 def latest_trade_label():
@@ -238,8 +233,24 @@ def holdings_count_label():
 
 
 def runtime_status_label():
-    status = read_json_file("data/live_runtime_status.json")
+    status = load_runtime_status()
     return str(status.get("status") or "Unknown").title()
+
+
+def runtime_freshness_label():
+    status = load_runtime_status()
+    if status.get("_runtime_source") == "supabase":
+        freshness = age_freshness_from_timestamp(status.get("updated_at"))
+        if freshness:
+            return freshness
+
+    updated_at = runtime_status_updated_at(status)
+    if updated_at:
+        freshness = age_freshness_from_timestamp(updated_at)
+        if freshness:
+            return freshness
+
+    return "Missing"
 
 
 def render_live_operational_cards():
@@ -249,7 +260,7 @@ def render_live_operational_cards():
     with cols[0]:
         metric_card(
             "Data Freshness",
-            file_freshness("data/live_runtime_status.json"),
+            runtime_freshness_label(),
             True,
         )
     with cols[1]:
@@ -287,11 +298,21 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+try:
+    supabase = (
+        create_client(SUPABASE_URL, SUPABASE_KEY)
+        if SUPABASE_URL and SUPABASE_KEY
+        else None
+    )
+except Exception:
+    supabase = None
 
 
 def load_supabase_table(table_name, fallback_csv=None, order_col=None):
     try:
+        if supabase is None:
+            raise RuntimeError("Supabase is not configured.")
+
         query = supabase.table(table_name).select("*")
 
         if order_col:
