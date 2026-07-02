@@ -856,6 +856,186 @@ def open_positions_count(holdings_frame):
     return int((tickers != "CASH").sum())
 
 
+def render_holdings_exposure(holdings_frame, broker_row):
+    st.subheader("Holdings & Exposure")
+
+    if holdings_frame.empty:
+        st.info("No open holdings.")
+        return
+
+    display_source = holdings_frame.copy()
+    display_source.columns = [
+        col.lower().replace(" ", "_")
+        for col in display_source.columns
+    ]
+
+    portfolio_value = broker_row["portfolio_value"]
+
+    display_source["portfolio_weight"] = (
+        display_source["market_value"] / portfolio_value * 100
+    ).round(2)
+
+    cash_row = pd.DataFrame(
+        [
+            {
+                "ticker": "CASH",
+                "shares": 0,
+                "entry_price": 0,
+                "current_price": 0,
+                "market_value": broker_row["cash"],
+                "portfolio_weight": round(
+                    broker_row["cash"] / broker_row["portfolio_value"] * 100,
+                    2,
+                ),
+                "unrealised_pnl": 0,
+            }
+        ]
+    )
+
+    display_source = pd.concat(
+        [display_source, cash_row],
+        ignore_index=True,
+    )
+
+    display_source = display_source.sort_values(
+        "market_value",
+        ascending=False,
+    )
+
+    display_holdings = display_source[
+        [
+            "ticker",
+            "shares",
+            "entry_price",
+            "current_price",
+            "market_value",
+            "portfolio_weight",
+            "unrealised_pnl",
+        ]
+    ].rename(
+        columns={
+            "ticker": "Ticker",
+            "shares": "Shares",
+            "entry_price": "Entry Price",
+            "current_price": "Current Price",
+            "market_value": "Market Value",
+            "portfolio_weight": "Weight %",
+            "unrealised_pnl": "PnL",
+        }
+    )
+
+    responsive_table(
+        display_holdings.style.format(
+            {
+                "Shares": "{:.2f}",
+                "Entry Price": "£{:,.2f}",
+                "Current Price": "£{:,.2f}",
+                "Market Value": "£{:,.2f}",
+                "Weight %": "{:.2f}%",
+                "PnL": "£{:,.2f}",
+            }
+        ),
+        hide_index=True,
+    )
+
+
+def normalise_signals(signals_frame):
+    if signals_frame is None or signals_frame.empty:
+        return pd.DataFrame()
+
+    display_source = signals_frame.copy()
+    display_source.columns = [
+        col.lower().replace(" ", "_")
+        for col in display_source.columns
+    ]
+
+    required_signal_cols = [
+        "date",
+        "ticker",
+        "signal",
+        "weight",
+        "status",
+    ]
+
+    for col in required_signal_cols:
+        if col not in display_source.columns:
+            display_source[col] = ""
+
+    return display_source
+
+
+def render_signals_summary(signals_frame):
+    st.subheader("Signals Summary")
+
+    display_source = normalise_signals(signals_frame)
+    if display_source.empty:
+        st.info("No signals available yet.")
+        return
+
+    signal_values = display_source["signal"].astype(str).str.upper().str.strip()
+    buy_count = int(signal_values.str.contains("BUY", na=False).sum())
+    sell_count = int(signal_values.str.contains("SELL", na=False).sum())
+    hold_count = int(signal_values.str.contains("HOLD", na=False).sum())
+
+    latest_ticker = "None"
+    if "date" in display_source.columns:
+        latest_rows = display_source.copy()
+        latest_rows["_date"] = pd.to_datetime(
+            latest_rows["date"],
+            format="mixed",
+            errors="coerce",
+        )
+        latest_rows = latest_rows.sort_values("_date")
+        if not latest_rows.empty:
+            latest_ticker = str(latest_rows.iloc[-1].get("ticker", "None")).upper()
+
+    c1, c2, c3, c4 = responsive_columns(4)
+    with c1:
+        metric_card("Buy Signals", buy_count, buy_count > 0)
+    with c2:
+        metric_card("Hold Signals", hold_count)
+    with c3:
+        metric_card("Sell Signals", sell_count)
+    with c4:
+        metric_card("Latest Ticker", latest_ticker)
+
+
+def render_signal_tables(signals_frame):
+    display_source = normalise_signals(signals_frame)
+    if display_source.empty:
+        st.info("No signal report available.")
+        return
+
+    display_signals = display_source[
+        [
+            "date",
+            "ticker",
+            "signal",
+            "weight",
+            "status",
+        ]
+    ].rename(
+        columns={
+            "date": "Date",
+            "ticker": "Ticker",
+            "signal": "Signal",
+            "weight": "Weight",
+            "status": "Status",
+        }
+    )
+
+    responsive_table(
+        display_signals,
+        hide_index=True,
+    )
+
+    with st.expander("Open raw signal report", expanded=False):
+        responsive_table(
+            signals_frame,
+            hide_index=False,
+        )
+
+
 def runtime_status_label():
     status = load_runtime_status()
     return str(status.get("status") or "Unknown").title()
@@ -1218,6 +1398,10 @@ page = "Home"
 
 
 if page == "Home":
+    render_holdings_exposure(holdings, broker_row)
+
+    st.divider()
+
     st.subheader("🚀 30 Day Paper Trading Challenge")
 
     if paper_30.empty:
@@ -1450,101 +1634,10 @@ if page == "Home":
 
     st.divider()
 
-    st.subheader("Current Holdings")
+    render_signals_summary(signals)
 
-    if holdings.empty:
-        st.info("No open holdings.")
-
-    else:
-        holdings = holdings.copy()
-
-        holdings.columns = [
-            col.lower().replace(" ", "_")
-            for col in holdings.columns
-        ]
-
-        portfolio_value = broker_row["portfolio_value"]
-
-        holdings["portfolio_weight"] = (
-            holdings["market_value"] / portfolio_value * 100
-        ).round(2)
-
-        cash_row = pd.DataFrame(
-            [
-                {
-                    "ticker": "CASH",
-                    "shares": 0,
-                    "entry_price": 0,
-                    "current_price": 0,
-                    "market_value": broker_row["cash"],
-                    "portfolio_weight": round(
-                        broker_row["cash"]
-                        / broker_row["portfolio_value"]
-                        * 100,
-                        2,
-                    ),
-                    "unrealised_pnl": 0,
-                }
-            ]
-        )
-
-        holdings = pd.concat(
-            [holdings, cash_row],
-            ignore_index=True,
-        )
-
-        holdings = holdings.sort_values(
-            "market_value",
-            ascending=False,
-        )
-
-        display_holdings = holdings[
-            [
-                "ticker",
-                "shares",
-                "entry_price",
-                "current_price",
-                "market_value",
-                "portfolio_weight",
-                "unrealised_pnl",
-            ]
-        ].rename(
-            columns={
-                "ticker": "Ticker",
-                "shares": "Shares",
-                "entry_price": "Entry Price",
-                "current_price": "Current Price",
-                "market_value": "Market Value",
-                "portfolio_weight": "Weight %",
-                "unrealised_pnl": "PnL",
-            }
-        )
-
-        responsive_table(
-            display_holdings.style.format(
-                {
-                    "Shares": "{:.2f}",
-                    "Entry Price": "£{:,.2f}",
-                    "Current Price": "£{:,.2f}",
-                    "Market Value": "£{:,.2f}",
-                    "Weight %": "{:.2f}%",
-                    "PnL": "£{:,.2f}",
-                }
-            ),
-            hide_index=True,
-        )
-
-    st.divider()
-
-    st.subheader("Current Signals")
-
-    if signals.empty:
-        st.info("No signal report available.")
-    else:
-        responsive_table(
-            signals,
-            hide_index=False,
-        )
+    with st.expander("Open detailed signal tables", expanded=False):
+        render_signal_tables(signals)
 
     st.divider()
 
@@ -1578,50 +1671,6 @@ if page == "Home":
                 f"£{analytics_row['realised_pnl']:,.2f}",
                 True,
             )
-
-    st.divider()
-
-    st.subheader("Signals")
-
-    if signals.empty:
-        st.info("No signals available yet.")
-
-    else:
-        signals = signals.copy()
-
-        signals.columns = [
-            col.lower().replace(" ", "_")
-            for col in signals.columns
-        ]
-
-        required_signal_cols = [
-            "date",
-            "ticker",
-            "signal",
-            "weight",
-            "status",
-        ]
-
-        for col in required_signal_cols:
-            if col not in signals.columns:
-                signals[col] = ""
-
-        display_signals = signals[
-            required_signal_cols
-        ].rename(
-            columns={
-                "date": "Date",
-                "ticker": "Ticker",
-                "signal": "Signal",
-                "weight": "Weight",
-                "status": "Status",
-            }
-        )
-
-        responsive_table(
-            display_signals,
-            hide_index=True,
-        )
 
     st.divider()
 
