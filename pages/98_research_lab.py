@@ -91,6 +91,7 @@ FILES = [
 ]
 
 EXPERIMENTS_FILE = Path("research/experiments.json")
+CAMPAIGN_REPORTS_DIR = Path("research/experiments/campaign_reports")
 EXPERIMENT_STATUSES = ["Draft", "Tested", "Candidate", "Production Ready"]
 COMPARABLE_STATUSES = ["Tested", "Candidate", "Production Ready"]
 RULE_KEYS = [
@@ -491,6 +492,95 @@ def experiment_by_id(experiments, experiment_id):
     return None
 
 
+def campaign_report_files():
+    if not CAMPAIGN_REPORTS_DIR.exists():
+        return []
+
+    campaign_001_reports = sorted(
+        CAMPAIGN_REPORTS_DIR.glob("campaign_001*.md"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if campaign_001_reports:
+        return campaign_001_reports
+
+    return sorted(
+        CAMPAIGN_REPORTS_DIR.glob("*.md"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+
+def campaign_report_label(report_path):
+    modified = datetime.fromtimestamp(report_path.stat().st_mtime)
+    return f"{modified:%Y-%m-%d %H:%M} | {report_path.stem}"
+
+
+def parse_campaign_report_summary(report_text):
+    summary = {
+        "Best Sharpe": "n/a",
+        "Best CAGR": "n/a",
+        "Lowest Drawdown": "n/a",
+        "Best Profit Factor": "n/a",
+        "Variants Tested": "n/a",
+        "Result Mode": "n/a",
+    }
+
+    for raw_line in report_text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("Mode:"):
+            summary["Result Mode"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Runs:"):
+            summary["Variants Tested"] = line.split(":", 1)[1].strip().split()[0]
+        elif line.startswith("- Best Sharpe:"):
+            summary["Best Sharpe"] = line.split(":", 1)[1].strip()
+        elif line.startswith("- Best CAGR:"):
+            summary["Best CAGR"] = line.split(":", 1)[1].strip()
+        elif line.startswith("- Best Drawdown:"):
+            summary["Lowest Drawdown"] = line.split(":", 1)[1].strip()
+        elif line.startswith("- Best Profit Factor:"):
+            summary["Best Profit Factor"] = line.split(":", 1)[1].strip()
+
+    return summary
+
+
+def render_campaign_report_viewer():
+    st.write("Campaign Report")
+
+    reports = campaign_report_files()
+    if not reports:
+        st.info(
+            "No campaign markdown reports found under "
+            "research/experiments/campaign_reports yet."
+        )
+        return
+
+    selected_report = st.selectbox(
+        "Campaign report",
+        reports,
+        format_func=campaign_report_label,
+    )
+
+    try:
+        report_text = selected_report.read_text(encoding="utf-8")
+    except OSError as exc:
+        st.warning(f"Could not read campaign report: {exc}")
+        return
+
+    summary = parse_campaign_report_summary(report_text)
+    summary_cols = responsive_columns(3)
+    summary_cols[0].metric("Best Sharpe", summary["Best Sharpe"])
+    summary_cols[1].metric("Best CAGR", summary["Best CAGR"])
+    summary_cols[2].metric("Lowest Drawdown", summary["Lowest Drawdown"])
+
+    summary_cols = responsive_columns(3)
+    summary_cols[0].metric("Best Profit Factor", summary["Best Profit Factor"])
+    summary_cols[1].metric("Variants Tested", summary["Variants Tested"])
+    summary_cols[2].metric("Result Mode", summary["Result Mode"])
+
+    st.markdown(report_text)
+
+
 def render_registry_preview():
     if load_registry_experiments is None or build_registry_leaderboard is None:
         st.info("Automated experiment registry is not available in this environment.")
@@ -557,160 +647,162 @@ def render_registry_preview():
             hide_index=True,
         )
 
-    if sweep_history is None or build_sweep_leaderboard is None:
-        return
+    if sweep_history is not None and build_sweep_leaderboard is not None:
+        sweeps = sweep_history()
+    else:
+        sweeps = []
 
-    sweeps = sweep_history()
-    if not sweeps:
-        return
+    if sweeps:
+        st.write("Sweep History")
+        sweep_rows = []
+        for sweep in reversed(sweeps[-10:]):
+            sweep_rows.append(
+                {
+                    "sweep_id": sweep.get("sweep_id"),
+                    "parameter": sweep.get("parameter_tested"),
+                    "runs": sweep.get("runs"),
+                    "completed": sweep.get("completed_runs"),
+                    "failed": sweep.get("failed_runs"),
+                    "best_sharpe_value": sweep.get("best_sharpe_value"),
+                    "best_cagr_value": sweep.get("best_cagr_value"),
+                    "lowest_drawdown_value": sweep.get("lowest_drawdown_value"),
+                }
+            )
+        responsive_table(pd.DataFrame(sweep_rows), hide_index=True)
 
-    st.write("Sweep History")
-    sweep_rows = []
-    for sweep in reversed(sweeps[-10:]):
-        sweep_rows.append(
-            {
-                "sweep_id": sweep.get("sweep_id"),
-                "parameter": sweep.get("parameter_tested"),
-                "runs": sweep.get("runs"),
-                "completed": sweep.get("completed_runs"),
-                "failed": sweep.get("failed_runs"),
-                "best_sharpe_value": sweep.get("best_sharpe_value"),
-                "best_cagr_value": sweep.get("best_cagr_value"),
-                "lowest_drawdown_value": sweep.get("lowest_drawdown_value"),
-            }
+        latest_sweep = sweeps[-1]
+        latest_leaderboard = build_sweep_leaderboard(
+            latest_sweep["sweep_id"],
+            sort_by="sharpe_ratio",
         )
-    responsive_table(pd.DataFrame(sweep_rows), hide_index=True)
-
-    latest_sweep = sweeps[-1]
-    latest_leaderboard = build_sweep_leaderboard(
-        latest_sweep["sweep_id"],
-        sort_by="sharpe_ratio",
-    )
-    if latest_leaderboard is not None and not latest_leaderboard.empty:
-        sweep_columns = [
-            column
-            for column in [
-                "parameter_tested",
-                "value_tested",
-                "status",
-                "sharpe_ratio",
-                "cagr",
-                "max_drawdown",
-                "trade_count",
+        if latest_leaderboard is not None and not latest_leaderboard.empty:
+            sweep_columns = [
+                column
+                for column in [
+                    "parameter_tested",
+                    "value_tested",
+                    "status",
+                    "sharpe_ratio",
+                    "cagr",
+                    "max_drawdown",
+                    "trade_count",
+                ]
+                if column in latest_leaderboard.columns
             ]
-            if column in latest_leaderboard.columns
-        ]
-        st.write("Latest Sweep Leaderboard")
-        responsive_table(
-            latest_leaderboard[sweep_columns].head(10),
-            hide_index=True,
+            st.write("Latest Sweep Leaderboard")
+            responsive_table(
+                latest_leaderboard[sweep_columns].head(10),
+                hide_index=True,
+            )
+
+    if grid_history is not None and build_grid_leaderboard is not None:
+        grids = grid_history()
+    else:
+        grids = []
+
+    if grids:
+        st.write("Grid Search History")
+        grid_rows = []
+        for grid in reversed(grids[-10:]):
+            grid_rows.append(
+                {
+                    "grid_id": grid.get("grid_id"),
+                    "runs": grid.get("runs"),
+                    "completed": grid.get("completed_runs"),
+                    "failed": grid.get("failed_runs"),
+                    "best_sharpe_config": grid.get("best_sharpe_config"),
+                    "best_cagr_config": grid.get("best_cagr_config"),
+                    "lowest_drawdown_config": grid.get("lowest_drawdown_config"),
+                }
+            )
+        responsive_table(pd.DataFrame(grid_rows), hide_index=True)
+
+        latest_grid = grids[-1]
+        latest_grid_leaderboard = build_grid_leaderboard(
+            latest_grid["grid_id"],
+            sort_by="sharpe_ratio",
         )
-
-    if grid_history is None or build_grid_leaderboard is None:
-        return
-
-    grids = grid_history()
-    if not grids:
-        return
-
-    st.write("Grid Search History")
-    grid_rows = []
-    for grid in reversed(grids[-10:]):
-        grid_rows.append(
-            {
-                "grid_id": grid.get("grid_id"),
-                "runs": grid.get("runs"),
-                "completed": grid.get("completed_runs"),
-                "failed": grid.get("failed_runs"),
-                "best_sharpe_config": grid.get("best_sharpe_config"),
-                "best_cagr_config": grid.get("best_cagr_config"),
-                "lowest_drawdown_config": grid.get("lowest_drawdown_config"),
-            }
-        )
-    responsive_table(pd.DataFrame(grid_rows), hide_index=True)
-
-    latest_grid = grids[-1]
-    latest_grid_leaderboard = build_grid_leaderboard(
-        latest_grid["grid_id"],
-        sort_by="sharpe_ratio",
-    )
-    if latest_grid_leaderboard is not None and not latest_grid_leaderboard.empty:
-        grid_columns = [
-            column
-            for column in [
-                "status",
-                "sharpe_ratio",
-                "cagr",
-                "max_drawdown",
-                "trade_count",
-                "name",
+        if (
+            latest_grid_leaderboard is not None
+            and not latest_grid_leaderboard.empty
+        ):
+            grid_columns = [
+                column
+                for column in [
+                    "status",
+                    "sharpe_ratio",
+                    "cagr",
+                    "max_drawdown",
+                    "trade_count",
+                    "name",
+                ]
+                if column in latest_grid_leaderboard.columns
             ]
-            if column in latest_grid_leaderboard.columns
-        ]
-        st.write("Latest Grid Search Leaderboard")
-        responsive_table(
-            latest_grid_leaderboard[grid_columns].head(10),
-            hide_index=True,
+            st.write("Latest Grid Search Leaderboard")
+            responsive_table(
+                latest_grid_leaderboard[grid_columns].head(10),
+                hide_index=True,
+            )
+
+    if campaign_history is not None and build_campaign_leaderboard is not None:
+        campaigns = campaign_history()
+    else:
+        campaigns = []
+
+    if campaigns:
+        st.write("Research Campaign History")
+        campaign_rows = []
+        for campaign in reversed(campaigns[-10:]):
+            campaign_rows.append(
+                {
+                    "campaign_id": campaign.get("campaign_id"),
+                    "campaign_name": campaign.get("campaign_name"),
+                    "runs": campaign.get("runs"),
+                    "completed": campaign.get("completed_runs"),
+                    "failed": campaign.get("failed_runs"),
+                    "best_sharpe": (campaign.get("best_sharpe") or {}).get(
+                        "variation_name"
+                    ),
+                    "best_cagr": (campaign.get("best_cagr") or {}).get(
+                        "variation_name"
+                    ),
+                    "best_drawdown": (campaign.get("best_drawdown") or {}).get(
+                        "variation_name"
+                    ),
+                }
+            )
+        responsive_table(pd.DataFrame(campaign_rows), hide_index=True)
+
+        latest_campaign = campaigns[-1]
+        latest_campaign_leaderboard = build_campaign_leaderboard(
+            latest_campaign["campaign_id"],
+            sort_by="sharpe_ratio",
         )
-
-    if campaign_history is None or build_campaign_leaderboard is None:
-        return
-
-    campaigns = campaign_history()
-    if not campaigns:
-        return
-
-    st.write("Research Campaign History")
-    campaign_rows = []
-    for campaign in reversed(campaigns[-10:]):
-        campaign_rows.append(
-            {
-                "campaign_id": campaign.get("campaign_id"),
-                "campaign_name": campaign.get("campaign_name"),
-                "runs": campaign.get("runs"),
-                "completed": campaign.get("completed_runs"),
-                "failed": campaign.get("failed_runs"),
-                "best_sharpe": (campaign.get("best_sharpe") or {}).get(
-                    "variation_name"
-                ),
-                "best_cagr": (campaign.get("best_cagr") or {}).get(
-                    "variation_name"
-                ),
-                "best_drawdown": (campaign.get("best_drawdown") or {}).get(
-                    "variation_name"
-                ),
-            }
-        )
-    responsive_table(pd.DataFrame(campaign_rows), hide_index=True)
-
-    latest_campaign = campaigns[-1]
-    latest_campaign_leaderboard = build_campaign_leaderboard(
-        latest_campaign["campaign_id"],
-        sort_by="sharpe_ratio",
-    )
-    if (
-        latest_campaign_leaderboard is not None
-        and not latest_campaign_leaderboard.empty
-    ):
-        campaign_columns = [
-            column
-            for column in [
-                "variation_name",
-                "exit_method",
-                "status",
-                "sharpe_ratio",
-                "cagr",
-                "max_drawdown",
-                "profit_factor",
-                "trade_count",
+        if (
+            latest_campaign_leaderboard is not None
+            and not latest_campaign_leaderboard.empty
+        ):
+            campaign_columns = [
+                column
+                for column in [
+                    "variation_name",
+                    "exit_method",
+                    "status",
+                    "sharpe_ratio",
+                    "cagr",
+                    "max_drawdown",
+                    "profit_factor",
+                    "trade_count",
+                ]
+                if column in latest_campaign_leaderboard.columns
             ]
-            if column in latest_campaign_leaderboard.columns
-        ]
-        st.write("Latest Campaign Leaderboard")
-        responsive_table(
-            latest_campaign_leaderboard[campaign_columns].head(10),
-            hide_index=True,
-        )
+            st.write("Latest Campaign Leaderboard")
+            responsive_table(
+                latest_campaign_leaderboard[campaign_columns].head(10),
+                hide_index=True,
+            )
+
+    render_campaign_report_viewer()
 
 
 def equity_records(equity_curve):
