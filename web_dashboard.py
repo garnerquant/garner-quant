@@ -130,6 +130,83 @@ def inject_mobile_css():
             line-height:1.2;
         }
 
+        .signal-panel {
+            background:#0b1220;
+            border:1px solid rgba(148,163,184,0.22);
+            border-radius:8px;
+            padding:12px;
+            margin:6px 0 14px 0;
+        }
+
+        .signal-row {
+            display:grid;
+            grid-template-columns:82px 1fr 76px;
+            gap:10px;
+            align-items:center;
+            border-top:1px solid rgba(148,163,184,0.14);
+            padding:8px 0;
+        }
+
+        .signal-row:first-child {
+            border-top:0;
+            padding-top:0;
+        }
+
+        .signal-ticker {
+            color:#f8fafc;
+            font-weight:700;
+            font-size:15px;
+        }
+
+        .signal-detail {
+            color:#cbd5e1;
+            font-size:13px;
+            overflow-wrap:anywhere;
+        }
+
+        .signal-weight {
+            color:#94a3b8;
+            font-size:13px;
+            text-align:right;
+        }
+
+        .signal-badge {
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            min-width:52px;
+            border-radius:999px;
+            padding:3px 8px;
+            font-size:11px;
+            font-weight:750;
+            letter-spacing:.04em;
+            border:1px solid transparent;
+        }
+
+        .signal-buy {
+            color:#dcfce7;
+            background:rgba(22,163,74,0.22);
+            border-color:rgba(34,197,94,0.38);
+        }
+
+        .signal-hold {
+            color:#dbeafe;
+            background:rgba(37,99,235,0.20);
+            border-color:rgba(96,165,250,0.34);
+        }
+
+        .signal-sell {
+            color:#fee2e2;
+            background:rgba(220,38,38,0.20);
+            border-color:rgba(248,113,113,0.34);
+        }
+
+        .signal-neutral {
+            color:#e5e7eb;
+            background:rgba(107,114,128,0.22);
+            border-color:rgba(156,163,175,0.34);
+        }
+
         .brief-card {
             background:#0f172a;
             border:1px solid rgba(148,163,184,0.28);
@@ -961,43 +1038,140 @@ def normalise_signals(signals_frame):
         if col not in display_source.columns:
             display_source[col] = ""
 
+    display_source["_action"] = display_source.apply(signal_action_label, axis=1)
+    display_source["_weight_numeric"] = pd.to_numeric(
+        display_source["weight"],
+        errors="coerce",
+    ).fillna(0)
+
     return display_source
 
 
+def signal_action_label(row):
+    status_text = str(row.get("status", "")).upper()
+    signal_text = str(row.get("signal", "")).upper()
+
+    if "SELL" in status_text or "AVOID" in status_text:
+        return "SELL"
+    if "BUY" in status_text:
+        return "BUY"
+    if "HOLD" in status_text:
+        return "HOLD"
+
+    try:
+        signal_value = float(signal_text)
+    except Exception:
+        signal_value = None
+
+    if signal_value is not None:
+        if signal_value > 0:
+            return "BUY"
+        if signal_value < 0:
+            return "SELL"
+        return "HOLD"
+
+    if "SELL" in signal_text:
+        return "SELL"
+    if "BUY" in signal_text:
+        return "BUY"
+    if "HOLD" in signal_text:
+        return "HOLD"
+
+    return "UNKNOWN"
+
+
+def signal_badge(action):
+    action = str(action or "UNKNOWN").upper()
+    badge_class = {
+        "BUY": "signal-buy",
+        "HOLD": "signal-hold",
+        "SELL": "signal-sell",
+    }.get(action, "signal-neutral")
+    return f'<span class="signal-badge {badge_class}">{html.escape(action)}</span>'
+
+
+def render_opportunity_rows(display_source):
+    priority = {
+        "BUY": 0,
+        "HOLD": 1,
+        "SELL": 2,
+        "UNKNOWN": 3,
+    }
+    ranked = display_source.copy()
+    ranked["_priority"] = ranked["_action"].map(priority).fillna(3)
+    ranked = ranked.sort_values(
+        ["_priority", "_weight_numeric", "ticker"],
+        ascending=[True, False, True],
+    )
+
+    rows = ranked[ranked["_action"].isin(["BUY", "HOLD"])].head(4)
+    if rows.empty:
+        st.caption("No active BUY or HOLD opportunities in the latest signal report.")
+        return
+
+    row_html = []
+    for _, row in rows.iterrows():
+        ticker = html.escape(str(row.get("ticker", "")).upper() or "UNKNOWN")
+        status = html.escape(str(row.get("status", "")).strip() or "No status")
+        weight = numeric_value(row.get("_weight_numeric", 0))
+        row_html.append(
+            f"""
+            <div class="signal-row">
+                <div>
+                    <div class="signal-ticker">{ticker}</div>
+                    {signal_badge(row.get("_action"))}
+                </div>
+                <div class="signal-detail">{status}</div>
+                <div class="signal-weight">{weight:.1%}</div>
+            </div>
+            """
+        )
+
+    st.markdown(
+        f"""
+        <div class="signal-panel">
+            {''.join(row_html)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_signals_summary(signals_frame):
-    st.subheader("Signals Summary")
+    st.subheader("Current Opportunities")
 
     display_source = normalise_signals(signals_frame)
     if display_source.empty:
         st.info("No signals available yet.")
         return
 
-    signal_values = display_source["signal"].astype(str).str.upper().str.strip()
-    buy_count = int(signal_values.str.contains("BUY", na=False).sum())
-    sell_count = int(signal_values.str.contains("SELL", na=False).sum())
-    hold_count = int(signal_values.str.contains("HOLD", na=False).sum())
-
-    latest_ticker = "None"
-    if "date" in display_source.columns:
-        latest_rows = display_source.copy()
-        latest_rows["_date"] = pd.to_datetime(
-            latest_rows["date"],
-            format="mixed",
-            errors="coerce",
+    action_values = display_source["_action"].astype(str).str.upper()
+    buy_count = int((action_values == "BUY").sum())
+    hold_count = int((action_values == "HOLD").sum())
+    sell_count = int((action_values == "SELL").sum())
+    top_rows = display_source[display_source["_action"].isin(["BUY", "HOLD"])].copy()
+    if top_rows.empty:
+        top_opportunity = "None"
+    else:
+        top_rows["_priority"] = top_rows["_action"].map({"BUY": 0, "HOLD": 1})
+        top_rows = top_rows.sort_values(
+            ["_priority", "_weight_numeric", "ticker"],
+            ascending=[True, False, True],
         )
-        latest_rows = latest_rows.sort_values("_date")
-        if not latest_rows.empty:
-            latest_ticker = str(latest_rows.iloc[-1].get("ticker", "None")).upper()
+        top = top_rows.iloc[0]
+        top_opportunity = f"{str(top.get('ticker', 'None')).upper()} {top['_action']}"
 
     c1, c2, c3, c4 = responsive_columns(4)
     with c1:
-        metric_card("Buy Signals", buy_count, buy_count > 0)
+        metric_card("BUY", buy_count, buy_count > 0)
     with c2:
-        metric_card("Hold Signals", hold_count)
+        metric_card("HOLD", hold_count)
     with c3:
-        metric_card("Sell Signals", sell_count)
+        metric_card("SELL", sell_count)
     with c4:
-        metric_card("Latest Ticker", latest_ticker)
+        metric_card("Top Opportunity", top_opportunity, top_opportunity != "None")
+
+    render_opportunity_rows(display_source)
 
 
 def render_signal_tables(signals_frame):
@@ -1010,7 +1184,7 @@ def render_signal_tables(signals_frame):
         [
             "date",
             "ticker",
-            "signal",
+            "_action",
             "weight",
             "status",
         ]
@@ -1018,7 +1192,7 @@ def render_signal_tables(signals_frame):
         columns={
             "date": "Date",
             "ticker": "Ticker",
-            "signal": "Signal",
+            "_action": "Action",
             "weight": "Weight",
             "status": "Status",
         }
@@ -1508,27 +1682,27 @@ if page == "Home":
     else:
         st.info("No benchmark data available.")
 
-    st.subheader("Portfolio")
+    with st.expander("Open account balance details", expanded=False):
 
-    col1, col2 = responsive_columns(2)
+        col1, col2 = responsive_columns(2)
 
-    with col1:
-        metric_card(
-            "Portfolio Value",
-            f"£{broker_row['portfolio_value']:,.2f}",
-        )
-        metric_card(
-            "Buying Power",
-            f"£{broker_row['buying_power']:,.2f}",
-        )
+        with col1:
+            metric_card(
+                "Portfolio Value",
+                f"£{broker_row['portfolio_value']:,.2f}",
+            )
+            metric_card(
+                "Buying Power",
+                f"£{broker_row['buying_power']:,.2f}",
+            )
 
-    with col2:
-        metric_card("Cash", f"£{broker_row['cash']:,.2f}")
-        metric_card(
-            "Unrealised PnL",
-            f"£{current_unrealised_pnl:,.2f}",
-            True,
-        )
+        with col2:
+            metric_card("Cash", f"£{broker_row['cash']:,.2f}")
+            metric_card(
+                "Unrealised PnL",
+                f"£{current_unrealised_pnl:,.2f}",
+                True,
+            )
 
     st.divider()
 
@@ -1636,7 +1810,7 @@ if page == "Home":
 
     render_signals_summary(signals)
 
-    with st.expander("Open detailed signal tables", expanded=False):
+    with st.expander("Open detailed opportunity table", expanded=False):
         render_signal_tables(signals)
 
     st.divider()
@@ -1674,214 +1848,215 @@ if page == "Home":
 
     st.divider()
 
-    st.subheader("Trade Audit")
+    with st.expander("Open detailed trade audit", expanded=False):
+        st.subheader("Trade Audit")
 
-    audit = load_trade_audit(trades)
+        audit = load_trade_audit(trades)
 
-    if audit.empty:
-        st.info("No completed trades audited yet.")
+        if audit.empty:
+            st.info("No completed trades audited yet.")
 
-    else:
-        audit = audit.copy()
+        else:
+            audit = audit.copy()
 
-        audit["open_time"] = pd.to_datetime(
-            audit["open_time"],
-            format="mixed",
-            errors="coerce",
-        )
-
-        audit["close_time"] = pd.to_datetime(
-            audit["close_time"],
-            format="mixed",
-            errors="coerce",
-        )
-
-        audit["holding_days"] = (
-            audit["close_time"] - audit["open_time"]
-        ).dt.total_seconds() / 86400
-
-        total_trades = len(audit)
-        winning_trades = len(audit[audit["pnl"] > 0])
-        losing_trades = len(audit[audit["pnl"] < 0])
-
-        win_rate = (
-            winning_trades / total_trades * 100
-            if total_trades
-            else 0
-        )
-
-        total_pnl = audit["pnl"].sum()
-        best_trade = audit["pnl"].max()
-        worst_trade = audit["pnl"].min()
-        avg_pnl = audit["pnl"].mean()
-
-        gross_profit = audit.loc[audit["pnl"] > 0, "pnl"].sum()
-        gross_loss = abs(audit.loc[audit["pnl"] < 0, "pnl"].sum())
-
-        profit_factor = (
-            gross_profit / gross_loss
-            if gross_loss > 0
-            else 0
-        )
-
-        avg_win = (
-            audit.loc[audit["pnl"] > 0, "pnl"].mean()
-            if winning_trades > 0
-            else 0
-        )
-
-        avg_loss = (
-            audit.loc[audit["pnl"] < 0, "pnl"].mean()
-            if losing_trades > 0
-            else 0
-        )
-
-        c1, c2, c3 = responsive_columns(3)
-
-        with c1:
-            metric_card("Completed BUY -> SELL Pairs", total_trades)
-            metric_card("Winners", winning_trades)
-
-        with c2:
-            metric_card("Win Rate", f"{win_rate:.1f}%", True)
-            metric_card("Losers", losing_trades)
-
-        with c3:
-            metric_card("Total PnL", f"£{total_pnl:,.2f}", total_pnl >= 0)
-            metric_card("Profit Factor", f"{profit_factor:.2f}", profit_factor >= 1)
-
-        c4, c5, c6 = responsive_columns(3)
-
-        with c4:
-            metric_card("Average PnL", f"£{avg_pnl:,.2f}", avg_pnl >= 0)
-
-        with c5:
-            metric_card("Best Trade", f"£{best_trade:,.2f}", best_trade >= 0)
-
-        with c6:
-            metric_card("Worst Trade", f"£{worst_trade:,.2f}", worst_trade >= 0)
-
-        st.divider()
-
-        audit = audit.tail(50).iloc[::-1]
-
-        for _, trade in audit.iterrows():
-            symbol = trade.get("symbol", "Unknown")
-            pnl = trade.get("pnl", 0)
-            pnl_pct = trade.get("pnl_pct", 0)
-
-            open_time = trade.get("open_time")
-            close_time = trade.get("close_time")
-
-            opened = (
-                open_time.strftime("%Y-%m-%d %H:%M")
-                if pd.notna(open_time)
-                else "N/A"
-            )
-            closed = (
-                close_time.strftime("%Y-%m-%d %H:%M")
-                if pd.notna(close_time)
-                else "N/A"
+            audit["open_time"] = pd.to_datetime(
+                audit["open_time"],
+                format="mixed",
+                errors="coerce",
             )
 
-            buy_price = trade.get("buy_price", 0)
-            sell_price = trade.get("sell_price", 0)
-            shares = trade.get("shares", 0)
-            held = trade.get("holding_period", "N/A")
-            open_reason = trade.get("open_reason", "N/A")
-            close_reason = trade.get("close_reason", "N/A")
+            audit["close_time"] = pd.to_datetime(
+                audit["close_time"],
+                format="mixed",
+                errors="coerce",
+            )
 
-            result = "WIN ✅" if pnl > 0 else "LOSS ❌" if pnl < 0 else "FLAT ➖"
+            audit["holding_days"] = (
+                audit["close_time"] - audit["open_time"]
+            ).dt.total_seconds() / 86400
 
-            with st.container(border=True):
-                st.subheader(f"{symbol} — {result}")
+            total_trades = len(audit)
+            winning_trades = len(audit[audit["pnl"] > 0])
+            losing_trades = len(audit[audit["pnl"] < 0])
 
-                col1, col2 = responsive_columns(2)
+            win_rate = (
+                winning_trades / total_trades * 100
+                if total_trades
+                else 0
+            )
 
-            with col1:
-                st.write(f"**Opened:** {opened}")
-                st.write(f"**Closed:** {closed}")
-                st.write(f"**Held:** {held}")
-                st.write(f"**Shares:** {shares:.4f}")
+            total_pnl = audit["pnl"].sum()
+            best_trade = audit["pnl"].max()
+            worst_trade = audit["pnl"].min()
+            avg_pnl = audit["pnl"].mean()
 
-            with col2:
-                st.write(f"**Buy:** £{buy_price:,.2f}")
-                st.write(f"**Sell:** £{sell_price:,.2f}")
-                st.write(f"**PnL:** £{pnl:,.2f} ({pnl_pct:.2f}%)")
+            gross_profit = audit.loc[audit["pnl"] > 0, "pnl"].sum()
+            gross_loss = abs(audit.loc[audit["pnl"] < 0, "pnl"].sum())
 
-            with st.expander("🔍 Trade Replay"):
-                trade_snapshot = pd.DataFrame()
+            profit_factor = (
+                gross_profit / gross_loss
+                if gross_loss > 0
+                else 0
+            )
 
-                if not snapshots.empty:
+            avg_win = (
+                audit.loc[audit["pnl"] > 0, "pnl"].mean()
+                if winning_trades > 0
+                else 0
+            )
 
-                    trade_snapshot = snapshots[
-                        snapshots["ticker"] == symbol
-                    ].copy()
+            avg_loss = (
+                audit.loc[audit["pnl"] < 0, "pnl"].mean()
+                if losing_trades > 0
+                else 0
+            )
 
-                    if not trade_snapshot.empty:
+            c1, c2, c3 = responsive_columns(3)
 
-                        trade_snapshot["timestamp"] = pd.to_datetime(
-                            trade_snapshot["timestamp"],
-                            errors="coerce"
-                        )
+            with c1:
+                metric_card("Completed BUY -> SELL Pairs", total_trades)
+                metric_card("Winners", winning_trades)
 
-                        trade_snapshot = trade_snapshot.sort_values("timestamp")
+            with c2:
+                metric_card("Win Rate", f"{win_rate:.1f}%", True)
+                metric_card("Losers", losing_trades)
 
-                if trade_snapshot.empty:
+            with c3:
+                metric_card("Total PnL", f"£{total_pnl:,.2f}", total_pnl >= 0)
+                metric_card("Profit Factor", f"{profit_factor:.2f}", profit_factor >= 1)
 
-                    st.info("No snapshot data available.")
+            c4, c5, c6 = responsive_columns(3)
 
-                else:
+            with c4:
+                metric_card("Average PnL", f"£{avg_pnl:,.2f}", avg_pnl >= 0)
 
-                    buy_rows = trade_snapshot[trade_snapshot["event"] == "BUY"]
-                    sell_rows = trade_snapshot[trade_snapshot["event"] == "SELL"]
+            with c5:
+                metric_card("Best Trade", f"£{best_trade:,.2f}", best_trade >= 0)
 
-                    if buy_rows.empty:
-                        st.info("No entry snapshot available for this trade yet.")
-                        st.stop()
+            with c6:
+                metric_card("Worst Trade", f"£{worst_trade:,.2f}", worst_trade >= 0)
 
-                    buy = buy_rows.iloc[0]
-                    sell = sell_rows.iloc[-1] if not sell_rows.empty else None
+            st.divider()
 
-                    st.markdown("### 🟢 Entry")
+            audit = audit.tail(50).iloc[::-1]
 
-                    c1, c2 = responsive_columns(2)
+            for _, trade in audit.iterrows():
+                symbol = trade.get("symbol", "Unknown")
+                pnl = trade.get("pnl", 0)
+                pnl_pct = trade.get("pnl_pct", 0)
 
-                    with c1:
-                        st.metric("Cash", f"£{buy['cash']:,.2f}")
-                        st.metric("Weight", f"{buy['portfolio_weight']:.1%}")
+                open_time = trade.get("open_time")
+                close_time = trade.get("close_time")
 
-                    with c2:
-                        st.metric("Stop Loss", f"£{buy['stop_loss']:,.2f}")
-                        st.metric("Take Profit", f"£{buy['take_profit']:,.2f}")
+                opened = (
+                    open_time.strftime("%Y-%m-%d %H:%M")
+                    if pd.notna(open_time)
+                    else "N/A"
+                )
+                closed = (
+                    close_time.strftime("%Y-%m-%d %H:%M")
+                    if pd.notna(close_time)
+                    else "N/A"
+                )
 
-                    st.write(f"**Reason:** {buy['reason']}")
+                buy_price = trade.get("buy_price", 0)
+                sell_price = trade.get("sell_price", 0)
+                shares = trade.get("shares", 0)
+                held = trade.get("holding_period", "N/A")
+                open_reason = trade.get("open_reason", "N/A")
+                close_reason = trade.get("close_reason", "N/A")
 
-                    st.divider()
+                result = "WIN ✅" if pnl > 0 else "LOSS ❌" if pnl < 0 else "FLAT ➖"
 
-                    st.markdown("### 🔴 Exit")
+                with st.container(border=True):
+                    st.subheader(f"{symbol} — {result}")
 
-                    if sell is None:
-                        st.info("No exit snapshot available yet. This trade may still be open or was created before snapshot logging.")
+                    col1, col2 = responsive_columns(2)
+
+                with col1:
+                    st.write(f"**Opened:** {opened}")
+                    st.write(f"**Closed:** {closed}")
+                    st.write(f"**Held:** {held}")
+                    st.write(f"**Shares:** {shares:.4f}")
+
+                with col2:
+                    st.write(f"**Buy:** £{buy_price:,.2f}")
+                    st.write(f"**Sell:** £{sell_price:,.2f}")
+                    st.write(f"**PnL:** £{pnl:,.2f} ({pnl_pct:.2f}%)")
+
+                with st.expander("🔍 Trade Replay"):
+                    trade_snapshot = pd.DataFrame()
+
+                    if not snapshots.empty:
+
+                        trade_snapshot = snapshots[
+                            snapshots["ticker"] == symbol
+                        ].copy()
+
+                        if not trade_snapshot.empty:
+
+                            trade_snapshot["timestamp"] = pd.to_datetime(
+                                trade_snapshot["timestamp"],
+                                errors="coerce"
+                            )
+
+                            trade_snapshot = trade_snapshot.sort_values("timestamp")
+
+                    if trade_snapshot.empty:
+
+                        st.info("No snapshot data available.")
+
                     else:
-                        st.metric("Reason", sell["reason"])
 
-                        st.metric(
-                            "Portfolio Value",
-                            f"£{sell['portfolio_value']:,.2f}"
-                        )
+                        buy_rows = trade_snapshot[trade_snapshot["event"] == "BUY"]
+                        sell_rows = trade_snapshot[trade_snapshot["event"] == "SELL"]
 
-                    st.divider()
+                        if buy_rows.empty:
+                            st.info("No entry snapshot available for this trade yet.")
+                            st.stop()
 
-                    st.markdown("### 📈 Result")
+                        buy = buy_rows.iloc[0]
+                        sell = sell_rows.iloc[-1] if not sell_rows.empty else None
 
-                    c1, c2 = responsive_columns(2)
+                        st.markdown("### 🟢 Entry")
 
-                    with c1:
-                        st.metric("PnL", f"£{pnl:,.2f}")
+                        c1, c2 = responsive_columns(2)
 
-                    with c2:
-                        st.metric("Return", f"{pnl_pct:.2f}%")
+                        with c1:
+                            st.metric("Cash", f"£{buy['cash']:,.2f}")
+                            st.metric("Weight", f"{buy['portfolio_weight']:.1%}")
+
+                        with c2:
+                            st.metric("Stop Loss", f"£{buy['stop_loss']:,.2f}")
+                            st.metric("Take Profit", f"£{buy['take_profit']:,.2f}")
+
+                        st.write(f"**Reason:** {buy['reason']}")
+
+                        st.divider()
+
+                        st.markdown("### 🔴 Exit")
+
+                        if sell is None:
+                            st.info("No exit snapshot available yet. This trade may still be open or was created before snapshot logging.")
+                        else:
+                            st.metric("Reason", sell["reason"])
+
+                            st.metric(
+                                "Portfolio Value",
+                                f"£{sell['portfolio_value']:,.2f}"
+                            )
+
+                        st.divider()
+
+                        st.markdown("### 📈 Result")
+
+                        c1, c2 = responsive_columns(2)
+
+                        with c1:
+                            st.metric("PnL", f"£{pnl:,.2f}")
+
+                        with c2:
+                            st.metric("Return", f"{pnl_pct:.2f}%")
 
     st.divider()
     
