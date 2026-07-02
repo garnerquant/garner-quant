@@ -2,6 +2,7 @@ import html
 import json
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 import altair as alt
 import pandas as pd
@@ -490,6 +491,7 @@ def runtime_brief_details(status):
         "last_scan": format_london_time(last_scan, "No completed scan found"),
         "latest_event": latest_event,
         "next_scan": state.get("next_scan_display", "Not scheduled"),
+        "next_cycle_at": state.get("next_cycle_at"),
     }
 
 
@@ -521,6 +523,100 @@ def render_activity_item(title, detail):
     )
 
 
+def render_live_status_strip(runtime_label, freshness_label, last_scan, next_cycle_at, fallback_next):
+    target_timestamp = ""
+    try:
+        if next_cycle_at:
+            target_timestamp = pd.to_datetime(next_cycle_at, utc=True).isoformat()
+    except Exception:
+        target_timestamp = ""
+
+    payload = {
+        "runtime": str(runtime_label),
+        "freshness": str(freshness_label),
+        "lastScan": str(last_scan),
+        "nextTarget": target_timestamp,
+        "fallbackNext": str(fallback_next),
+    }
+
+    countdown_html = f"""
+        <div class="status-strip">
+            <span class="runtime-badge" id="runtime-badge"></span>
+            <span id="freshness-label"></span>
+            <span id="last-scan-label"></span>
+            <span>Next <span id="next-countdown"></span></span>
+        </div>
+        <style>
+            body {{
+                margin:0;
+                background:transparent;
+                font-family: "Source Sans Pro", sans-serif;
+            }}
+            .status-strip {{
+                display:flex;
+                flex-wrap:wrap;
+                gap:8px;
+                align-items:center;
+                color:#94a3b8;
+                font-size:12px;
+                line-height:1.4;
+                margin:0;
+            }}
+            .runtime-badge {{
+                display:inline-block;
+                border:1px solid rgba(104,255,139,0.35);
+                border-radius:999px;
+                padding:3px 9px;
+                color:#b7f7c8;
+                font-size:12px;
+            }}
+        </style>
+        <script>
+            const data = {json.dumps(payload)};
+            document.getElementById("runtime-badge").textContent = data.runtime;
+            document.getElementById("freshness-label").textContent = `Freshness ${{data.freshness}}`;
+            document.getElementById("last-scan-label").textContent = `Last Scan ${{data.lastScan}}`;
+
+            const target = data.nextTarget ? new Date(data.nextTarget).getTime() : null;
+            const countdown = document.getElementById("next-countdown");
+
+            function formatRemaining(seconds) {{
+                const safeSeconds = Math.max(0, Math.floor(seconds));
+                const hours = Math.floor(safeSeconds / 3600);
+                const minutes = Math.floor((safeSeconds % 3600) / 60);
+                const secs = safeSeconds % 60;
+                if (hours > 0) {{
+                    return `${{hours}}h ${{String(minutes).padStart(2, "0")}}m`;
+                }}
+                return `${{String(minutes).padStart(2, "0")}}m ${{String(secs).padStart(2, "0")}}s`;
+            }}
+
+            function tick() {{
+                if (!target || Number.isNaN(target)) {{
+                    countdown.textContent = data.fallbackNext || "Waiting for next scan";
+                    return;
+                }}
+
+                const remaining = Math.floor((target - Date.now()) / 1000);
+                if (remaining <= -60) {{
+                    countdown.textContent = "Waiting for next scan";
+                }} else if (remaining <= 0) {{
+                    countdown.textContent = "Due now";
+                }} else {{
+                    countdown.textContent = formatRemaining(remaining);
+                }}
+            }}
+
+            tick();
+            setInterval(tick, 1000);
+        </script>
+        """
+    st.iframe(
+        "data:text/html;charset=utf-8," + quote(countdown_html),
+        height=30,
+    )
+
+
 def render_investment_brief(
     runtime_details,
     latest_trade,
@@ -542,15 +638,17 @@ def render_investment_brief(
     return_label = "UP" if numeric_value(total_return) >= 0 else "DOWN"
     notification = latest_notification_details()
 
+    render_live_status_strip(
+        runtime_label,
+        freshness.get("label", "Unknown"),
+        runtime_details["last_scan"],
+        runtime_details.get("next_cycle_at"),
+        runtime_details["next_scan"],
+    )
+
     st.markdown(
         f"""
         <div class="portfolio-hero">
-            <div class="status-strip">
-                <span class="runtime-badge">{html.escape(str(runtime_label))}</span>
-                <span>Freshness {html.escape(str(freshness.get("label", "Unknown")))}</span>
-                <span>Last Scan {html.escape(runtime_details["last_scan"])}</span>
-                <span>Next {html.escape(str(runtime_details["next_scan"]))}</span>
-            </div>
             <div class="portfolio-hero-grid">
                 <div class="portfolio-panel">
                     <div class="brief-label">Portfolio Value</div>
