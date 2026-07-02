@@ -86,6 +86,38 @@ Runtime command:
 python runtime/live_runtime.py
 ```
 
+## Windows Development Runtime
+
+For local Windows development, use the PowerShell runtime helpers instead of
+running `python runtime/live_runtime.py` directly in a terminal. The launcher
+starts the runtime in a separate background PowerShell process, writes output to
+`logs/runtime.log`, and refuses to start a duplicate runtime if one is already
+running.
+
+Start runtime:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_runtime.ps1
+```
+
+Check runtime:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\status_runtime.ps1
+```
+
+The status script shows the runtime process ID, command line, status file
+timestamp, freshness, heartbeat, cycle count, current stage, and last error.
+
+Stop runtime intentionally:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stop_runtime.ps1
+```
+
+The stop script matches only Python processes running `runtime\live_runtime.py`.
+It does not stop Streamlit dashboard processes or unrelated Python sessions.
+
 ## Run Continuously On A VPS
 
 The `deploy/` directory contains systemd service templates:
