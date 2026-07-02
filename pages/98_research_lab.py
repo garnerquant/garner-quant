@@ -53,13 +53,19 @@ except Exception:
     generate_experiment_verdict = None
 
 try:
+    from research.automated_parameter_sweep import (
+        build_sweep_leaderboard,
+        sweep_history,
+    )
     from research.experiment_registry import (
         build_leaderboard as build_registry_leaderboard,
         load_experiments as load_registry_experiments,
     )
 except Exception:
+    build_sweep_leaderboard = None
     build_registry_leaderboard = None
     load_registry_experiments = None
+    sweep_history = None
 
 
 FILES = [
@@ -538,6 +544,55 @@ def render_registry_preview():
         st.write("Leaderboard")
         responsive_table(
             leaderboard[display_columns].head(10),
+            hide_index=True,
+        )
+
+    if sweep_history is None or build_sweep_leaderboard is None:
+        return
+
+    sweeps = sweep_history()
+    if not sweeps:
+        return
+
+    st.write("Sweep History")
+    sweep_rows = []
+    for sweep in reversed(sweeps[-10:]):
+        sweep_rows.append(
+            {
+                "sweep_id": sweep.get("sweep_id"),
+                "parameter": sweep.get("parameter_tested"),
+                "runs": sweep.get("runs"),
+                "completed": sweep.get("completed_runs"),
+                "failed": sweep.get("failed_runs"),
+                "best_sharpe_value": sweep.get("best_sharpe_value"),
+                "best_cagr_value": sweep.get("best_cagr_value"),
+                "lowest_drawdown_value": sweep.get("lowest_drawdown_value"),
+            }
+        )
+    responsive_table(pd.DataFrame(sweep_rows), hide_index=True)
+
+    latest_sweep = sweeps[-1]
+    latest_leaderboard = build_sweep_leaderboard(
+        latest_sweep["sweep_id"],
+        sort_by="sharpe_ratio",
+    )
+    if latest_leaderboard is not None and not latest_leaderboard.empty:
+        sweep_columns = [
+            column
+            for column in [
+                "parameter_tested",
+                "value_tested",
+                "status",
+                "sharpe_ratio",
+                "cagr",
+                "max_drawdown",
+                "trade_count",
+            ]
+            if column in latest_leaderboard.columns
+        ]
+        st.write("Latest Sweep Leaderboard")
+        responsive_table(
+            latest_leaderboard[sweep_columns].head(10),
             hide_index=True,
         )
 

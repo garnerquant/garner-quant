@@ -66,8 +66,9 @@ def create_experiment(
     experiment_id=None,
     timestamp=None,
     git_commit=None,
+    extra_fields=None,
 ):
-    return {
+    experiment = {
         "experiment_id": experiment_id or str(uuid4()),
         "timestamp": timestamp or _utc_timestamp(),
         "git_commit": git_commit if git_commit is not None else _git_commit_hash(),
@@ -77,6 +78,11 @@ def create_experiment(
         "status": str(status or "created"),
         "notes": str(notes or ""),
     }
+
+    if extra_fields:
+        experiment.update(_json_safe(extra_fields))
+
+    return experiment
 
 
 def save_experiment(experiment, path=DEFAULT_EXPERIMENTS_FILE):
@@ -119,6 +125,9 @@ def build_leaderboard(sort_by="sharpe_ratio", path=DEFAULT_EXPERIMENTS_FILE):
         metrics = experiment.get("metrics") or {}
         row = {
             "experiment_id": experiment.get("experiment_id"),
+            "sweep_id": experiment.get("sweep_id"),
+            "parameter_tested": experiment.get("parameter_tested"),
+            "value_tested": experiment.get("value_tested"),
             "timestamp": experiment.get("timestamp"),
             "name": experiment.get("name"),
             "status": experiment.get("status"),
