@@ -12,6 +12,7 @@ from research.experiment_registry import (
     load_experiments,
     save_experiment,
 )
+from research.exit_simulation import run_exit_simulation
 
 
 CAMPAIGN_001_ID = "campaign_001_exit_optimisation"
@@ -23,9 +24,9 @@ CAMPAIGN_001_VARIATIONS = [
         "variation_name": "Current binary exit",
         "exit_method": "current_binary_exit",
         "parameter_config": {
-            "exit_mode": "signals_and_stops",
+            "exit_mode": "signal_only",
         },
-        "notes": "Baseline: current research exit behaviour using signal exits and stops.",
+        "notes": "Baseline: binary signal exit, preserving historical entry signals.",
     },
     {
         "variation_name": "Fixed stop loss 3%",
@@ -183,6 +184,27 @@ def build_campaign_summary(campaign_id, path=DEFAULT_EXPERIMENTS_FILE):
         "failed_runs": len(
             [experiment for experiment in experiments if experiment.get("status") == "failed"]
         ),
+        "unsupported_runs": len(
+            [
+                experiment
+                for experiment in experiments
+                if experiment.get("status") == "unsupported"
+            ]
+        ),
+        "dry_run_runs": len(
+            [
+                experiment
+                for experiment in experiments
+                if experiment.get("result_mode") == "dry_run"
+            ]
+        ),
+        "real_simulation_runs": len(
+            [
+                experiment
+                for experiment in experiments
+                if experiment.get("result_mode") == "real_simulation"
+            ]
+        ),
         "best_sharpe": _best_row(leaderboard, "sharpe_ratio", highest=True),
         "best_cagr": _best_row(leaderboard, "cagr", highest=True),
         "best_drawdown": _best_row(leaderboard, "max_drawdown", highest=True),
@@ -220,8 +242,15 @@ def campaign_report_text(summary, leaderboard, dry_run=False):
         f"# {summary.get('campaign_name') or CAMPAIGN_001_NAME}",
         "",
         f"Campaign ID: {summary.get('campaign_id')}",
-        f"Mode: {'dry run' if dry_run else 'research backtest'}",
-        f"Runs: {summary.get('runs')} completed={summary.get('completed_runs')} failed={summary.get('failed_runs')}",
+        f"Mode: {'dry run' if dry_run else 'real historical simulation'}",
+        (
+            f"Runs: {summary.get('runs')} completed={summary.get('completed_runs')} "
+            f"failed={summary.get('failed_runs')} unsupported={summary.get('unsupported_runs')}"
+        ),
+        (
+            f"Evidence split: real={summary.get('real_simulation_runs')} "
+            f"dry_run={summary.get('dry_run_runs')}"
+        ),
         "",
         "## Best Strategies",
     ]
@@ -237,6 +266,56 @@ def campaign_report_text(summary, leaderboard, dry_run=False):
             f"- Best {label}: {row.get('variation_name', 'Unavailable')} "
             f"({row.get('exit_method', 'unknown')})"
         )
+
+    unsupported = []
+    if not leaderboard.empty and "status" in leaderboard.columns:
+        unsupported = [
+            row.to_dict()
+            for _, row in leaderboard.iterrows()
+            if row.get("status") == "unsupported"
+        ]
+
+    lines.extend(["", "## Real Simulated Results"])
+    real_rows = []
+    if not leaderboard.empty and "result_mode" in leaderboard.columns:
+        real_rows = [
+            row.to_dict()
+            for _, row in leaderboard.iterrows()
+            if row.get("result_mode") == "real_simulation"
+        ]
+    if real_rows:
+        for row in real_rows:
+            lines.append(
+                f"- {row.get('variation_name')}: Sharpe={_metric_value(row.get('sharpe_ratio')):.3f}, "
+                f"CAGR={_metric_value(row.get('cagr')):.3%}, "
+                f"Drawdown={_metric_value(row.get('max_drawdown')):.3%}, "
+                f"Profit Factor={_metric_value(row.get('profit_factor')):.3f}"
+            )
+    else:
+        lines.append("- No real simulated results in this campaign run.")
+
+    lines.extend(["", "## Unsupported Variants"])
+    if unsupported:
+        for row in unsupported:
+            lines.append(f"- {row.get('variation_name')}: {row.get('notes')}")
+    else:
+        lines.append("- None.")
+
+    lines.extend(["", "## Dry-Run Validation Results"])
+    dry_rows = []
+    if not leaderboard.empty and "result_mode" in leaderboard.columns:
+        dry_rows = [
+            row.to_dict()
+            for _, row in leaderboard.iterrows()
+            if row.get("result_mode") == "dry_run"
+        ]
+    if dry_rows:
+        for row in dry_rows:
+            lines.append(
+                f"- {row.get('variation_name')}: validation-only metrics recorded."
+            )
+    else:
+        lines.append("- None.")
 
     lines.extend(["", "## What Improved"])
 
@@ -335,22 +414,31 @@ def run_campaign_001(
 
     for index, variation in enumerate(CAMPAIGN_001_VARIATIONS, start=1):
         status = "dry_run" if dry_run else "completed"
+        result_mode = "dry_run" if dry_run else "real_simulation"
         metrics = {}
         notes = variation["notes"]
 
         try:
-            metrics = run_research_backtest_config(
-                variation["parameter_config"],
-                dry_run=dry_run,
-                base_path=base_path,
-            )
             if dry_run:
+                metrics = run_research_backtest_config(
+                    variation["parameter_config"],
+                    dry_run=True,
+                    base_path=base_path,
+                )
                 metrics = _apply_dry_run_adjustment(
                     metrics,
                     variation["exit_method"],
                 )
+            else:
+                simulation = run_exit_simulation(
+                    variation["exit_method"],
+                    parameter_config=variation["parameter_config"],
+                    base_path=base_path,
+                )
+                metrics = simulation["metrics"]
         except Exception as exc:
             status = "failed"
+            result_mode = "error"
             metrics = {"error": str(exc)}
             notes = f"{notes}\n{traceback.format_exc()}"
 
@@ -375,6 +463,7 @@ def run_campaign_001(
                 "campaign_name": CAMPAIGN_001_NAME,
                 "variation_name": variation["variation_name"],
                 "exit_method": variation["exit_method"],
+                "result_mode": result_mode,
             },
         )
         saved_runs.append(save_experiment(experiment, path))
