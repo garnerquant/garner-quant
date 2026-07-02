@@ -701,7 +701,7 @@ def render_investment_brief(
     with activity_cols[2]:
         render_activity_item(
             "Runtime",
-            f"{state.get('health', 'Unknown')} | Next {runtime_details['next_scan']}",
+            f"{state.get('health', 'Unknown')} | Next scan shown in the top status strip",
         )
 
     st.markdown(
