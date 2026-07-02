@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from dashboard.data_loader import load_csv
+from dashboard.metrics import unrealised_pnl_from_holdings
 from execution.trade_audit import build_trade_audit_trail
 from ui.responsive import (
     apply_responsive_styles,
@@ -324,6 +325,10 @@ if broker.empty:
     st.stop()
 
 broker_row = broker.iloc[0]
+current_unrealised_pnl = unrealised_pnl_from_holdings(
+    holdings,
+    fallback=broker_row.get("unrealised_pnl", 0),
+)
 
 st.title("📈 Garner Quant")
 st.caption("Personal investment research and paper trading dashboard.")
@@ -388,7 +393,7 @@ if page == "Home":
             metric_card("Current Balance", f"£{current_balance:,.2f}")
             metric_card(
                 "Unrealised PnL",
-                f"£{paper_row['unrealised_pnl']:,.2f}",
+                f"£{current_unrealised_pnl:,.2f}",
                 True,
             )
 
@@ -419,7 +424,7 @@ if page == "Home":
         metric_card("Cash %", f"{cash_percent:.2%}", True)
         metric_card(
             "Unrealised PnL",
-            f"£{broker_row['unrealised_pnl']:,.2f}",
+            f"£{current_unrealised_pnl:,.2f}",
             True,
         )
 
@@ -468,7 +473,7 @@ if page == "Home":
         metric_card("Cash", f"£{broker_row['cash']:,.2f}")
         metric_card(
             "Unrealised PnL",
-            f"£{broker_row['unrealised_pnl']:,.2f}",
+            f"£{current_unrealised_pnl:,.2f}",
             True,
         )
 
