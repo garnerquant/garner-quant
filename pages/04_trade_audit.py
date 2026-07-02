@@ -7,6 +7,7 @@ from supabase import create_client
 
 from dashboard.data_loader import load_csv
 from execution.trade_audit import build_trade_audit_trail
+from ui.auth import require_dashboard_login
 from ui.responsive import apply_responsive_styles, responsive_table
 
 
@@ -16,6 +17,7 @@ st.set_page_config(
     layout="wide",
 )
 
+require_dashboard_login()
 apply_responsive_styles()
 
 st.title("🔍 Trade Audit")

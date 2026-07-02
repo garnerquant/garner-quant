@@ -24,6 +24,7 @@ from notifications.alert_notifier import (
     notify_alerts,
     notify_trade_event,
 )
+from ui.auth import require_dashboard_login
 from ui.responsive import (
     apply_responsive_styles,
     responsive_columns,
@@ -70,6 +71,7 @@ st.set_page_config(
     layout="wide",
 )
 
+require_dashboard_login()
 apply_responsive_styles()
 auto_refresh = enable_auto_refresh(
     interval_seconds=30,

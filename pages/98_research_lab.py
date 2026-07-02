@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
+from ui.auth import require_dashboard_login
 from ui.responsive import (
     apply_responsive_styles,
     responsive_columns,
@@ -140,6 +141,7 @@ st.set_page_config(
     page_icon="🧪",
     layout="wide",
 )
+require_dashboard_login()
 apply_responsive_styles()
 
 

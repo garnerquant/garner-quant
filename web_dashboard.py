@@ -10,6 +10,7 @@ from dashboard.data_loader import load_csv
 from dashboard.metrics import unrealised_pnl_from_holdings
 from execution.trade_audit import build_trade_audit_trail
 from reporting.paper_performance import challenge_initial_capital
+from ui.auth import require_dashboard_login
 from ui.responsive import (
     apply_responsive_styles,
     responsive_columns,
@@ -459,6 +460,7 @@ st.set_page_config(
     layout="wide",
 )
 
+require_dashboard_login()
 inject_mobile_css()
 apply_responsive_styles()
 
