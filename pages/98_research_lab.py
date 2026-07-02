@@ -608,6 +608,7 @@ def render_campaign_report_viewer():
 def render_registry_preview():
     if load_registry_experiments is None or build_registry_leaderboard is None:
         st.info("Automated experiment registry is not available in this environment.")
+        render_campaign_report_viewer()
         return
 
     registry_experiments = load_registry_experiments()
@@ -632,6 +633,7 @@ def render_registry_preview():
             "No automated experiment runs recorded yet. Run "
             "scripts/validate_research_lab.py to create a dry-run record."
         )
+        render_campaign_report_viewer()
         return
 
     history_rows = []
