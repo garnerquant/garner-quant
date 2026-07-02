@@ -3,7 +3,7 @@
     "TEST|TEST_NOTIFICATION|1782854685.829937": "2026-06-30T21:24:45",
     "TEST|TEST_NOTIFICATION|100.000000": "2026-06-30T21:31:13"
   },
-  "last_notification_sent": "2026-07-02T16:35:35",
+  "last_notification_sent": "2026-07-02T21:02:58",
   "sent_log": [
     {
       "timestamp": "2026-06-30T21:24:45",
@@ -76,6 +76,14 @@
       "ticker": "ETH-GBP",
       "trade_key": "trade_id:ETH-GBP_2026-07-02 00:00:00_BUY",
       "delivery": "channel"
+    },
+    {
+      "timestamp": "2026-07-02T21:02:58",
+      "type": "trade_event",
+      "action": "SELL",
+      "ticker": "TSLA",
+      "trade_key": "trade_id:TSLA_2026-06-29_SELL",
+      "delivery": "channel"
     }
   ],
   "last_summary": {
@@ -94,17 +102,18 @@
     "trade_id:TEST_SELL_20260630213129": "2026-06-30T21:31:29",
     "trade_id:AAPL_2026-07-01 00:00:00_BUY": "2026-07-01T16:12:08",
     "trade_id:MSFT_2026-07-01 00:00:00_BUY": "2026-07-01T16:12:08",
-    "trade_id:ETH-GBP_2026-07-02 00:00:00_BUY": "2026-07-02T16:35:35"
+    "trade_id:ETH-GBP_2026-07-02 00:00:00_BUY": "2026-07-02T16:35:35",
+    "trade_id:TSLA_2026-06-29_SELL": "2026-07-02T21:02:58"
   },
   "last_monitor_alert_sent": "2026-06-30T21:31:13",
-  "last_trade_notification_sent": "2026-07-02T16:35:35",
+  "last_trade_notification_sent": "2026-07-02T21:02:58",
   "last_notification_error": null,
   "last_trade_summary": {
     "sent": 1,
     "skipped": 0,
     "errors": [],
-    "last_notification_sent": "2026-07-02T16:35:35",
-    "notifications_sent_today": 1,
+    "last_notification_sent": "2026-07-02T21:02:58",
+    "notifications_sent_today": 2,
     "skipped_due_to_cooldown": 0,
     "skipped_due_to_deduplication": 0
   }
