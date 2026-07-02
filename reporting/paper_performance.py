@@ -2,8 +2,29 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
+try:
+    from config import STARTING_CASH
+except Exception:
+    STARTING_CASH = None
+
 
 TRACKER_FILE = "paper_30_day_tracker.csv"
+
+
+def challenge_initial_capital(tracker=None):
+    try:
+        configured_cash = float(STARTING_CASH)
+        if configured_cash > 0:
+            return configured_cash
+    except Exception:
+        pass
+
+    if tracker is not None and len(tracker) > 0 and "portfolio_value" in tracker.columns:
+        values = pd.to_numeric(tracker["portfolio_value"], errors="coerce").dropna()
+        if not values.empty:
+            return float(values.iloc[0])
+
+    return 0.0
 
 
 def update_30_day_tracker(broker, benchmark_stats=None):
@@ -71,10 +92,10 @@ def calculate_30_day_performance(tracker):
     tracker["date"] = pd.to_datetime(tracker["date"])
     tracker = tracker.sort_values("date")
 
-    start_value = tracker["portfolio_value"].iloc[0]
+    start_value = challenge_initial_capital(tracker)
     current_value = tracker["portfolio_value"].iloc[-1]
 
-    total_return = (current_value / start_value) - 1
+    total_return = (current_value / start_value) - 1 if start_value > 0 else 0
     days_tracked = tracker["date"].dt.date.nunique()
 
     days_remaining = max(30 - days_tracked, 0)

@@ -9,6 +9,7 @@ from supabase import create_client
 from dashboard.data_loader import load_csv
 from dashboard.metrics import unrealised_pnl_from_holdings
 from execution.trade_audit import build_trade_audit_trail
+from reporting.paper_performance import challenge_initial_capital
 from ui.responsive import (
     apply_responsive_styles,
     responsive_columns,
@@ -299,7 +300,7 @@ def numeric_y_domain(values, *, minimum_padding):
     return y_min, y_max
 
 
-def render_equity_curve(chart_data, current_value):
+def render_equity_curve(chart_data, current_value, initial_capital=None):
     plot_data = chart_data.reset_index()[["date", "portfolio_value"]].copy()
     plot_data["date"] = pd.to_datetime(plot_data["date"], errors="coerce")
     plot_data["portfolio_value"] = pd.to_numeric(
@@ -324,7 +325,10 @@ def render_equity_curve(chart_data, current_value):
         return
 
     first_value = plot_data["portfolio_value"].iloc[0]
-    can_show_return = pd.notna(first_value) and float(first_value) != 0
+    baseline_value = initial_capital
+    if baseline_value is None or pd.isna(baseline_value) or float(baseline_value) <= 0:
+        baseline_value = first_value
+    can_show_return = pd.notna(baseline_value) and float(baseline_value) != 0
 
     chart_options = ["Return from start (%)", "Zoomed GBP equity"]
     if not can_show_return:
@@ -339,7 +343,7 @@ def render_equity_curve(chart_data, current_value):
 
     plot_data["return_pct"] = (
         (
-            plot_data["portfolio_value"] / float(first_value) - 1
+            plot_data["portfolio_value"] / float(baseline_value) - 1
         )
         * 100
         if can_show_return
@@ -365,8 +369,8 @@ def render_equity_curve(chart_data, current_value):
             format=".2f",
         )
         caption = (
-            "Return view shows percentage change from the first day "
-            "of the challenge."
+            "Return view shows cumulative percentage change from the "
+            "30 Day Challenge initial capital."
         )
     else:
         y_domain = equity_curve_y_domain(
@@ -548,7 +552,7 @@ if page == "Home":
     else:
         paper_row = paper_30.iloc[-1]
 
-        start_balance = paper_30["portfolio_value"].iloc[0]
+        start_balance = challenge_initial_capital(paper_30)
         current_balance = paper_row["portfolio_value"]
         total_return = (
             (current_balance / start_balance) - 1
@@ -592,7 +596,7 @@ if page == "Home":
         chart_data = chart_data.sort_values("date")
         chart_data = chart_data.set_index("date")
 
-        render_equity_curve(chart_data, current_balance)
+        render_equity_curve(chart_data, current_balance, start_balance)
 
     st.divider()
 
