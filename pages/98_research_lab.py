@@ -541,20 +541,26 @@ def campaign_report_label(report_path):
 
 def parse_campaign_report_summary(report_text):
     summary = {
+        "Campaign ID": "n/a",
         "Best Sharpe": "n/a",
         "Best CAGR": "n/a",
         "Lowest Drawdown": "n/a",
         "Best Profit Factor": "n/a",
         "Variants Tested": "n/a",
         "Result Mode": "n/a",
+        "Evidence Split": "n/a",
     }
 
     for raw_line in report_text.splitlines():
         line = raw_line.strip()
-        if line.startswith("Mode:"):
+        if line.startswith("Campaign ID:"):
+            summary["Campaign ID"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Mode:"):
             summary["Result Mode"] = line.split(":", 1)[1].strip()
         elif line.startswith("Runs:"):
             summary["Variants Tested"] = line.split(":", 1)[1].strip().split()[0]
+        elif line.startswith("Evidence split:"):
+            summary["Evidence Split"] = line.split(":", 1)[1].strip()
         elif line.startswith("- Best Sharpe:"):
             summary["Best Sharpe"] = line.split(":", 1)[1].strip()
         elif line.startswith("- Best CAGR:"):
@@ -567,8 +573,220 @@ def parse_campaign_report_summary(report_text):
     return summary
 
 
+def campaign_strategy_name(value):
+    if value in (None, "", "n/a"):
+        return "n/a"
+
+    return str(value).split("(", 1)[0].strip()
+
+
+def parse_campaign_report_leaderboard(report_text, summary):
+    rows = []
+    in_results = False
+    walk_forward_candidates = set()
+    in_walk_forward = False
+
+    for raw_line in report_text.splitlines():
+        line = raw_line.strip()
+
+        if line == "## Real Simulated Results":
+            in_results = True
+            in_walk_forward = False
+            continue
+
+        if line == "## Walk-Forward Candidates":
+            in_results = False
+            in_walk_forward = True
+            continue
+
+        if line.startswith("## "):
+            in_results = False
+            in_walk_forward = False
+
+        if in_walk_forward and line.startswith("- "):
+            walk_forward_candidates.add(line[2:].strip())
+
+        if not in_results or not line.startswith("- ") or ": Sharpe=" not in line:
+            continue
+
+        strategy, metrics_text = line[2:].split(":", 1)
+        metrics = {}
+        for part in metrics_text.split(","):
+            if "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            metrics[key.strip()] = value.strip()
+
+        verdict = "Test further"
+        if strategy == campaign_strategy_name(summary.get("Best Sharpe")):
+            verdict = "Best risk-adjusted result"
+        if strategy == campaign_strategy_name(summary.get("Best CAGR")):
+            verdict = "Best return"
+        if strategy in walk_forward_candidates:
+            verdict = "Candidate for walk-forward validation"
+        if strategy == "Current binary exit":
+            verdict = "Keep current strategy"
+
+        rows.append(
+            {
+                "Strategy": strategy,
+                "Return": metrics.get("CAGR", "n/a"),
+                "Sharpe": metrics.get("Sharpe", "n/a"),
+                "Max Drawdown": metrics.get("Drawdown", "n/a"),
+                "Profit Factor": metrics.get("Profit Factor", "n/a"),
+                "Win Rate": "n/a",
+                "Verdict": verdict,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def latest_campaign_report_data():
+    reports = campaign_report_files()
+    if not reports:
+        return None, "", {}, pd.DataFrame()
+
+    selected_report = reports[0]
+
+    try:
+        report_text = selected_report.read_text(encoding="utf-8")
+    except OSError:
+        return selected_report, "", {}, pd.DataFrame()
+
+    summary = parse_campaign_report_summary(report_text)
+    leaderboard = parse_campaign_report_leaderboard(report_text, summary)
+    return selected_report, report_text, summary, leaderboard
+
+
+def campaign_evidence_level(summary):
+    result_mode = str(summary.get("Result Mode", "")).lower()
+    evidence_split = str(summary.get("Evidence Split", ""))
+
+    if "real historical simulation" in result_mode:
+        return f"Real historical simulation ({evidence_split})"
+
+    if "dry" in result_mode:
+        return "Dry-run evidence only"
+
+    return summary.get("Result Mode", "Not available")
+
+
+def campaign_main_takeaway(summary):
+    best_sharpe = campaign_strategy_name(summary.get("Best Sharpe"))
+    best_cagr = campaign_strategy_name(summary.get("Best CAGR"))
+    lowest_drawdown = campaign_strategy_name(summary.get("Lowest Drawdown"))
+    best_profit_factor = campaign_strategy_name(summary.get("Best Profit Factor"))
+
+    if best_sharpe == "Current binary exit" and best_cagr == "Current binary exit":
+        return (
+            "The current binary exit remains the strongest overall result. "
+            f"{lowest_drawdown} reduced drawdown, and {best_profit_factor} had "
+            "the best profit factor, but neither displaced the current exit."
+        )
+
+    return (
+        f"{best_sharpe} led on risk-adjusted return. Treat it as a candidate "
+        "for more validation before changing the live strategy."
+    )
+
+
+def campaign_recommendation(summary):
+    best_sharpe = campaign_strategy_name(summary.get("Best Sharpe"))
+    best_cagr = campaign_strategy_name(summary.get("Best CAGR"))
+
+    if best_sharpe == "Current binary exit" and best_cagr == "Current binary exit":
+        return (
+            "Keep the current strategy for now. The best alternatives should be "
+            "tested further, especially through walk-forward validation, before "
+            "any production change is considered."
+        )
+
+    if best_sharpe != "n/a":
+        return (
+            f"{best_sharpe} is a candidate for walk-forward validation, but "
+            "there is not enough evidence yet to promote it to production."
+        )
+
+    return "Not enough evidence yet. Run or export a campaign report first."
+
+
+def campaign_recommended_action_label(summary):
+    best_sharpe = campaign_strategy_name(summary.get("Best Sharpe"))
+    best_cagr = campaign_strategy_name(summary.get("Best CAGR"))
+
+    if best_sharpe == "Current binary exit" and best_cagr == "Current binary exit":
+        return "Keep current strategy"
+
+    if best_sharpe != "n/a":
+        return "Candidate for validation"
+
+    return "Not enough evidence"
+
+
+def render_research_summary(report_text, summary, leaderboard):
+    st.title("Research Lab Overview")
+    st.write(
+        "This page shows what Garner Quant has tested, what won, and what "
+        "should be tested next."
+    )
+
+    st.subheader("Executive Summary")
+    executive_cols = responsive_columns(4)
+    executive_cols[0].metric("Latest study", "Campaign 001 - Exit Optimisation")
+    executive_cols[1].metric("Evidence level", campaign_evidence_level(summary))
+    executive_cols[2].metric(
+        "Best overall strategy",
+        campaign_strategy_name(summary.get("Best Sharpe")),
+    )
+    executive_cols[3].metric(
+        "Recommended action",
+        campaign_recommended_action_label(summary),
+    )
+
+    st.subheader("Campaign 001 - Exit Optimisation")
+    st.write("**Question:** Which exit strategy performs best?")
+    st.write(
+        "**What was tested:** current binary exit, fixed stop loss, trailing "
+        "stop, confirmation exit, partial exit, time exit."
+    )
+    st.write(f"**Result mode:** {summary.get('Result Mode', 'Not available')}")
+    st.write(f"**Main takeaway:** {campaign_main_takeaway(summary)}")
+
+    st.subheader("Winners")
+    winner_cols = responsive_columns(4)
+    winner_cols[0].metric("Best Sharpe", campaign_strategy_name(summary.get("Best Sharpe")))
+    winner_cols[1].metric("Best CAGR", campaign_strategy_name(summary.get("Best CAGR")))
+    winner_cols[2].metric(
+        "Lowest Drawdown",
+        campaign_strategy_name(summary.get("Lowest Drawdown")),
+    )
+    winner_cols[3].metric(
+        "Best Profit Factor",
+        campaign_strategy_name(summary.get("Best Profit Factor")),
+    )
+
+    st.subheader("Simple Leaderboard")
+    if leaderboard.empty:
+        st.info("Campaign 001 report data is not available yet.")
+    else:
+        responsive_table(leaderboard, hide_index=True)
+
+    st.subheader("Recommendation")
+    st.success(campaign_recommendation(summary))
+
+
+def render_metric_explanations():
+    st.subheader("Metric Explanations")
+    metric_cols = responsive_columns(4)
+    metric_cols[0].caption("Sharpe = return adjusted for risk.")
+    metric_cols[1].caption("Drawdown = worst fall from peak to trough.")
+    metric_cols[2].caption("Profit factor = gross wins divided by gross losses.")
+    metric_cols[3].caption("Win rate = percentage of winning trades.")
+
+
 def render_campaign_report_viewer():
-    st.write("Campaign Report")
+    st.write("Full markdown report")
 
     reports = campaign_report_files()
     if not reports:
@@ -602,7 +820,8 @@ def render_campaign_report_viewer():
     summary_cols[1].metric("Variants Tested", summary["Variants Tested"])
     summary_cols[2].metric("Result Mode", summary["Result Mode"])
 
-    st.markdown(report_text)
+    with st.expander("Markdown report", expanded=False):
+        st.markdown(report_text)
 
 
 def render_registry_preview():
@@ -614,219 +833,231 @@ def render_registry_preview():
     registry_experiments = load_registry_experiments()
     leaderboard = build_registry_leaderboard(sort_by="sharpe_ratio")
 
-    st.subheader("Automated Experiment Registry")
     st.caption(
-        "Append-only research records stored under research/experiments. "
-        "This view is read-only and does not run production trading."
+        "Technical records are preserved here for audit and debugging. These "
+        "sections are read-only unless you use the research tools below."
     )
 
-    registry_cols = responsive_columns(3)
-    registry_cols[0].metric("Recorded runs", len(registry_experiments))
-    registry_cols[1].metric(
-        "Leaderboard rows",
-        len(leaderboard) if leaderboard is not None else 0,
-    )
-    registry_cols[2].metric("Storage", "JSONL")
-
-    if not registry_experiments:
-        st.info(
-            "No automated experiment runs recorded yet. Run "
-            "scripts/validate_research_lab.py to create a dry-run record."
-        )
-        render_campaign_report_viewer()
-        return
-
-    history_rows = []
-    for experiment in reversed(registry_experiments[-10:]):
-        metrics = experiment.get("metrics") or {}
-        history_rows.append(
-            {
-                "timestamp": experiment.get("timestamp", ""),
-                "name": experiment.get("name", ""),
-                "status": experiment.get("status", ""),
-                "sharpe_ratio": metrics.get("sharpe_ratio"),
-                "total_return": metrics.get("total_return"),
-                "notes": experiment.get("notes", ""),
-            }
+    with st.expander("Experiment registry", expanded=False):
+        st.caption(
+            "Append-only research records stored under research/experiments. "
+            "This view is read-only and does not run production trading."
         )
 
-    st.write("Experiment History")
-    responsive_table(pd.DataFrame(history_rows), hide_index=True)
-
-    if leaderboard is not None and not leaderboard.empty:
-        display_columns = [
-            column
-            for column in [
-                "name",
-                "status",
-                "sharpe_ratio",
-                "total_return",
-                "max_drawdown",
-                "trade_count",
-                "timestamp",
-            ]
-            if column in leaderboard.columns
-        ]
-        st.write("Leaderboard")
-        responsive_table(
-            leaderboard[display_columns].head(10),
-            hide_index=True,
+        registry_cols = responsive_columns(3)
+        registry_cols[0].metric("Recorded runs", len(registry_experiments))
+        registry_cols[1].metric(
+            "Leaderboard rows",
+            len(leaderboard) if leaderboard is not None else 0,
         )
+        registry_cols[2].metric("Storage", "JSONL")
+
+        if not registry_experiments:
+            st.info(
+                "No automated experiment runs recorded yet. Run "
+                "scripts/validate_research_lab.py to create a dry-run record."
+            )
+        else:
+            history_rows = []
+            for experiment in reversed(registry_experiments[-10:]):
+                metrics = experiment.get("metrics") or {}
+                history_rows.append(
+                    {
+                        "timestamp": experiment.get("timestamp", ""),
+                        "name": experiment.get("name", ""),
+                        "status": experiment.get("status", ""),
+                        "sharpe_ratio": metrics.get("sharpe_ratio"),
+                        "total_return": metrics.get("total_return"),
+                        "notes": experiment.get("notes", ""),
+                    }
+                )
+
+            st.write("Experiment History")
+            responsive_table(pd.DataFrame(history_rows), hide_index=True)
+
+            if leaderboard is not None and not leaderboard.empty:
+                display_columns = [
+                    column
+                    for column in [
+                        "name",
+                        "status",
+                        "sharpe_ratio",
+                        "total_return",
+                        "max_drawdown",
+                        "trade_count",
+                        "timestamp",
+                    ]
+                    if column in leaderboard.columns
+                ]
+                st.write("Leaderboard")
+                responsive_table(
+                    leaderboard[display_columns].head(10),
+                    hide_index=True,
+                )
 
     if sweep_history is not None and build_sweep_leaderboard is not None:
         sweeps = sweep_history()
     else:
         sweeps = []
 
-    if sweeps:
-        st.write("Sweep History")
-        sweep_rows = []
-        for sweep in reversed(sweeps[-10:]):
-            sweep_rows.append(
-                {
-                    "sweep_id": sweep.get("sweep_id"),
-                    "parameter": sweep.get("parameter_tested"),
-                    "runs": sweep.get("runs"),
-                    "completed": sweep.get("completed_runs"),
-                    "failed": sweep.get("failed_runs"),
-                    "best_sharpe_value": sweep.get("best_sharpe_value"),
-                    "best_cagr_value": sweep.get("best_cagr_value"),
-                    "lowest_drawdown_value": sweep.get("lowest_drawdown_value"),
-                }
-            )
-        responsive_table(pd.DataFrame(sweep_rows), hide_index=True)
+    with st.expander("Sweep history", expanded=False):
+        if not sweeps:
+            st.info("No sweep history available yet.")
+        else:
+            st.write("Sweep History")
+            sweep_rows = []
+            for sweep in reversed(sweeps[-10:]):
+                sweep_rows.append(
+                    {
+                        "sweep_id": sweep.get("sweep_id"),
+                        "parameter": sweep.get("parameter_tested"),
+                        "runs": sweep.get("runs"),
+                        "completed": sweep.get("completed_runs"),
+                        "failed": sweep.get("failed_runs"),
+                        "best_sharpe_value": sweep.get("best_sharpe_value"),
+                        "best_cagr_value": sweep.get("best_cagr_value"),
+                        "lowest_drawdown_value": sweep.get("lowest_drawdown_value"),
+                    }
+                )
+            responsive_table(pd.DataFrame(sweep_rows), hide_index=True)
 
-        latest_sweep = sweeps[-1]
-        latest_leaderboard = build_sweep_leaderboard(
-            latest_sweep["sweep_id"],
-            sort_by="sharpe_ratio",
-        )
-        if latest_leaderboard is not None and not latest_leaderboard.empty:
-            sweep_columns = [
-                column
-                for column in [
-                    "parameter_tested",
-                    "value_tested",
-                    "status",
-                    "sharpe_ratio",
-                    "cagr",
-                    "max_drawdown",
-                    "trade_count",
-                ]
-                if column in latest_leaderboard.columns
-            ]
-            st.write("Latest Sweep Leaderboard")
-            responsive_table(
-                latest_leaderboard[sweep_columns].head(10),
-                hide_index=True,
+            latest_sweep = sweeps[-1]
+            latest_leaderboard = build_sweep_leaderboard(
+                latest_sweep["sweep_id"],
+                sort_by="sharpe_ratio",
             )
+            if latest_leaderboard is not None and not latest_leaderboard.empty:
+                sweep_columns = [
+                    column
+                    for column in [
+                        "parameter_tested",
+                        "value_tested",
+                        "status",
+                        "sharpe_ratio",
+                        "cagr",
+                        "max_drawdown",
+                        "trade_count",
+                    ]
+                    if column in latest_leaderboard.columns
+                ]
+                st.write("Latest Sweep Leaderboard")
+                responsive_table(
+                    latest_leaderboard[sweep_columns].head(10),
+                    hide_index=True,
+                )
 
     if grid_history is not None and build_grid_leaderboard is not None:
         grids = grid_history()
     else:
         grids = []
 
-    if grids:
-        st.write("Grid Search History")
-        grid_rows = []
-        for grid in reversed(grids[-10:]):
-            grid_rows.append(
-                {
-                    "grid_id": grid.get("grid_id"),
-                    "runs": grid.get("runs"),
-                    "completed": grid.get("completed_runs"),
-                    "failed": grid.get("failed_runs"),
-                    "best_sharpe_config": grid.get("best_sharpe_config"),
-                    "best_cagr_config": grid.get("best_cagr_config"),
-                    "lowest_drawdown_config": grid.get("lowest_drawdown_config"),
-                }
-            )
-        responsive_table(pd.DataFrame(grid_rows), hide_index=True)
+    with st.expander("Grid history and raw parameter configs", expanded=False):
+        if not grids:
+            st.info("No grid search history available yet.")
+        else:
+            st.write("Grid Search History")
+            grid_rows = []
+            for grid in reversed(grids[-10:]):
+                grid_rows.append(
+                    {
+                        "grid_id": grid.get("grid_id"),
+                        "runs": grid.get("runs"),
+                        "completed": grid.get("completed_runs"),
+                        "failed": grid.get("failed_runs"),
+                        "best_sharpe_config": grid.get("best_sharpe_config"),
+                        "best_cagr_config": grid.get("best_cagr_config"),
+                        "lowest_drawdown_config": grid.get("lowest_drawdown_config"),
+                    }
+                )
+            responsive_table(pd.DataFrame(grid_rows), hide_index=True)
 
-        latest_grid = grids[-1]
-        latest_grid_leaderboard = build_grid_leaderboard(
-            latest_grid["grid_id"],
-            sort_by="sharpe_ratio",
-        )
-        if (
-            latest_grid_leaderboard is not None
-            and not latest_grid_leaderboard.empty
-        ):
-            grid_columns = [
-                column
-                for column in [
-                    "status",
-                    "sharpe_ratio",
-                    "cagr",
-                    "max_drawdown",
-                    "trade_count",
-                    "name",
-                ]
-                if column in latest_grid_leaderboard.columns
-            ]
-            st.write("Latest Grid Search Leaderboard")
-            responsive_table(
-                latest_grid_leaderboard[grid_columns].head(10),
-                hide_index=True,
+            latest_grid = grids[-1]
+            latest_grid_leaderboard = build_grid_leaderboard(
+                latest_grid["grid_id"],
+                sort_by="sharpe_ratio",
             )
+            if (
+                latest_grid_leaderboard is not None
+                and not latest_grid_leaderboard.empty
+            ):
+                grid_columns = [
+                    column
+                    for column in [
+                        "status",
+                        "sharpe_ratio",
+                        "cagr",
+                        "max_drawdown",
+                        "trade_count",
+                        "name",
+                    ]
+                    if column in latest_grid_leaderboard.columns
+                ]
+                st.write("Latest Grid Search Leaderboard")
+                responsive_table(
+                    latest_grid_leaderboard[grid_columns].head(10),
+                    hide_index=True,
+                )
 
     if campaign_history is not None and build_campaign_leaderboard is not None:
         campaigns = campaign_history()
     else:
         campaigns = []
 
-    if campaigns:
-        st.write("Research Campaign History")
-        campaign_rows = []
-        for campaign in reversed(campaigns[-10:]):
-            campaign_rows.append(
-                {
-                    "campaign_id": campaign.get("campaign_id"),
-                    "campaign_name": campaign.get("campaign_name"),
-                    "runs": campaign.get("runs"),
-                    "completed": campaign.get("completed_runs"),
-                    "failed": campaign.get("failed_runs"),
-                    "best_sharpe": (campaign.get("best_sharpe") or {}).get(
-                        "variation_name"
-                    ),
-                    "best_cagr": (campaign.get("best_cagr") or {}).get(
-                        "variation_name"
-                    ),
-                    "best_drawdown": (campaign.get("best_drawdown") or {}).get(
-                        "variation_name"
-                    ),
-                }
-            )
-        responsive_table(pd.DataFrame(campaign_rows), hide_index=True)
+    with st.expander("Campaign IDs and raw campaign history", expanded=False):
+        if not campaigns:
+            st.info("No campaign history available yet.")
+        else:
+            st.write("Research Campaign History")
+            campaign_rows = []
+            for campaign in reversed(campaigns[-10:]):
+                campaign_rows.append(
+                    {
+                        "campaign_id": campaign.get("campaign_id"),
+                        "campaign_name": campaign.get("campaign_name"),
+                        "runs": campaign.get("runs"),
+                        "completed": campaign.get("completed_runs"),
+                        "failed": campaign.get("failed_runs"),
+                        "best_sharpe": (campaign.get("best_sharpe") or {}).get(
+                            "variation_name"
+                        ),
+                        "best_cagr": (campaign.get("best_cagr") or {}).get(
+                            "variation_name"
+                        ),
+                        "best_drawdown": (campaign.get("best_drawdown") or {}).get(
+                            "variation_name"
+                        ),
+                    }
+                )
+            responsive_table(pd.DataFrame(campaign_rows), hide_index=True)
 
-        latest_campaign = campaigns[-1]
-        latest_campaign_leaderboard = build_campaign_leaderboard(
-            latest_campaign["campaign_id"],
-            sort_by="sharpe_ratio",
-        )
-        if (
-            latest_campaign_leaderboard is not None
-            and not latest_campaign_leaderboard.empty
-        ):
-            campaign_columns = [
-                column
-                for column in [
-                    "variation_name",
-                    "exit_method",
-                    "status",
-                    "sharpe_ratio",
-                    "cagr",
-                    "max_drawdown",
-                    "profit_factor",
-                    "trade_count",
-                ]
-                if column in latest_campaign_leaderboard.columns
-            ]
-            st.write("Latest Campaign Leaderboard")
-            responsive_table(
-                latest_campaign_leaderboard[campaign_columns].head(10),
-                hide_index=True,
+            latest_campaign = campaigns[-1]
+            latest_campaign_leaderboard = build_campaign_leaderboard(
+                latest_campaign["campaign_id"],
+                sort_by="sharpe_ratio",
             )
+            if (
+                latest_campaign_leaderboard is not None
+                and not latest_campaign_leaderboard.empty
+            ):
+                campaign_columns = [
+                    column
+                    for column in [
+                        "variation_name",
+                        "exit_method",
+                        "status",
+                        "sharpe_ratio",
+                        "cagr",
+                        "max_drawdown",
+                        "profit_factor",
+                        "trade_count",
+                    ]
+                    if column in latest_campaign_leaderboard.columns
+                ]
+                st.write("Latest Campaign Leaderboard")
+                responsive_table(
+                    latest_campaign_leaderboard[campaign_columns].head(10),
+                    hide_index=True,
+                )
 
     render_campaign_report_viewer()
 
@@ -1440,28 +1671,52 @@ if "selected_experiment_id" not in st.session_state:
 if "compare_experiment_ids" not in st.session_state:
     st.session_state["compare_experiment_ids"] = []
 
-st.title("🧪 Research Lab")
-st.info(
-    "Use Research Lab to safely test strategy ideas without changing live trading."
-)
-st.caption(
-    "Research Lab does not trade, modify live config, change the paper portfolio, "
-    "deploy strategies, or sync production data. It only creates research results."
+latest_report, campaign_report_text, campaign_summary, campaign_leaderboard = (
+    latest_campaign_report_data()
 )
 
-st.markdown(
-    """
-**Simple workflow**
-1. Choose an idea
-2. Run experiment
-3. Compare results
-4. Read verdict
-5. Validate before production
-"""
-)
+if campaign_summary:
+    render_research_summary(
+        campaign_report_text,
+        campaign_summary,
+        campaign_leaderboard,
+    )
+else:
+    st.title("Research Lab Overview")
+    st.write(
+        "This page shows what Garner Quant has tested, what won, and what "
+        "should be tested next."
+    )
+    st.info("No Campaign 001 report data is available yet.")
 
 if "research_lab_mode" not in st.session_state:
     st.session_state["research_lab_mode"] = "Test One Idea"
+
+st.divider()
+st.subheader("Advanced Details")
+render_registry_preview()
+render_metric_explanations()
+
+st.divider()
+st.subheader("Current Live Strategy Summary")
+
+summary_cols = responsive_columns(6)
+summary_cols[0].metric("Current portfolio value", format_number(current_portfolio_value))
+summary_cols[1].metric("Total return", format_percent(stats["total_return"]))
+summary_cols[2].metric("Max drawdown", format_percent(stats["max_drawdown"]))
+summary_cols[3].metric("Sharpe ratio", format_number(stats["sharpe_ratio"]))
+summary_cols[4].metric("Journal events", journal_events)
+summary_cols[5].metric("Open BUY/HOLD signals", open_signal_count)
+
+st.caption(f"Current signals count: {current_signals_count}")
+
+st.divider()
+st.subheader("Research Tools")
+st.caption(
+    "These tools are for creating and validating research experiments. They do "
+    "not trade, change live config, modify the paper portfolio, deploy "
+    "strategies, or sync production data."
+)
 
 mode_cols = responsive_columns(4)
 mode_descriptions = {
@@ -1486,7 +1741,7 @@ for index, mode in enumerate(RESEARCH_MODES):
             rerun_page()
 
 research_mode = st.session_state["research_lab_mode"]
-st.success(f"Current mode: {mode_label(research_mode)}")
+st.success(f"Current tool: {mode_label(research_mode)}")
 
 if st.session_state.get("experiment_run_success"):
     st.success(st.session_state.pop("experiment_run_success"))
@@ -1507,20 +1762,6 @@ if missing_files:
         "Some research inputs are unavailable: "
         + ", ".join(f"{name} ({load_errors[name]})" for name in missing_files)
     )
-
-st.subheader("Current Live Strategy Summary")
-
-summary_cols = responsive_columns(6)
-summary_cols[0].metric("Current portfolio value", format_number(current_portfolio_value))
-summary_cols[1].metric("Total return", format_percent(stats["total_return"]))
-summary_cols[2].metric("Max drawdown", format_percent(stats["max_drawdown"]))
-summary_cols[3].metric("Sharpe ratio", format_number(stats["sharpe_ratio"]))
-summary_cols[4].metric("Journal events", journal_events)
-summary_cols[5].metric("Open BUY/HOLD signals", open_signal_count)
-
-st.caption(f"Current signals count: {current_signals_count}")
-
-render_registry_preview()
 
 if research_mode == "Test One Idea":
     st.divider()
