@@ -7,6 +7,7 @@ import streamlit as st
 
 AUTH_SESSION_KEY = "gq_dashboard_authenticated"
 AUTH_FINGERPRINT_KEY = "gq_dashboard_auth_fingerprint"
+DEV_WARNING_ENV_VAR = "GARNER_QUANT_SHOW_AUTH_DEV_WARNING"
 PASSWORD_ENV_VARS = (
     "GARNER_QUANT_DASHBOARD_PASSWORD",
     "DASHBOARD_PASSWORD",
@@ -60,6 +61,11 @@ def _is_authenticated(password):
 def _set_authenticated(password):
     st.session_state[AUTH_SESSION_KEY] = True
     st.session_state[AUTH_FINGERPRINT_KEY] = _password_fingerprint(password)
+
+
+def _show_development_warning():
+    value = os.getenv(DEV_WARNING_ENV_VAR, "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def logout_dashboard():
@@ -119,12 +125,13 @@ def _render_lock_screen(password):
 def require_dashboard_login():
     password = dashboard_password()
     if not password:
-        st.warning(
-            "Development mode: dashboard password is not configured. "
-            "Set [dashboard].password in Streamlit secrets or "
-            "GARNER_QUANT_DASHBOARD_PASSWORD in the environment before "
-            "production use."
-        )
+        if _show_development_warning():
+            st.warning(
+                "Development mode: dashboard password is not configured. "
+                "Set [dashboard].password in Streamlit secrets or "
+                "GARNER_QUANT_DASHBOARD_PASSWORD in the environment before "
+                "production use."
+            )
         return True
 
     if _is_authenticated(password):

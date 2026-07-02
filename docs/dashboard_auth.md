@@ -27,6 +27,16 @@ or:
 $env:DASHBOARD_PASSWORD = "replace-with-shared-dashboard-password"
 ```
 
+## Local Development Warning
+
+If no dashboard password is configured, access is allowed for local development
+without showing a banner in the normal dashboard UI. To display an explicit
+development warning while testing locally, set:
+
+```powershell
+$env:GARNER_QUANT_SHOW_AUTH_DEV_WARNING = "1"
+```
+
 ## Rotation
 
 To rotate the shared dashboard password, update `[dashboard].password` in
