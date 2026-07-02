@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 from uuid import uuid4
 import traceback
 
@@ -17,6 +18,15 @@ from research.exit_simulation import run_exit_simulation
 
 CAMPAIGN_001_ID = "campaign_001_exit_optimisation"
 CAMPAIGN_001_NAME = "Research Campaign 001 - Exit Optimisation"
+CAMPAIGN_REPORTS_DIR = Path("research") / "experiments" / "campaign_reports"
+CAMPAIGN_REPORT_EXPORTS_DIR = Path("research") / "report_exports" / "campaign_reports"
+SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"(?i)\b(api[_-]?key|token|password|secret|credential)\b\s*[:=]\s*\S+"
+)
+LOCAL_PATH_PATTERNS = [
+    re.compile(r"[A-Za-z]:\\[^\s)]+"),
+    re.compile(r"/(?:Users|home)/[^\s)]+"),
+]
 
 
 CAMPAIGN_001_VARIATIONS = [
@@ -394,13 +404,50 @@ def campaign_report_text(summary, leaderboard, dry_run=False):
 def save_campaign_report(
     campaign_id,
     text,
-    reports_dir=Path("research") / "experiments" / "campaign_reports",
+    reports_dir=CAMPAIGN_REPORTS_DIR,
 ):
     reports_dir = Path(reports_dir)
     reports_dir.mkdir(parents=True, exist_ok=True)
     path = reports_dir / f"{campaign_id}.md"
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def sanitize_campaign_report_text(text):
+    sanitized_lines = []
+    for line in str(text).splitlines():
+        line = SECRET_ASSIGNMENT_PATTERN.sub(
+            lambda match: f"{match.group(1)}=[redacted]",
+            line,
+        )
+        for pattern in LOCAL_PATH_PATTERNS:
+            line = pattern.sub("[local path removed]", line)
+        sanitized_lines.append(line.rstrip())
+
+    return "\n".join(sanitized_lines).strip() + "\n"
+
+
+def save_campaign_report_export(
+    campaign_id,
+    text,
+    exports_dir=CAMPAIGN_REPORT_EXPORTS_DIR,
+):
+    exports_dir = Path(exports_dir)
+    exports_dir.mkdir(parents=True, exist_ok=True)
+
+    sanitized_text = sanitize_campaign_report_text(text)
+    export_path = exports_dir / f"{campaign_id}.md"
+    export_path.write_text(sanitized_text, encoding="utf-8")
+
+    latest_path = None
+    if str(campaign_id).startswith(CAMPAIGN_001_ID):
+        latest_path = exports_dir / f"{CAMPAIGN_001_ID}_latest.md"
+        latest_path.write_text(sanitized_text, encoding="utf-8")
+
+    return {
+        "export_path": export_path,
+        "latest_path": latest_path,
+    }
 
 
 def run_campaign_001(
@@ -472,6 +519,11 @@ def run_campaign_001(
     leaderboard = build_campaign_leaderboard(campaign_run_id, path=path)
     report_text = campaign_report_text(summary, leaderboard, dry_run=dry_run)
     report_path = save_campaign_report(campaign_run_id, report_text) if save_report else None
+    report_exports = (
+        save_campaign_report_export(campaign_run_id, report_text)
+        if save_report
+        else {}
+    )
 
     return {
         "campaign_id": campaign_run_id,
@@ -481,4 +533,6 @@ def run_campaign_001(
         "leaderboard": leaderboard,
         "report_text": report_text,
         "report_path": report_path,
+        "report_export_path": report_exports.get("export_path"),
+        "latest_report_export_path": report_exports.get("latest_path"),
     }

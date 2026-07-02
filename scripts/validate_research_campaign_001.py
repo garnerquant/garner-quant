@@ -171,6 +171,16 @@ def main():
         if not report_path.is_absolute():
             report_path = ROOT / report_path
         print(f"Report: {report_path.relative_to(ROOT)}")
+    if result.get("report_export_path"):
+        export_path = Path(result["report_export_path"])
+        if not export_path.is_absolute():
+            export_path = ROOT / export_path
+        print(f"Report export: {export_path.relative_to(ROOT)}")
+    if result.get("latest_report_export_path"):
+        latest_export_path = Path(result["latest_report_export_path"])
+        if not latest_export_path.is_absolute():
+            latest_export_path = ROOT / latest_export_path
+        print(f"Latest report export: {latest_export_path.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":

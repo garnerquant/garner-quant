@@ -92,6 +92,7 @@ FILES = [
 
 EXPERIMENTS_FILE = Path("research/experiments.json")
 CAMPAIGN_REPORTS_DIR = Path("research/experiments/campaign_reports")
+CAMPAIGN_REPORT_EXPORTS_DIR = Path("research/report_exports/campaign_reports")
 EXPERIMENT_STATUSES = ["Draft", "Tested", "Candidate", "Production Ready"]
 COMPARABLE_STATUSES = ["Tested", "Candidate", "Production Ready"]
 RULE_KEYS = [
@@ -492,28 +493,50 @@ def experiment_by_id(experiments, experiment_id):
     return None
 
 
-def campaign_report_files():
-    if not CAMPAIGN_REPORTS_DIR.exists():
+def _campaign_report_files_in(directory):
+    directory = Path(directory)
+    if not directory.exists():
         return []
 
+    latest_report = directory / "campaign_001_exit_optimisation_latest.md"
     campaign_001_reports = sorted(
-        CAMPAIGN_REPORTS_DIR.glob("campaign_001*.md"),
+        [
+            path
+            for path in directory.glob("campaign_001*.md")
+            if path.name != latest_report.name
+        ],
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
+    if latest_report.exists():
+        campaign_001_reports.insert(0, latest_report)
+
     if campaign_001_reports:
         return campaign_001_reports
 
     return sorted(
-        CAMPAIGN_REPORTS_DIR.glob("*.md"),
+        directory.glob("*.md"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
 
 
+def campaign_report_files():
+    local_reports = _campaign_report_files_in(CAMPAIGN_REPORTS_DIR)
+    if local_reports:
+        return local_reports
+
+    return _campaign_report_files_in(CAMPAIGN_REPORT_EXPORTS_DIR)
+
+
 def campaign_report_label(report_path):
     modified = datetime.fromtimestamp(report_path.stat().st_mtime)
-    return f"{modified:%Y-%m-%d %H:%M} | {report_path.stem}"
+    source = (
+        "exported"
+        if CAMPAIGN_REPORT_EXPORTS_DIR in report_path.parents
+        else "local"
+    )
+    return f"{modified:%Y-%m-%d %H:%M} | {source} | {report_path.stem}"
 
 
 def parse_campaign_report_summary(report_text):
@@ -551,7 +574,8 @@ def render_campaign_report_viewer():
     if not reports:
         st.info(
             "No campaign markdown reports found under "
-            "research/experiments/campaign_reports yet."
+            "research/experiments/campaign_reports or "
+            "research/report_exports/campaign_reports yet."
         )
         return
 
