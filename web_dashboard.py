@@ -1,5 +1,6 @@
 import os
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -252,6 +253,78 @@ def render_live_panel(live_mode):
     render_live_operational_cards()
 
 
+def equity_curve_y_domain(equity_series, reference_value=None):
+    values = pd.to_numeric(equity_series, errors="coerce").dropna()
+    if values.empty:
+        return None
+
+    min_value = float(values.min())
+    max_value = float(values.max())
+    value_range = max_value - min_value
+
+    reference_candidates = [
+        abs(float(reference_value))
+        for reference_value in [reference_value, max_value, min_value]
+        if reference_value is not None and pd.notna(reference_value)
+    ]
+    reference = max(reference_candidates) if reference_candidates else 0
+    padding = max(value_range * 0.15, reference * 0.002, 25)
+
+    y_min = min_value - padding
+    y_max = max_value + padding
+
+    if min_value >= 0 and y_min < 0:
+        y_min = 0
+    if y_max <= y_min:
+        y_max = y_min + max(padding * 2, 50)
+
+    return y_min, y_max
+
+
+def render_equity_curve(chart_data, current_value):
+    equity = pd.to_numeric(chart_data["portfolio_value"], errors="coerce")
+    y_domain = equity_curve_y_domain(equity, current_value)
+
+    if y_domain is None:
+        st.info("No valid equity values available for the chart yet.")
+        return
+
+    plot_data = chart_data.reset_index()[["date", "portfolio_value"]].copy()
+    plot_data["portfolio_value"] = pd.to_numeric(
+        plot_data["portfolio_value"],
+        errors="coerce",
+    )
+    plot_data = plot_data.dropna(subset=["date", "portfolio_value"])
+
+    chart = (
+        alt.Chart(plot_data)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("date:T", title="Date"),
+            y=alt.Y(
+                "portfolio_value:Q",
+                title="Portfolio value (GBP, zoomed scale)",
+                scale=alt.Scale(domain=list(y_domain), zero=False),
+            ),
+            tooltip=[
+                alt.Tooltip("date:T", title="Date", format="%Y-%m-%d"),
+                alt.Tooltip(
+                    "portfolio_value:Q",
+                    title="Portfolio value",
+                    format=",.2f",
+                ),
+            ],
+        )
+        .properties(height=320)
+    )
+
+    st.altair_chart(chart, width="stretch")
+    st.caption(
+        "Zoomed y-axis: "
+        f"GBP {y_domain[0]:,.2f} to GBP {y_domain[1]:,.2f}."
+    )
+
+
 st.set_page_config(
     page_title="Garner Quant",
     page_icon="📊",
@@ -404,7 +477,7 @@ if page == "Home":
         chart_data = chart_data.sort_values("date")
         chart_data = chart_data.set_index("date")
 
-        st.line_chart(chart_data["portfolio_value"])
+        render_equity_curve(chart_data, current_balance)
 
     st.divider()
 
