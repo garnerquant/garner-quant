@@ -766,14 +766,14 @@ def render_research_summary(report_text, summary, leaderboard):
         campaign_strategy_name(summary.get("Best Profit Factor")),
     )
 
+    st.subheader("Recommendation")
+    st.success(campaign_recommendation(summary))
+
     st.subheader("Simple Leaderboard")
     if leaderboard.empty:
         st.info("Campaign 001 report data is not available yet.")
     else:
         responsive_table(leaderboard, hide_index=True)
-
-    st.subheader("Recommendation")
-    st.success(campaign_recommendation(summary))
 
 
 def render_metric_explanations():
@@ -1698,7 +1698,14 @@ render_registry_preview()
 render_metric_explanations()
 
 st.divider()
-st.subheader("Current Live Strategy Summary")
+st.subheader("Research Tools")
+st.caption(
+    "These tools are for creating and validating research experiments. They do "
+    "not trade, change live config, modify the paper portfolio, deploy "
+    "strategies, or sync production data."
+)
+
+st.write("Current Live Strategy Summary")
 
 summary_cols = responsive_columns(6)
 summary_cols[0].metric("Current portfolio value", format_number(current_portfolio_value))
@@ -1709,14 +1716,6 @@ summary_cols[4].metric("Journal events", journal_events)
 summary_cols[5].metric("Open BUY/HOLD signals", open_signal_count)
 
 st.caption(f"Current signals count: {current_signals_count}")
-
-st.divider()
-st.subheader("Research Tools")
-st.caption(
-    "These tools are for creating and validating research experiments. They do "
-    "not trade, change live config, modify the paper portfolio, deploy "
-    "strategies, or sync production data."
-)
 
 mode_cols = responsive_columns(4)
 mode_descriptions = {
