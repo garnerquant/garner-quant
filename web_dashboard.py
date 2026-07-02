@@ -523,6 +523,38 @@ def render_activity_item(title, detail):
     )
 
 
+def investor_cycle_message(runtime_event, state):
+    raw_message = str((runtime_event or {}).get("message") or "").strip()
+    raw_type = str((runtime_event or {}).get("type") or "").strip()
+    details = (runtime_event or {}).get("details") or {}
+    combined = f"{raw_type} {raw_message}".lower()
+    paper_trades = int(details.get("paper_trades") or details.get("trade_count") or 0)
+
+    if "safety" in combined and ("blocked" in combined or "prevented" in combined):
+        return (
+            "No strategy scan was performed because a safety check prevented execution. "
+            "Your portfolio was unchanged."
+        )
+
+    if paper_trades > 0 or (
+        "trade" in combined
+        and any(word in combined for word in ["executed", "recorded", "placed"])
+        and "no trade" not in combined
+    ):
+        return "Strategy completed and executed new trades."
+
+    if any(phrase in combined for phrase in ["no trade", "0 trades", "no new paper trades"]):
+        return "Strategy completed. No new trading opportunities were found."
+
+    if "paper strategy pipeline completed" in combined or "strategy completed" in combined:
+        return "Strategy scan completed successfully."
+
+    if raw_message:
+        return raw_message
+
+    return state.get("activity", "Runtime status unavailable.")
+
+
 def render_live_status_strip(runtime_label, freshness_label, last_scan, next_cycle_at, fallback_next):
     target_timestamp = ""
     try:
@@ -696,7 +728,7 @@ def render_investment_brief(
     with activity_cols[1]:
         render_activity_item(
             "Cycle",
-            runtime_event.get("message") or state.get("activity", "Runtime status unavailable."),
+            investor_cycle_message(runtime_event, state),
         )
     with activity_cols[2]:
         render_activity_item(
