@@ -1115,24 +1115,20 @@ def render_opportunity_rows(display_source):
         status = html.escape(str(row.get("status", "")).strip() or "No status")
         weight = numeric_value(row.get("_weight_numeric", 0))
         row_html.append(
-            f"""
-            <div class="signal-row">
-                <div>
-                    <div class="signal-ticker">{ticker}</div>
-                    {signal_badge(row.get("_action"))}
-                </div>
-                <div class="signal-detail">{status}</div>
-                <div class="signal-weight">{weight:.1%}</div>
-            </div>
-            """
+            (
+                '<div class="signal-row">'
+                "<div>"
+                f'<div class="signal-ticker">{ticker}</div>'
+                f"{signal_badge(row.get('_action'))}"
+                "</div>"
+                f'<div class="signal-detail">{status}</div>'
+                f'<div class="signal-weight">{weight:.1%}</div>'
+                "</div>"
+            )
         )
 
     st.markdown(
-        f"""
-        <div class="signal-panel">
-            {''.join(row_html)}
-        </div>
-        """,
+        f'<div class="signal-panel">{"".join(row_html)}</div>',
         unsafe_allow_html=True,
     )
 
