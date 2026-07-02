@@ -268,7 +268,7 @@ def equity_curve_y_domain(equity_series, reference_value=None):
         if reference_value is not None and pd.notna(reference_value)
     ]
     reference = max(reference_candidates) if reference_candidates else 0
-    padding = max(value_range * 0.15, reference * 0.002, 25)
+    padding = max(value_range * 0.10, reference * 0.0015, 15)
 
     y_min = min_value - padding
     y_max = max_value + padding
@@ -289,7 +289,7 @@ def numeric_y_domain(values, *, minimum_padding):
     min_value = float(values.min())
     max_value = float(values.max())
     value_range = max_value - min_value
-    padding = max(value_range * 0.15, minimum_padding)
+    padding = max(value_range * 0.10, minimum_padding)
 
     y_min = min_value - padding
     y_max = max_value + padding
@@ -301,11 +301,23 @@ def numeric_y_domain(values, *, minimum_padding):
 
 def render_equity_curve(chart_data, current_value):
     plot_data = chart_data.reset_index()[["date", "portfolio_value"]].copy()
+    plot_data["date"] = pd.to_datetime(plot_data["date"], errors="coerce")
     plot_data["portfolio_value"] = pd.to_numeric(
         plot_data["portfolio_value"],
         errors="coerce",
     )
     plot_data = plot_data.dropna(subset=["date", "portfolio_value"])
+    plot_data = plot_data.sort_values("date")
+    plot_data["trading_date"] = plot_data["date"].dt.date
+    plot_data = (
+        plot_data.groupby("trading_date", as_index=False)
+        .tail(1)
+        .reset_index(drop=True)
+    )
+    plot_data["challenge_day"] = range(1, len(plot_data) + 1)
+    plot_data["challenge_day_label"] = plot_data["challenge_day"].map(
+        lambda day: f"Day {day}"
+    )
 
     if plot_data.empty:
         st.info("No valid equity values available for the chart yet.")
@@ -342,6 +354,11 @@ def render_equity_curve(chart_data, current_value):
         y_field = "return_pct:Q"
         y_title = "Return from start (%)"
         y_format = ".2f"
+        zero_line = (
+            alt.Chart(pd.DataFrame({"zero": [0]}))
+            .mark_rule(color="rgba(148, 163, 184, 0.75)", strokeDash=[5, 5])
+            .encode(y="zero:Q")
+        )
         tooltip_value = alt.Tooltip(
             "return_pct:Q",
             title="Return from start",
@@ -359,6 +376,7 @@ def render_equity_curve(chart_data, current_value):
         y_field = "portfolio_value:Q"
         y_title = "Portfolio value (GBP, zoomed scale)"
         y_format = ",.2f"
+        zero_line = None
         tooltip_value = alt.Tooltip(
             "portfolio_value:Q",
             title="Portfolio value",
@@ -384,9 +402,14 @@ def render_equity_curve(chart_data, current_value):
 
     chart = (
         alt.Chart(chart_data_for_plot)
-        .mark_line(point=True)
+        .mark_line(point=True, strokeWidth=3)
         .encode(
-            x=alt.X("date:T", title="Date"),
+            x=alt.X(
+                "challenge_day:O",
+                title="Challenge day",
+                axis=alt.Axis(labelExpr="'Day ' + datum.value"),
+                sort=None,
+            ),
             y=alt.Y(
                 y_field,
                 title=y_title,
@@ -394,6 +417,10 @@ def render_equity_curve(chart_data, current_value):
                 axis=alt.Axis(format=y_format),
             ),
             tooltip=[
+                alt.Tooltip(
+                    "challenge_day_label:N",
+                    title="Challenge day",
+                ),
                 alt.Tooltip("date:T", title="Date", format="%Y-%m-%d"),
                 alt.Tooltip(
                     "portfolio_value:Q",
@@ -403,8 +430,10 @@ def render_equity_curve(chart_data, current_value):
                 tooltip_value,
             ],
         )
-        .properties(height=320)
+        .properties(height=420)
     )
+    if zero_line is not None:
+        chart = zero_line + chart
 
     st.altair_chart(chart, width="stretch")
     if caption:
@@ -834,11 +863,6 @@ if page == "Home":
         responsive_table(
             signals,
             hide_index=False,
-            mobile_columns=[
-                column
-                for column in ["ticker", "signal", "status", "weight"]
-                if column in signals.columns
-            ],
         )
 
     st.divider()
@@ -916,7 +940,6 @@ if page == "Home":
         responsive_table(
             display_signals,
             hide_index=True,
-            mobile_columns=["Ticker", "Signal", "Weight", "Status"],
         )
 
     st.divider()

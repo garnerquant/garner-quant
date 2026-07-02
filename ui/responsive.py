@@ -2,6 +2,17 @@ import streamlit as st
 
 
 MOBILE_BREAKPOINT_PX = 768
+DATAFRAME_KWARGS = {
+    "height",
+    "column_order",
+    "column_config",
+    "key",
+    "on_select",
+    "selection_mode",
+    "selection_default",
+    "row_height",
+    "placeholder",
+}
 
 
 def is_mobile():
@@ -193,7 +204,14 @@ def responsive_table(
 ):
     hide_index = kwargs.pop("hide_index", hide_index)
     use_container_width = kwargs.pop("use_container_width", use_container_width)
+    mobile_columns = kwargs.pop("mobile_columns", mobile_columns)
+    mobile_max_rows = kwargs.pop("mobile_max_rows", mobile_max_rows)
     width = kwargs.pop("width", "stretch" if use_container_width else "content")
+    dataframe_kwargs = {
+        key: value
+        for key, value in kwargs.items()
+        if key in DATAFRAME_KWARGS
+    }
 
     # Keep the optional mobile arguments for existing callers, but avoid custom
     # HTML wrappers around Streamlit components. The shared CSS handles overflow.
@@ -203,7 +221,7 @@ def responsive_table(
         data,
         hide_index=hide_index,
         width=width,
-        **kwargs,
+        **dataframe_kwargs,
     )
     return result
 
