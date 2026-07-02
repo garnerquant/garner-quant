@@ -63,10 +63,16 @@ try:
         build_leaderboard as build_registry_leaderboard,
         load_experiments as load_registry_experiments,
     )
+    from research.research_campaigns import (
+        build_campaign_leaderboard,
+        campaign_history,
+    )
 except Exception:
+    build_campaign_leaderboard = None
     build_grid_leaderboard = None
     build_sweep_leaderboard = None
     build_registry_leaderboard = None
+    campaign_history = None
     grid_history = None
     load_registry_experiments = None
     sweep_history = None
@@ -644,6 +650,65 @@ def render_registry_preview():
         st.write("Latest Grid Search Leaderboard")
         responsive_table(
             latest_grid_leaderboard[grid_columns].head(10),
+            hide_index=True,
+        )
+
+    if campaign_history is None or build_campaign_leaderboard is None:
+        return
+
+    campaigns = campaign_history()
+    if not campaigns:
+        return
+
+    st.write("Research Campaign History")
+    campaign_rows = []
+    for campaign in reversed(campaigns[-10:]):
+        campaign_rows.append(
+            {
+                "campaign_id": campaign.get("campaign_id"),
+                "campaign_name": campaign.get("campaign_name"),
+                "runs": campaign.get("runs"),
+                "completed": campaign.get("completed_runs"),
+                "failed": campaign.get("failed_runs"),
+                "best_sharpe": (campaign.get("best_sharpe") or {}).get(
+                    "variation_name"
+                ),
+                "best_cagr": (campaign.get("best_cagr") or {}).get(
+                    "variation_name"
+                ),
+                "best_drawdown": (campaign.get("best_drawdown") or {}).get(
+                    "variation_name"
+                ),
+            }
+        )
+    responsive_table(pd.DataFrame(campaign_rows), hide_index=True)
+
+    latest_campaign = campaigns[-1]
+    latest_campaign_leaderboard = build_campaign_leaderboard(
+        latest_campaign["campaign_id"],
+        sort_by="sharpe_ratio",
+    )
+    if (
+        latest_campaign_leaderboard is not None
+        and not latest_campaign_leaderboard.empty
+    ):
+        campaign_columns = [
+            column
+            for column in [
+                "variation_name",
+                "exit_method",
+                "status",
+                "sharpe_ratio",
+                "cagr",
+                "max_drawdown",
+                "profit_factor",
+                "trade_count",
+            ]
+            if column in latest_campaign_leaderboard.columns
+        ]
+        st.write("Latest Campaign Leaderboard")
+        responsive_table(
+            latest_campaign_leaderboard[campaign_columns].head(10),
             hide_index=True,
         )
 

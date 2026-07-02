@@ -125,6 +125,10 @@ def build_leaderboard(sort_by="sharpe_ratio", path=DEFAULT_EXPERIMENTS_FILE):
         metrics = experiment.get("metrics") or {}
         row = {
             "experiment_id": experiment.get("experiment_id"),
+            "campaign_id": experiment.get("campaign_id"),
+            "campaign_name": experiment.get("campaign_name"),
+            "variation_name": experiment.get("variation_name"),
+            "exit_method": experiment.get("exit_method"),
             "sweep_id": experiment.get("sweep_id"),
             "grid_id": experiment.get("grid_id"),
             "parameter_tested": experiment.get("parameter_tested"),
