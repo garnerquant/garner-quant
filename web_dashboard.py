@@ -205,23 +205,41 @@ def inject_mobile_css():
         }
 
         .portfolio-hero {
-            background:#0f172a;
-            border:1px solid rgba(148,163,184,0.24);
-            border-radius:10px;
-            padding:16px 18px;
-            margin:8px 0 14px 0;
+            background:#0b1220;
+            border:1px solid rgba(148,163,184,0.22);
+            border-radius:8px;
+            padding:14px;
+            margin:6px 0 10px 0;
         }
 
         .portfolio-hero-grid {
             display:grid;
-            grid-template-columns:minmax(220px,1.35fr) repeat(4,minmax(120px,1fr));
-            gap:12px;
+            grid-template-columns:minmax(260px,1.6fr) minmax(260px,1.2fr) minmax(240px,1fr);
+            gap:10px;
             align-items:stretch;
+        }
+
+        .portfolio-panel {
+            border:1px solid rgba(148,163,184,0.18);
+            border-radius:6px;
+            background:rgba(15,23,42,0.70);
+            padding:10px 12px;
+        }
+
+        .portfolio-kpi-grid {
+            display:grid;
+            grid-template-columns:repeat(2,minmax(0,1fr));
+            gap:8px;
+        }
+
+        .portfolio-kpi {
+            border-bottom:1px solid rgba(148,163,184,0.13);
+            padding:0 0 7px 0;
         }
 
         .portfolio-main-value {
             color:#f8fafc;
-            font-size:34px;
+            font-size:40px;
             font-weight:760;
             line-height:1.1;
             margin-top:4px;
@@ -229,10 +247,20 @@ def inject_mobile_css():
 
         .portfolio-small-value {
             color:#f8fafc;
-            font-size:18px;
+            font-size:17px;
             font-weight:680;
             line-height:1.25;
             overflow-wrap:anywhere;
+        }
+
+        .status-strip {
+            display:flex;
+            flex-wrap:wrap;
+            gap:8px;
+            align-items:center;
+            color:#94a3b8;
+            font-size:12px;
+            margin-bottom:8px;
         }
 
         .runtime-badge {
@@ -242,13 +270,16 @@ def inject_mobile_css():
             padding:3px 9px;
             color:#b7f7c8;
             font-size:12px;
-            margin-top:8px;
         }
 
         .research-note {
+            border:1px solid rgba(148,163,184,0.18);
+            border-radius:6px;
+            background:rgba(15,23,42,0.50);
             color:#cbd5e1;
-            font-size:14px;
-            margin:6px 0 12px 0;
+            font-size:13px;
+            padding:8px 10px;
+            margin:8px 0 10px 0;
         }
 
         @media (max-width: 768px) {
@@ -264,8 +295,12 @@ def inject_mobile_css():
                 grid-template-columns:1fr;
             }
 
+            .portfolio-kpi-grid {
+                grid-template-columns:1fr;
+            }
+
             .portfolio-main-value {
-                font-size:28px;
+                font-size:30px;
             }
         }
         </style>
@@ -486,51 +521,125 @@ def render_activity_item(title, detail):
     )
 
 
+def render_compact_equity_chart(tracker):
+    if tracker is None or tracker.empty or "portfolio_value" not in tracker.columns:
+        return
+
+    date_column = "date" if "date" in tracker.columns else None
+    if date_column is None:
+        return
+
+    chart = tracker[[date_column, "portfolio_value"]].copy()
+    chart[date_column] = pd.to_datetime(chart[date_column], errors="coerce")
+    chart["portfolio_value"] = pd.to_numeric(
+        chart["portfolio_value"],
+        errors="coerce",
+    )
+    chart = chart.dropna(subset=[date_column, "portfolio_value"])
+    if len(chart) < 2:
+        return
+
+    chart = chart.sort_values(date_column)
+    min_value = float(chart["portfolio_value"].min())
+    max_value = float(chart["portfolio_value"].max())
+    value_range = max_value - min_value
+    reference = max(abs(min_value), abs(max_value), 1)
+    padding = max(value_range * 0.15, reference * 0.0025, 10)
+    y_min = min_value - padding
+    y_max = max_value + padding
+
+    if y_max <= y_min:
+        y_max = y_min + max(padding * 2, 20)
+
+    st.caption(f"Zoomed scale: £{y_min:,.0f} to £{y_max:,.0f}")
+    chart_spec = (
+        alt.Chart(chart)
+        .mark_line(point=True, strokeWidth=2.5)
+        .encode(
+            x=alt.X(f"{date_column}:T", title=None),
+            y=alt.Y(
+                "portfolio_value:Q",
+                title="Portfolio value (GBP, zoomed scale)",
+                scale=alt.Scale(domain=[y_min, y_max], zero=False),
+                axis=alt.Axis(format=",.0f"),
+            ),
+            tooltip=[
+                alt.Tooltip(f"{date_column}:T", title="Date", format="%Y-%m-%d"),
+                alt.Tooltip(
+                    "portfolio_value:Q",
+                    title="Portfolio value",
+                    format=",.2f",
+                ),
+            ],
+        )
+        .properties(height=180)
+    )
+    st.altair_chart(chart_spec, width="stretch")
+
+
 def render_investment_brief(
     runtime_details,
     latest_trade,
     portfolio_value,
     total_return,
     cash,
+    buying_power,
     open_positions,
     win_rate,
+    tracker,
 ):
     state = runtime_details["state"]
+    freshness = runtime_details["freshness"]
     research = latest_research_details()
     runtime_label = (
         "Live"
         if state.get("running") and state.get("healthy")
         else state.get("health", "Check")
     )
-    return_direction = "up" if numeric_value(total_return) >= 0 else "down"
+    return_label = "UP" if numeric_value(total_return) >= 0 else "DOWN"
+    notification = latest_notification_details()
 
     st.markdown(
         f"""
         <div class="portfolio-hero">
-            <div class="brief-kicker">Portfolio Snapshot</div>
+            <div class="status-strip">
+                <span class="runtime-badge">{html.escape(str(runtime_label))}</span>
+                <span>Freshness {html.escape(str(freshness.get("label", "Unknown")))}</span>
+                <span>Last Scan {html.escape(runtime_details["last_scan"])}</span>
+                <span>Next {html.escape(str(runtime_details["next_scan"]))}</span>
+            </div>
             <div class="portfolio-hero-grid">
-                <div class="brief-item">
+                <div class="portfolio-panel">
                     <div class="brief-label">Portfolio Value</div>
                     <div class="portfolio-main-value">{html.escape(money_label(portfolio_value))}</div>
-                    <div class="runtime-badge">Runtime: {html.escape(str(runtime_label))}</div>
+                    <div class="activity-detail">{html.escape(return_label)} {html.escape(percent_label(total_return))}</div>
                 </div>
-                <div class="brief-item">
-                    <div class="brief-label">Total Return</div>
-                    <div class="portfolio-small-value">{html.escape(percent_label(total_return))}</div>
-                    <div class="activity-detail">Portfolio is {html.escape(return_direction)} from start.</div>
+                <div class="portfolio-panel">
+                    <div class="portfolio-kpi-grid">
+                        <div class="portfolio-kpi">
+                            <div class="brief-label">Cash</div>
+                            <div class="portfolio-small-value">{html.escape(money_label(cash))}</div>
+                        </div>
+                        <div class="portfolio-kpi">
+                            <div class="brief-label">Buying Power</div>
+                            <div class="portfolio-small-value">{html.escape(money_label(buying_power))}</div>
+                        </div>
+                        <div class="portfolio-kpi">
+                            <div class="brief-label">Open Positions</div>
+                            <div class="portfolio-small-value">{html.escape(str(open_positions))}</div>
+                        </div>
+                        <div class="portfolio-kpi">
+                            <div class="brief-label">Win Rate</div>
+                            <div class="portfolio-small-value">{html.escape(percent_label(win_rate))}</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="brief-item">
-                    <div class="brief-label">Cash</div>
-                    <div class="portfolio-small-value">{html.escape(money_label(cash))}</div>
-                </div>
-                <div class="brief-item">
-                    <div class="brief-label">Open Positions</div>
-                    <div class="portfolio-small-value">{html.escape(str(open_positions))}</div>
-                </div>
-                <div class="brief-item">
+                <div class="portfolio-panel">
                     <div class="brief-label">Latest Trade</div>
                     <div class="portfolio-small-value">{html.escape(latest_trade["label"])}</div>
                     <div class="activity-detail">{html.escape(latest_trade["detail"])}</div>
+                    <div class="brief-label" style="margin-top:8px;">Notification</div>
+                    <div class="activity-detail">{html.escape(notification["label"])} | {html.escape(notification["detail"])}</div>
                 </div>
             </div>
         </div>
@@ -538,26 +647,23 @@ def render_investment_brief(
         unsafe_allow_html=True,
     )
 
-    st.markdown("**Latest Activity**")
-    activity_cols = responsive_columns(3)
-    with activity_cols[0]:
-        render_activity_item("Latest trade", f"{latest_trade['label']} | {latest_trade['detail']}")
-    with activity_cols[1]:
+    chart_cols = responsive_columns([1.35, 1])
+    with chart_cols[0]:
+        st.caption("Portfolio Equity")
+        render_compact_equity_chart(tracker)
+    with chart_cols[1]:
+        st.caption("Latest Activity")
         runtime_event = runtime_details["latest_event"]
+        render_activity_item("Trade", f"{latest_trade['label']} | {latest_trade['detail']}")
         render_activity_item(
-            "Runtime",
-            f"{state.get('health', 'Unknown')} | Next scan {runtime_details['next_scan']}",
-        )
-    with activity_cols[2]:
-        render_activity_item(
-            "Most recent cycle",
+            "Cycle",
             runtime_event.get("message") or state.get("activity", "Runtime status unavailable."),
         )
 
     st.markdown(
         f"""
         <div class="research-note">
-            Latest research: {html.escape(research["label"])}
+            <strong>Research</strong> {html.escape(research["label"])} <span style="color:#94a3b8;">{html.escape(research["detail"])}</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -987,29 +1093,11 @@ render_investment_brief(
     portfolio_value,
     total_return,
     broker_row.get("cash", 0),
+    broker_row.get("buying_power", broker_row.get("cash", 0)),
     open_positions,
     win_rate_value,
+    paper_30,
 )
-
-with st.expander("Quick Actions", expanded=False):
-    action_cols = responsive_columns(2)
-    with action_cols[0]:
-        if st.button("Refresh now", type="primary"):
-            st.rerun()
-    with action_cols[1]:
-        live_mode = live_mode_controls(
-            interval_seconds=60,
-            key="main_dashboard_live_mode",
-            default_enabled=False,
-        )
-
-with st.expander("System Details", expanded=False):
-    if live_mode["enabled"]:
-        st.caption("Live mode: ON | Key cards update every 60s")
-    else:
-        st.caption("Auto-refresh paused to preserve scroll position")
-
-    render_live_panel(live_mode)
 
 page = "Home"
 
