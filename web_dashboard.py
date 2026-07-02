@@ -781,18 +781,9 @@ def render_investment_brief(
         )
     with activity_cols[2]:
         render_activity_item(
-            "Runtime",
-            f"{state.get('health', 'Unknown')} | Next scan shown in the top status strip",
+            "Research",
+            f"{research['label']} | {research['detail']}",
         )
-
-    st.markdown(
-        f"""
-        <div class="research-note">
-            <strong>Research</strong> {html.escape(research["label"])} <span style="color:#94a3b8;">{html.escape(research["detail"])}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def format_last_updated():
