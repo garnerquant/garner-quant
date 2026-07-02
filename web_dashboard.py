@@ -281,14 +281,25 @@ def equity_curve_y_domain(equity_series, reference_value=None):
     return y_min, y_max
 
 
+def numeric_y_domain(values, *, minimum_padding):
+    values = pd.to_numeric(values, errors="coerce").dropna()
+    if values.empty:
+        return None
+
+    min_value = float(values.min())
+    max_value = float(values.max())
+    value_range = max_value - min_value
+    padding = max(value_range * 0.15, minimum_padding)
+
+    y_min = min_value - padding
+    y_max = max_value + padding
+    if y_max <= y_min:
+        y_max = y_min + max(padding * 2, minimum_padding * 2)
+
+    return y_min, y_max
+
+
 def render_equity_curve(chart_data, current_value):
-    equity = pd.to_numeric(chart_data["portfolio_value"], errors="coerce")
-    y_domain = equity_curve_y_domain(equity, current_value)
-
-    if y_domain is None:
-        st.info("No valid equity values available for the chart yet.")
-        return
-
     plot_data = chart_data.reset_index()[["date", "portfolio_value"]].copy()
     plot_data["portfolio_value"] = pd.to_numeric(
         plot_data["portfolio_value"],
@@ -296,15 +307,91 @@ def render_equity_curve(chart_data, current_value):
     )
     plot_data = plot_data.dropna(subset=["date", "portfolio_value"])
 
+    if plot_data.empty:
+        st.info("No valid equity values available for the chart yet.")
+        return
+
+    first_value = plot_data["portfolio_value"].iloc[0]
+    can_show_return = pd.notna(first_value) and float(first_value) != 0
+
+    chart_options = ["Return from start (%)", "Zoomed GBP equity"]
+    if not can_show_return:
+        chart_options = ["Zoomed GBP equity"]
+
+    chart_mode = st.radio(
+        "Equity chart view",
+        chart_options,
+        horizontal=True,
+        key="thirty_day_equity_chart_view",
+    )
+
+    plot_data["return_pct"] = (
+        (
+            plot_data["portfolio_value"] / float(first_value) - 1
+        )
+        * 100
+        if can_show_return
+        else None
+    )
+
+    if chart_mode == "Return from start (%)" and can_show_return:
+        y_domain = numeric_y_domain(
+            plot_data["return_pct"],
+            minimum_padding=0.05,
+        )
+        y_field = "return_pct:Q"
+        y_title = "Return from start (%)"
+        y_format = ".2f"
+        tooltip_value = alt.Tooltip(
+            "return_pct:Q",
+            title="Return from start",
+            format=".2f",
+        )
+        caption = (
+            "Return view shows percentage change from the first day "
+            "of the challenge."
+        )
+    else:
+        y_domain = equity_curve_y_domain(
+            plot_data["portfolio_value"],
+            current_value,
+        )
+        y_field = "portfolio_value:Q"
+        y_title = "Portfolio value (GBP, zoomed scale)"
+        y_format = ",.2f"
+        tooltip_value = alt.Tooltip(
+            "portfolio_value:Q",
+            title="Portfolio value",
+            format=",.2f",
+        )
+        caption = (
+            "Zoomed y-axis: "
+            f"GBP {y_domain[0]:,.2f} to GBP {y_domain[1]:,.2f}."
+            if y_domain is not None
+            else ""
+        )
+
+    if y_domain is None:
+        st.info("No valid equity values available for the chart yet.")
+        return
+
+    active_value_column = (
+        "return_pct"
+        if chart_mode == "Return from start (%)"
+        else "portfolio_value"
+    )
+    chart_data_for_plot = plot_data.dropna(subset=[active_value_column])
+
     chart = (
-        alt.Chart(plot_data)
+        alt.Chart(chart_data_for_plot)
         .mark_line(point=True)
         .encode(
             x=alt.X("date:T", title="Date"),
             y=alt.Y(
-                "portfolio_value:Q",
-                title="Portfolio value (GBP, zoomed scale)",
+                y_field,
+                title=y_title,
                 scale=alt.Scale(domain=list(y_domain), zero=False),
+                axis=alt.Axis(format=y_format),
             ),
             tooltip=[
                 alt.Tooltip("date:T", title="Date", format="%Y-%m-%d"),
@@ -313,16 +400,15 @@ def render_equity_curve(chart_data, current_value):
                     title="Portfolio value",
                     format=",.2f",
                 ),
+                tooltip_value,
             ],
         )
         .properties(height=320)
     )
 
     st.altair_chart(chart, width="stretch")
-    st.caption(
-        "Zoomed y-axis: "
-        f"GBP {y_domain[0]:,.2f} to GBP {y_domain[1]:,.2f}."
-    )
+    if caption:
+        st.caption(caption)
 
 
 st.set_page_config(

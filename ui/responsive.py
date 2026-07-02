@@ -1,6 +1,3 @@
-import html
-
-import pandas as pd
 import streamlit as st
 
 
@@ -75,31 +72,6 @@ def apply_responsive_styles():
             margin-bottom: 1.25rem;
         }
 
-        .gq-table-mobile {
-            display: none;
-        }
-
-        .gq-mobile-table {
-            width: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
-            font-size: 0.9rem;
-        }
-
-        .gq-mobile-table th,
-        .gq-mobile-table td {
-            border-bottom: 1px solid rgba(128,128,128,0.22);
-            padding: 0.55rem 0.45rem;
-            text-align: left;
-            vertical-align: top;
-            overflow-wrap: anywhere;
-        }
-
-        .gq-mobile-table th {
-            color: rgba(250,250,250,0.76);
-            font-weight: 700;
-        }
-
         @media (max-width: 768px) {
             .block-container {
                 padding-top: 1rem;
@@ -157,18 +129,6 @@ def apply_responsive_styles():
                 padding: 0.9rem;
             }
 
-            .gq-table-mobile {
-                display: block;
-                width: 100%;
-                overflow-x: hidden;
-            }
-
-            div[data-testid="stElementContainer"]:has(.gq-hide-next-on-mobile)
-                + div[data-testid="stElementContainer"],
-            div.element-container:has(.gq-hide-next-on-mobile)
-                + div.element-container {
-                display: none;
-            }
         }
 
         @media (min-width: 769px) and (max-width: 1100px) {
@@ -222,44 +182,6 @@ def compact_label(label, max_length=18):
     return text[: max_length - 1].rstrip() + "..."
 
 
-def mobile_table_columns(data, columns):
-    if not isinstance(data, pd.DataFrame):
-        return data
-
-    available = [column for column in columns if column in data.columns]
-    if not available:
-        return data
-    return data[available]
-
-
-def _mobile_table_html(data, columns, max_rows):
-    display = mobile_table_columns(data, columns)
-    if not isinstance(display, pd.DataFrame):
-        return ""
-
-    if max_rows is not None:
-        display = display.head(max_rows)
-
-    header_cells = "".join(
-        f"<th>{html.escape(compact_label(column, 22))}</th>"
-        for column in display.columns
-    )
-    body_rows = []
-    for _, row in display.iterrows():
-        cells = "".join(
-            f"<td>{html.escape('' if pd.isna(value) else str(value))}</td>"
-            for value in row
-        )
-        body_rows.append(f"<tr>{cells}</tr>")
-
-    return (
-        '<table class="gq-mobile-table">'
-        f"<thead><tr>{header_cells}</tr></thead>"
-        f"<tbody>{''.join(body_rows)}</tbody>"
-        "</table>"
-    )
-
-
 def responsive_table(
     data,
     *,
@@ -273,22 +195,9 @@ def responsive_table(
     use_container_width = kwargs.pop("use_container_width", use_container_width)
     width = kwargs.pop("width", "stretch" if use_container_width else "content")
 
-    has_mobile_table = mobile_columns and isinstance(data, pd.DataFrame)
-    if has_mobile_table:
-        st.markdown(
-            (
-                '<div class="gq-table-mobile">'
-                f"{_mobile_table_html(data, mobile_columns, mobile_max_rows)}"
-                "</div>"
-            ),
-            unsafe_allow_html=True,
-        )
-
-    if has_mobile_table:
-        st.markdown(
-            '<span class="gq-hide-next-on-mobile"></span>',
-            unsafe_allow_html=True,
-        )
+    # Keep the optional mobile arguments for existing callers, but avoid custom
+    # HTML wrappers around Streamlit components. The shared CSS handles overflow.
+    _ = mobile_columns, mobile_max_rows
 
     result = st.dataframe(
         data,
