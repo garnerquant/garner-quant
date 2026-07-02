@@ -19,3 +19,6 @@ old_files/
 # Runtime-generated files
 data/runtime_decision_trace.json
 logs/
+
+# Research Lab generated experiment registry
+research/experiments/

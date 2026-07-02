@@ -52,6 +52,15 @@ try:
 except Exception:
     generate_experiment_verdict = None
 
+try:
+    from research.experiment_registry import (
+        build_leaderboard as build_registry_leaderboard,
+        load_experiments as load_registry_experiments,
+    )
+except Exception:
+    build_registry_leaderboard = None
+    load_registry_experiments = None
+
 
 FILES = [
     "portfolio_v2.csv",
@@ -464,6 +473,73 @@ def experiment_by_id(experiments, experiment_id):
             return experiment
 
     return None
+
+
+def render_registry_preview():
+    if load_registry_experiments is None or build_registry_leaderboard is None:
+        st.info("Automated experiment registry is not available in this environment.")
+        return
+
+    registry_experiments = load_registry_experiments()
+    leaderboard = build_registry_leaderboard(sort_by="sharpe_ratio")
+
+    st.subheader("Automated Experiment Registry")
+    st.caption(
+        "Append-only research records stored under research/experiments. "
+        "This view is read-only and does not run production trading."
+    )
+
+    registry_cols = responsive_columns(3)
+    registry_cols[0].metric("Recorded runs", len(registry_experiments))
+    registry_cols[1].metric(
+        "Leaderboard rows",
+        len(leaderboard) if leaderboard is not None else 0,
+    )
+    registry_cols[2].metric("Storage", "JSONL")
+
+    if not registry_experiments:
+        st.info(
+            "No automated experiment runs recorded yet. Run "
+            "scripts/validate_research_lab.py to create a dry-run record."
+        )
+        return
+
+    history_rows = []
+    for experiment in reversed(registry_experiments[-10:]):
+        metrics = experiment.get("metrics") or {}
+        history_rows.append(
+            {
+                "timestamp": experiment.get("timestamp", ""),
+                "name": experiment.get("name", ""),
+                "status": experiment.get("status", ""),
+                "sharpe_ratio": metrics.get("sharpe_ratio"),
+                "total_return": metrics.get("total_return"),
+                "notes": experiment.get("notes", ""),
+            }
+        )
+
+    st.write("Experiment History")
+    responsive_table(pd.DataFrame(history_rows), hide_index=True)
+
+    if leaderboard is not None and not leaderboard.empty:
+        display_columns = [
+            column
+            for column in [
+                "name",
+                "status",
+                "sharpe_ratio",
+                "total_return",
+                "max_drawdown",
+                "trade_count",
+                "timestamp",
+            ]
+            if column in leaderboard.columns
+        ]
+        st.write("Leaderboard")
+        responsive_table(
+            leaderboard[display_columns].head(10),
+            hide_index=True,
+        )
 
 
 def equity_records(equity_curve):
@@ -1154,6 +1230,8 @@ summary_cols[4].metric("Journal events", journal_events)
 summary_cols[5].metric("Open BUY/HOLD signals", open_signal_count)
 
 st.caption(f"Current signals count: {current_signals_count}")
+
+render_registry_preview()
 
 if research_mode == "Test One Idea":
     st.divider()
