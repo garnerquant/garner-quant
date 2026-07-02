@@ -573,10 +573,10 @@ def render_live_status_strip(runtime_label, freshness_label, last_scan, next_cyc
 
     countdown_html = f"""
         <div class="status-strip">
-            <span class="runtime-badge" id="runtime-badge"></span>
-            <span id="freshness-label"></span>
-            <span id="last-scan-label"></span>
-            <span>Next <span id="next-countdown"></span></span>
+            <span class="status-pill" id="runtime-badge"></span>
+            <span class="status-pill" id="freshness-badge"></span>
+            <span class="status-text" id="last-scan-label"></span>
+            <span class="status-text">Next <span id="next-countdown"></span></span>
         </div>
         <style>
             body {{
@@ -594,19 +594,68 @@ def render_live_status_strip(runtime_label, freshness_label, last_scan, next_cyc
                 line-height:1.4;
                 margin:0;
             }}
-            .runtime-badge {{
+            .status-pill {{
                 display:inline-block;
-                border:1px solid rgba(104,255,139,0.35);
                 border-radius:999px;
-                padding:3px 9px;
-                color:#b7f7c8;
+                padding:3px 10px;
                 font-size:12px;
+                font-weight:650;
+                letter-spacing:.02em;
+                border:1px solid rgba(148,163,184,0.28);
+            }}
+            .status-text {{
+                color:#94a3b8;
+                white-space:nowrap;
+            }}
+            .status-green {{
+                color:#b7f7c8;
+                background:rgba(34,197,94,0.10);
+                border-color:rgba(34,197,94,0.42);
+            }}
+            .status-blue {{
+                color:#bfdbfe;
+                background:rgba(59,130,246,0.10);
+                border-color:rgba(59,130,246,0.42);
+            }}
+            .status-amber {{
+                color:#fde68a;
+                background:rgba(245,158,11,0.10);
+                border-color:rgba(245,158,11,0.45);
+            }}
+            .status-red {{
+                color:#fecaca;
+                background:rgba(239,68,68,0.10);
+                border-color:rgba(239,68,68,0.45);
+            }}
+            .status-grey {{
+                color:#cbd5e1;
+                background:rgba(148,163,184,0.08);
+                border-color:rgba(148,163,184,0.28);
             }}
         </style>
         <script>
             const data = {json.dumps(payload)};
-            document.getElementById("runtime-badge").textContent = data.runtime;
-            document.getElementById("freshness-label").textContent = `Freshness ${{data.freshness}}`;
+
+            function addStatusClass(element, level) {{
+                element.classList.remove("status-green", "status-blue", "status-amber", "status-red", "status-grey");
+                element.classList.add(level);
+            }}
+
+            function freshnessClass(label) {{
+                const value = String(label || "").toLowerCase();
+                if (value.includes("live")) return "status-green";
+                if (value.includes("recent")) return "status-blue";
+                if (value.includes("slightly")) return "status-amber";
+                if (value.includes("stale")) return "status-red";
+                return "status-grey";
+            }}
+
+            const runtimeBadge = document.getElementById("runtime-badge");
+            const freshnessBadge = document.getElementById("freshness-badge");
+            runtimeBadge.textContent = `🟢 Runtime ${{String(data.runtime).toUpperCase()}}`;
+            freshnessBadge.textContent = `Data ${{String(data.freshness).toUpperCase()}}`;
+            addStatusClass(runtimeBadge, String(data.runtime).toLowerCase().includes("live") ? "status-green" : "status-grey");
+            addStatusClass(freshnessBadge, freshnessClass(data.freshness));
             document.getElementById("last-scan-label").textContent = `Last Scan ${{data.lastScan}}`;
 
             const target = data.nextTarget ? new Date(data.nextTarget).getTime() : null;
