@@ -1,4 +1,7 @@
+import html
+import json
 import os
+from pathlib import Path
 
 import altair as alt
 import pandas as pd
@@ -16,7 +19,7 @@ from ui.responsive import (
     responsive_columns,
     responsive_table,
 )
-from ui.runtime_status import load_runtime_status, runtime_freshness
+from ui.runtime_status import load_runtime_status, runtime_freshness, runtime_state
 
 try:
     from ui.auto_refresh import (
@@ -125,6 +128,91 @@ def inject_mobile_css():
             font-weight:700;
             line-height:1.2;
         }
+
+        .brief-card {
+            background:#0f172a;
+            border:1px solid rgba(148,163,184,0.28);
+            border-radius:10px;
+            padding:20px;
+            margin:10px 0 18px 0;
+            box-shadow:0 8px 24px rgba(0,0,0,.22);
+        }
+
+        .brief-kicker {
+            color:#94a3b8;
+            font-size:13px;
+            text-transform:uppercase;
+            letter-spacing:.08em;
+            margin-bottom:8px;
+        }
+
+        .brief-title {
+            color:#f8fafc;
+            font-size:28px;
+            font-weight:750;
+            line-height:1.15;
+            margin-bottom:8px;
+        }
+
+        .brief-copy {
+            color:#cbd5e1;
+            font-size:15px;
+            line-height:1.45;
+            margin-bottom:14px;
+        }
+
+        .brief-grid {
+            display:grid;
+            grid-template-columns:repeat(3,minmax(0,1fr));
+            gap:10px;
+        }
+
+        .brief-item {
+            border:1px solid rgba(148,163,184,0.20);
+            border-radius:8px;
+            padding:10px 12px;
+            background:rgba(15,23,42,0.72);
+        }
+
+        .brief-label {
+            color:#94a3b8;
+            font-size:12px;
+            margin-bottom:4px;
+        }
+
+        .brief-value {
+            color:#f8fafc;
+            font-size:15px;
+            font-weight:650;
+            overflow-wrap:anywhere;
+        }
+
+        .activity-row {
+            border-left:2px solid rgba(148,163,184,0.35);
+            padding:0 0 10px 12px;
+            margin-bottom:8px;
+        }
+
+        .activity-title {
+            color:#f8fafc;
+            font-weight:650;
+            margin-bottom:2px;
+        }
+
+        .activity-detail {
+            color:#cbd5e1;
+            font-size:14px;
+        }
+
+        @media (max-width: 768px) {
+            .brief-title {
+                font-size:23px;
+            }
+
+            .brief-grid {
+                grid-template-columns:1fr;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -159,6 +247,263 @@ def metric_card(label, value, green=False):
         """,
         unsafe_allow_html=True,
     )
+
+
+def load_json_file(path):
+    path = Path(path)
+    if not path.exists():
+        return {}
+
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def format_london_time(value, fallback="Unknown"):
+    if not value:
+        return fallback
+
+    try:
+        timestamp = pd.to_datetime(value, utc=True)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.tz_localize("UTC")
+        timestamp = timestamp.tz_convert("Europe/London")
+        today = pd.Timestamp.now(tz="Europe/London")
+
+        if timestamp.date() == today.date():
+            return timestamp.strftime("Today at %H:%M")
+
+        return timestamp.strftime("%d %b at %H:%M")
+    except Exception:
+        return fallback
+
+
+def money_label(value):
+    try:
+        return f"£{float(value):,.2f}"
+    except Exception:
+        return "Unavailable"
+
+
+def percent_label(value):
+    try:
+        return f"{float(value):.2%}"
+    except Exception:
+        return "Unavailable"
+
+
+def latest_trade_details(trades):
+    if trades is None or trades.empty:
+        return {
+            "label": "No trade recorded",
+            "detail": "Trade journal is empty.",
+            "time": "",
+            "action": "",
+            "ticker": "",
+        }
+
+    latest = trades.iloc[-1]
+    action = str(latest.get("action", "TRADE")).upper()
+    ticker = str(latest.get("ticker", "UNKNOWN")).upper()
+    date_value = latest.get("date", "")
+    time_value = latest.get("time", "")
+    timestamp_text = " ".join(
+        str(part)
+        for part in [date_value, time_value]
+        if part is not None and str(part).strip() and str(part) != "nan"
+    )
+    label = f"{action} {ticker}".strip()
+    detail = format_london_time(timestamp_text, "Time unavailable")
+
+    return {
+        "label": label,
+        "detail": detail,
+        "time": detail,
+        "action": action,
+        "ticker": ticker,
+    }
+
+
+def latest_notification_details():
+    state = load_json_file("data/notification_state.json")
+    sent_log = state.get("sent_log") or []
+
+    if not sent_log:
+        return {
+            "label": "No notification recorded",
+            "detail": "Notification log is empty.",
+        }
+
+    latest = sent_log[-1]
+    event_type = str(latest.get("type", "notification")).replace("_", " ").title()
+    ticker = latest.get("ticker")
+    detail = format_london_time(latest.get("timestamp"), "Time unavailable")
+    if ticker:
+        detail = f"{ticker} | {detail}"
+
+    return {
+        "label": event_type,
+        "detail": detail,
+    }
+
+
+def latest_research_details():
+    reports = sorted(
+        Path("research/report_exports/campaign_reports").glob("campaign_001*.md"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+    if not reports:
+        return {
+            "label": "No research report found",
+            "detail": "Campaign reports are not available yet.",
+        }
+
+    report = reports[0]
+    detail = format_london_time(
+        pd.Timestamp.fromtimestamp(report.stat().st_mtime),
+        "Time unavailable",
+    )
+    return {
+        "label": "Campaign 001 recommends keeping the current exit strategy",
+        "detail": detail,
+    }
+
+
+def runtime_brief_details(status):
+    state = runtime_state(status)
+    freshness = runtime_freshness(status)
+    latest_event = status.get("latest_runtime_event") or {}
+    last_scan = (
+        latest_event.get("timestamp")
+        or status.get("last_cycle_at")
+        or status.get("updated_at")
+    )
+
+    return {
+        "state": state,
+        "freshness": freshness,
+        "last_scan": format_london_time(last_scan, "No completed scan found"),
+        "latest_event": latest_event,
+        "next_scan": state.get("next_scan_display", "Not scheduled"),
+    }
+
+
+def home_recommendation(runtime_details, latest_trade):
+    state = runtime_details["state"]
+    freshness = runtime_details["freshness"]
+
+    if not state.get("running") or not state.get("healthy"):
+        return "Check runtime before the next scan."
+
+    if freshness.get("level") in {"stale", "very-stale", "missing"}:
+        return "Check runtime freshness before relying on the latest figures."
+
+    if latest_trade.get("action") in {"BUY", "SELL"}:
+        return "No action required before next scheduled scan."
+
+    return "No action required."
+
+
+def render_activity_item(title, detail):
+    st.markdown(
+        f"""
+        <div class="activity-row">
+            <div class="activity-title">{html.escape(str(title))}</div>
+            <div class="activity-detail">{html.escape(str(detail))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_investment_brief(
+    runtime_details,
+    latest_trade,
+    portfolio_value,
+    total_return,
+    open_positions,
+    win_rate,
+):
+    state = runtime_details["state"]
+    freshness = runtime_details["freshness"]
+    system_copy = (
+        "Garner Quant is operating normally"
+        if state.get("healthy") and freshness.get("level") not in {"stale", "very-stale", "missing"}
+        else "Garner Quant needs a quick check"
+    )
+    research = latest_research_details()
+    recommendation = home_recommendation(runtime_details, latest_trade)
+    portfolio_status = (
+        f"{money_label(portfolio_value)} across {open_positions} open positions"
+    )
+
+    st.markdown(
+        f"""
+        <div class="brief-card">
+            <div class="brief-kicker">Garner Quant Brief</div>
+            <div class="brief-title">{html.escape(system_copy)}</div>
+            <div class="brief-copy">
+                Last scan completed at {html.escape(runtime_details["last_scan"])}.
+                Latest action: {html.escape(latest_trade["label"])}.
+                {html.escape(recommendation)}
+            </div>
+            <div class="brief-grid">
+                <div class="brief-item">
+                    <div class="brief-label">Runtime</div>
+                    <div class="brief-value">{html.escape(str(state.get("health", "Unknown")))}</div>
+                </div>
+                <div class="brief-item">
+                    <div class="brief-label">Portfolio Status</div>
+                    <div class="brief-value">{html.escape(portfolio_status)}</div>
+                </div>
+                <div class="brief-item">
+                    <div class="brief-label">Next Scan</div>
+                    <div class="brief-value">{html.escape(str(runtime_details["next_scan"]))}</div>
+                </div>
+                <div class="brief-item">
+                    <div class="brief-label">Freshness</div>
+                    <div class="brief-value">{html.escape(str(freshness.get("label", "Unknown")))}</div>
+                </div>
+                <div class="brief-item">
+                    <div class="brief-label">Latest Research</div>
+                    <div class="brief-value">{html.escape(research["label"])}</div>
+                </div>
+                <div class="brief-item">
+                    <div class="brief-label">Next Step</div>
+                    <div class="brief-value">{html.escape(recommendation)}</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    metric_cols = responsive_columns(6)
+    metric_cols[0].metric("Portfolio Value", money_label(portfolio_value))
+    metric_cols[1].metric("Total Return", percent_label(total_return))
+    metric_cols[2].metric("Open Positions", open_positions)
+    metric_cols[3].metric("Win Rate", percent_label(win_rate))
+    metric_cols[4].metric("Runtime", state.get("health", "Unknown"))
+    metric_cols[5].metric("Freshness", freshness.get("label", "Unknown"))
+
+    st.markdown("**Latest Activity**")
+    activity_cols = responsive_columns(4)
+    with activity_cols[0]:
+        render_activity_item("Latest trade", f"{latest_trade['label']} | {latest_trade['detail']}")
+    with activity_cols[1]:
+        runtime_event = runtime_details["latest_event"]
+        render_activity_item(
+            "Latest runtime cycle",
+            runtime_event.get("message") or state.get("activity", "Runtime status unavailable."),
+        )
+    with activity_cols[2]:
+        notification = latest_notification_details()
+        render_activity_item("Latest notification", f"{notification['label']} | {notification['detail']}")
+    with activity_cols[3]:
+        render_activity_item("Latest research report", f"{research['label']} | {research['detail']}")
 
 
 def format_last_updated():
@@ -212,6 +557,23 @@ def holdings_count_label():
 
     tickers = current_holdings[ticker_column].astype(str).str.upper()
     return str(int((tickers != "CASH").sum()))
+
+
+def open_positions_count(holdings_frame):
+    if holdings_frame is None or holdings_frame.empty:
+        return 0
+
+    ticker_column = None
+    for column in holdings_frame.columns:
+        if column.lower() == "ticker":
+            ticker_column = column
+            break
+
+    if ticker_column is None:
+        return int(len(holdings_frame))
+
+    tickers = holdings_frame[ticker_column].astype(str).str.upper()
+    return int((tickers != "CASH").sum())
 
 
 def runtime_status_label():
@@ -533,19 +895,60 @@ current_unrealised_pnl = unrealised_pnl_from_holdings(
     fallback=broker_row.get("unrealised_pnl", 0),
 )
 
-st.title("📈 Garner Quant")
-st.caption("Personal investment research and paper trading dashboard.")
-if st.button("Refresh now", type="primary"):
-    st.rerun()
-live_mode = live_mode_controls(
-    interval_seconds=60,
-    key="main_dashboard_live_mode",
-    default_enabled=False,
+if paper_30.empty:
+    start_balance = 0
+    current_balance = broker_row.get("portfolio_value", 0)
+    total_return = 0
+else:
+    paper_row = paper_30.iloc[-1]
+    start_balance = challenge_initial_capital(paper_30)
+    current_balance = paper_row["portfolio_value"]
+    total_return = (
+        (current_balance / start_balance) - 1
+        if start_balance > 0
+        else 0
+    )
+
+win_rate_value = (
+    analytics.iloc[0].get("win_rate", 0)
+    if analytics is not None and not analytics.empty
+    else 0
 )
+runtime_status = load_runtime_status()
+runtime_details = runtime_brief_details(runtime_status)
+latest_trade = latest_trade_details(trades)
+open_positions = open_positions_count(holdings)
+portfolio_value = broker_row.get("portfolio_value", current_balance)
+
+st.title("Garner Quant")
+st.caption("Personal investment research and paper trading dashboard.")
+
+render_investment_brief(
+    runtime_details,
+    latest_trade,
+    portfolio_value,
+    total_return,
+    open_positions,
+    win_rate_value,
+)
+
+with st.expander("Quick Actions", expanded=False):
+    action_cols = responsive_columns(2)
+    with action_cols[0]:
+        if st.button("Refresh now", type="primary"):
+            st.rerun()
+    with action_cols[1]:
+        live_mode = live_mode_controls(
+            interval_seconds=60,
+            key="main_dashboard_live_mode",
+            default_enabled=False,
+        )
+
 if live_mode["enabled"]:
     st.caption("Live mode: ON | Key cards update every 60s")
 else:
     st.caption("Auto-refresh paused to preserve scroll position")
+
 render_live_panel(live_mode)
 
 page = "Home"
