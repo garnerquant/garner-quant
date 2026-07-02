@@ -204,6 +204,53 @@ def inject_mobile_css():
             font-size:14px;
         }
 
+        .portfolio-hero {
+            background:#0f172a;
+            border:1px solid rgba(148,163,184,0.24);
+            border-radius:10px;
+            padding:16px 18px;
+            margin:8px 0 14px 0;
+        }
+
+        .portfolio-hero-grid {
+            display:grid;
+            grid-template-columns:minmax(220px,1.35fr) repeat(4,minmax(120px,1fr));
+            gap:12px;
+            align-items:stretch;
+        }
+
+        .portfolio-main-value {
+            color:#f8fafc;
+            font-size:34px;
+            font-weight:760;
+            line-height:1.1;
+            margin-top:4px;
+        }
+
+        .portfolio-small-value {
+            color:#f8fafc;
+            font-size:18px;
+            font-weight:680;
+            line-height:1.25;
+            overflow-wrap:anywhere;
+        }
+
+        .runtime-badge {
+            display:inline-block;
+            border:1px solid rgba(104,255,139,0.35);
+            border-radius:999px;
+            padding:3px 9px;
+            color:#b7f7c8;
+            font-size:12px;
+            margin-top:8px;
+        }
+
+        .research-note {
+            color:#cbd5e1;
+            font-size:14px;
+            margin:6px 0 12px 0;
+        }
+
         @media (max-width: 768px) {
             .brief-title {
                 font-size:23px;
@@ -211,6 +258,14 @@ def inject_mobile_css():
 
             .brief-grid {
                 grid-template-columns:1fr;
+            }
+
+            .portfolio-hero-grid {
+                grid-template-columns:1fr;
+            }
+
+            .portfolio-main-value {
+                font-size:28px;
             }
         }
         </style>
@@ -291,6 +346,18 @@ def percent_label(value):
         return f"{float(value):.2%}"
     except Exception:
         return "Unavailable"
+
+
+def numeric_value(value, fallback=0.0):
+    try:
+        value = float(value)
+    except Exception:
+        return fallback
+
+    if pd.isna(value):
+        return fallback
+
+    return value
 
 
 def latest_trade_details(trades):
@@ -424,56 +491,46 @@ def render_investment_brief(
     latest_trade,
     portfolio_value,
     total_return,
+    cash,
     open_positions,
     win_rate,
 ):
     state = runtime_details["state"]
-    freshness = runtime_details["freshness"]
-    system_copy = (
-        "Garner Quant is operating normally"
-        if state.get("healthy") and freshness.get("level") not in {"stale", "very-stale", "missing"}
-        else "Garner Quant needs a quick check"
-    )
     research = latest_research_details()
-    recommendation = home_recommendation(runtime_details, latest_trade)
-    portfolio_status = (
-        f"{money_label(portfolio_value)} across {open_positions} open positions"
+    runtime_label = (
+        "Live"
+        if state.get("running") and state.get("healthy")
+        else state.get("health", "Check")
     )
+    return_direction = "up" if numeric_value(total_return) >= 0 else "down"
 
     st.markdown(
         f"""
-        <div class="brief-card">
-            <div class="brief-kicker">Garner Quant Brief</div>
-            <div class="brief-title">{html.escape(system_copy)}</div>
-            <div class="brief-copy">
-                Last scan completed at {html.escape(runtime_details["last_scan"])}.
-                Latest action: {html.escape(latest_trade["label"])}.
-                {html.escape(recommendation)}
-            </div>
-            <div class="brief-grid">
+        <div class="portfolio-hero">
+            <div class="brief-kicker">Portfolio Snapshot</div>
+            <div class="portfolio-hero-grid">
                 <div class="brief-item">
-                    <div class="brief-label">Runtime</div>
-                    <div class="brief-value">{html.escape(str(state.get("health", "Unknown")))}</div>
+                    <div class="brief-label">Portfolio Value</div>
+                    <div class="portfolio-main-value">{html.escape(money_label(portfolio_value))}</div>
+                    <div class="runtime-badge">Runtime: {html.escape(str(runtime_label))}</div>
                 </div>
                 <div class="brief-item">
-                    <div class="brief-label">Portfolio Status</div>
-                    <div class="brief-value">{html.escape(portfolio_status)}</div>
+                    <div class="brief-label">Total Return</div>
+                    <div class="portfolio-small-value">{html.escape(percent_label(total_return))}</div>
+                    <div class="activity-detail">Portfolio is {html.escape(return_direction)} from start.</div>
                 </div>
                 <div class="brief-item">
-                    <div class="brief-label">Next Scan</div>
-                    <div class="brief-value">{html.escape(str(runtime_details["next_scan"]))}</div>
+                    <div class="brief-label">Cash</div>
+                    <div class="portfolio-small-value">{html.escape(money_label(cash))}</div>
                 </div>
                 <div class="brief-item">
-                    <div class="brief-label">Freshness</div>
-                    <div class="brief-value">{html.escape(str(freshness.get("label", "Unknown")))}</div>
+                    <div class="brief-label">Open Positions</div>
+                    <div class="portfolio-small-value">{html.escape(str(open_positions))}</div>
                 </div>
                 <div class="brief-item">
-                    <div class="brief-label">Latest Research</div>
-                    <div class="brief-value">{html.escape(research["label"])}</div>
-                </div>
-                <div class="brief-item">
-                    <div class="brief-label">Next Step</div>
-                    <div class="brief-value">{html.escape(recommendation)}</div>
+                    <div class="brief-label">Latest Trade</div>
+                    <div class="portfolio-small-value">{html.escape(latest_trade["label"])}</div>
+                    <div class="activity-detail">{html.escape(latest_trade["detail"])}</div>
                 </div>
             </div>
         </div>
@@ -481,29 +538,30 @@ def render_investment_brief(
         unsafe_allow_html=True,
     )
 
-    metric_cols = responsive_columns(6)
-    metric_cols[0].metric("Portfolio Value", money_label(portfolio_value))
-    metric_cols[1].metric("Total Return", percent_label(total_return))
-    metric_cols[2].metric("Open Positions", open_positions)
-    metric_cols[3].metric("Win Rate", percent_label(win_rate))
-    metric_cols[4].metric("Runtime", state.get("health", "Unknown"))
-    metric_cols[5].metric("Freshness", freshness.get("label", "Unknown"))
-
     st.markdown("**Latest Activity**")
-    activity_cols = responsive_columns(4)
+    activity_cols = responsive_columns(3)
     with activity_cols[0]:
         render_activity_item("Latest trade", f"{latest_trade['label']} | {latest_trade['detail']}")
     with activity_cols[1]:
         runtime_event = runtime_details["latest_event"]
         render_activity_item(
-            "Latest runtime cycle",
-            runtime_event.get("message") or state.get("activity", "Runtime status unavailable."),
+            "Runtime",
+            f"{state.get('health', 'Unknown')} | Next scan {runtime_details['next_scan']}",
         )
     with activity_cols[2]:
-        notification = latest_notification_details()
-        render_activity_item("Latest notification", f"{notification['label']} | {notification['detail']}")
-    with activity_cols[3]:
-        render_activity_item("Latest research report", f"{research['label']} | {research['detail']}")
+        render_activity_item(
+            "Most recent cycle",
+            runtime_event.get("message") or state.get("activity", "Runtime status unavailable."),
+        )
+
+    st.markdown(
+        f"""
+        <div class="research-note">
+            Latest research: {html.escape(research["label"])}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def format_last_updated():
@@ -928,6 +986,7 @@ render_investment_brief(
     latest_trade,
     portfolio_value,
     total_return,
+    broker_row.get("cash", 0),
     open_positions,
     win_rate_value,
 )
@@ -944,12 +1003,13 @@ with st.expander("Quick Actions", expanded=False):
             default_enabled=False,
         )
 
-if live_mode["enabled"]:
-    st.caption("Live mode: ON | Key cards update every 60s")
-else:
-    st.caption("Auto-refresh paused to preserve scroll position")
+with st.expander("System Details", expanded=False):
+    if live_mode["enabled"]:
+        st.caption("Live mode: ON | Key cards update every 60s")
+    else:
+        st.caption("Auto-refresh paused to preserve scroll position")
 
-render_live_panel(live_mode)
+    render_live_panel(live_mode)
 
 page = "Home"
 
