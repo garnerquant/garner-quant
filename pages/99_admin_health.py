@@ -157,6 +157,50 @@ def freshness_badge(value):
     return freshness["badge"], freshness["level"]
 
 
+def runtime_is_current(runtime_status):
+    freshness = runtime_freshness(runtime_status or {})
+    return freshness["level"] in {"live", "recent", "slightly-stale"}
+
+
+def runtime_reference_time(runtime_status):
+    runtime_status = runtime_status or {}
+    latest_event = runtime_status.get("latest_runtime_event") or {}
+    for value in [
+        latest_event.get("timestamp"),
+        runtime_status.get("last_cycle_at"),
+        runtime_status.get("updated_at"),
+    ]:
+        if value:
+            return value
+    return ""
+
+
+def freshness_item(label, filename, modified_at, badge, level, age, display=None):
+    return {
+        "label": label,
+        "filename": filename,
+        "modified_at": modified_at,
+        "age": age,
+        "badge": badge,
+        "level": level,
+        "display": display,
+    }
+
+
+def runtime_current_item(label, filename, runtime_status, badge, display):
+    reference_time = runtime_reference_time(runtime_status)
+    freshness = freshness_for_timestamp(reference_time)
+    return freshness_item(
+        label,
+        filename,
+        freshness["timestamp"],
+        badge,
+        freshness["level"] if freshness["level"] != "missing" else "recent",
+        freshness["age"],
+        display,
+    )
+
+
 def parse_timestamp(value):
     if value is None or value == "":
         return None
@@ -1399,37 +1443,204 @@ def render_performance_strip(items):
 
 
 def data_freshness_items(runtime_status=None):
-    files = [
-        ("Runtime Status", "data/live_runtime_status.json"),
-        ("Execution Log", "data/live_runtime_execution_log.json"),
-        ("Trade Journal", "trade_journal_v3.csv"),
-        ("Portfolio", "paper_portfolio_v3.csv"),
-        ("Decision Trace", "data/runtime_decision_trace.json"),
-        ("Telegram Notifications", "data/notification_state.json"),
-        ("Market Intelligence", "data/market_intelligence.json"),
-    ]
-    items = []
-    for label, filename in files:
-        if label == "Runtime Status":
-            freshness = runtime_freshness(runtime_status or {})
-            modified_at = freshness["timestamp"]
-            badge = freshness["badge"]
-            level = freshness["level"]
-            age = freshness["age"]
-        else:
-            modified_at = file_mtime(filename)
-            badge, level = freshness_badge(modified_at)
-            age = format_age(modified_at)
-        items.append(
-            {
-                "label": label,
-                "filename": filename,
-                "modified_at": modified_at,
-                "age": age,
-                "badge": badge,
-                "level": level,
-            }
+    runtime_status = runtime_status or {}
+    runtime_current = runtime_is_current(runtime_status)
+    runtime_fresh = runtime_freshness(runtime_status)
+    execution_summary = runtime_status.get("execution_summary") or {}
+    valuation_refresh = runtime_status.get("valuation_refresh") or {}
+    market_intelligence = runtime_status.get("market_intelligence") or {}
+    markets_open = runtime_status.get("markets_open") or []
+    blocked_reason = runtime_status.get("paper_execution_blocked_reason")
+    notifications_sent = int(runtime_status.get("notifications_sent", 0) or 0)
+    trace_count = int(execution_summary.get("decision_trace_count", 0) or 0)
+
+    items = [
+        freshness_item(
+            "Runtime Status",
+            "data/live_runtime_status.json",
+            runtime_fresh["timestamp"],
+            runtime_fresh["badge"],
+            runtime_fresh["level"],
+            runtime_fresh["age"],
         )
+    ]
+
+    execution_log_mtime = file_mtime("data/live_runtime_execution_log.json")
+    if runtime_current and (
+        not markets_open
+        or blocked_reason
+        or not runtime_status.get("last_execution_at")
+    ):
+        reason = blocked_reason or "market closed"
+        items.append(
+            runtime_current_item(
+                "Execution Log",
+                "data/live_runtime_execution_log.json",
+                runtime_status,
+                "No execution due",
+                f"Runtime current; paper execution not expected ({reason}).",
+            )
+        )
+    else:
+        badge, level = freshness_badge(execution_log_mtime)
+        items.append(
+            freshness_item(
+                "Execution Log",
+                "data/live_runtime_execution_log.json",
+                execution_log_mtime,
+                badge,
+                level,
+                format_age(execution_log_mtime),
+            )
+        )
+
+    trade_journal_mtime = file_mtime("trade_journal_v3.csv")
+    if runtime_current and not markets_open:
+        items.append(
+            runtime_current_item(
+                "Trade Journal",
+                "trade_journal_v3.csv",
+                runtime_status,
+                "Event-based",
+                "No paper execution expected while markets are closed.",
+            )
+        )
+    else:
+        badge, level = freshness_badge(trade_journal_mtime)
+        items.append(
+            freshness_item(
+                "Trade Journal",
+                "trade_journal_v3.csv",
+                trade_journal_mtime,
+                badge,
+                level,
+                format_age(trade_journal_mtime),
+            )
+        )
+
+    portfolio_mtime = file_mtime("paper_portfolio_v3.csv")
+    missing_tickers = valuation_refresh.get("missing_tickers") or []
+    if valuation_refresh.get("reason") == "missing prices for open holdings":
+        items.append(
+            freshness_item(
+                "Portfolio",
+                "paper_portfolio_v3.csv",
+                portfolio_mtime,
+                "Missing prices",
+                "stale",
+                format_age(portfolio_mtime),
+                f"Missing latest prices for: {', '.join(map(str, missing_tickers))}",
+            )
+        )
+    elif runtime_current and valuation_refresh:
+        items.append(
+            runtime_current_item(
+                "Portfolio",
+                "paper_portfolio_v3.csv",
+                runtime_status,
+                "Valuation checked",
+                "Runtime checked valuation; file writes only when values change.",
+            )
+        )
+    else:
+        badge, level = freshness_badge(portfolio_mtime)
+        items.append(
+            freshness_item(
+                "Portfolio",
+                "paper_portfolio_v3.csv",
+                portfolio_mtime,
+                badge,
+                level,
+                format_age(portfolio_mtime),
+            )
+        )
+
+    decision_trace_mtime = file_mtime("data/runtime_decision_trace.json")
+    if decision_trace_mtime == "" and runtime_current and trace_count == 0:
+        items.append(
+            runtime_current_item(
+                "Decision Trace",
+                "data/runtime_decision_trace.json",
+                runtime_status,
+                "Not created yet",
+                "Created only after a paper execution decision pass.",
+            )
+        )
+    elif decision_trace_mtime == "" and runtime_current and trace_count > 0:
+        items.append(
+            runtime_current_item(
+                "Decision Trace",
+                "data/runtime_decision_trace.json",
+                runtime_status,
+                "Remote trace reported",
+                "Runtime reports decisions, but no local trace file is available.",
+            )
+        )
+    else:
+        badge, level = freshness_badge(decision_trace_mtime)
+        items.append(
+            freshness_item(
+                "Decision Trace",
+                "data/runtime_decision_trace.json",
+                decision_trace_mtime,
+                badge,
+                level,
+                format_age(decision_trace_mtime),
+            )
+        )
+
+    notification_mtime = file_mtime("data/notification_state.json")
+    if runtime_current and notifications_sent == 0:
+        items.append(
+            runtime_current_item(
+                "Telegram Notifications",
+                "data/notification_state.json",
+                runtime_status,
+                "No notifications due",
+                "Notification state changes only when alerts or trade messages are sent.",
+            )
+        )
+    else:
+        badge, level = freshness_badge(notification_mtime)
+        items.append(
+            freshness_item(
+                "Telegram Notifications",
+                "data/notification_state.json",
+                notification_mtime,
+                badge,
+                level,
+                format_age(notification_mtime),
+            )
+        )
+
+    intelligence_time = market_intelligence.get("generated_at") or file_mtime(
+        "data/market_intelligence.json"
+    )
+    if market_intelligence.get("generated_at"):
+        freshness = freshness_for_timestamp(intelligence_time)
+        items.append(
+            freshness_item(
+                "Market Intelligence",
+                "data/market_intelligence.json",
+                freshness["timestamp"],
+                freshness["badge"],
+                freshness["level"],
+                freshness["age"],
+            )
+        )
+    else:
+        badge, level = freshness_badge(intelligence_time)
+        items.append(
+            freshness_item(
+                "Market Intelligence",
+                "data/market_intelligence.json",
+                intelligence_time,
+                badge,
+                level,
+                format_age(intelligence_time),
+            )
+        )
+
     return items
 
 
@@ -1450,7 +1661,7 @@ def render_data_freshness_card(items):
         age_text = (
             "Not found"
             if item["level"] == "missing"
-            else f"Updated {item['age']}"
+            else item.get("display") or f"Updated {item['age']}"
         )
         cards.append(
             f'<div class="gq-freshness {html.escape(item["level"])}">'
