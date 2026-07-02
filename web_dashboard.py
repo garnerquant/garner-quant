@@ -1,4 +1,4 @@
-﻿import html
+import html
 import json
 import os
 from pathlib import Path
@@ -314,7 +314,7 @@ def status_card(last_updated):
         f"""
         <div class="status-card">
             <div style="font-size:17px;font-weight:700;color:white;">
-                ðŸŸ¢ Live Data Connected
+                🟢 Live Data Connected
             </div>
             <div style="margin-top:6px;font-size:15px;color:#b7f7c8;">
                 Updated: {last_updated}
@@ -371,7 +371,7 @@ def format_london_time(value, fallback="Unknown"):
 
 def money_label(value):
     try:
-        return f"Â£{float(value):,.2f}"
+        return f"£{float(value):,.2f}"
     except Exception:
         return "Unavailable"
 
@@ -629,9 +629,9 @@ def format_last_updated():
         today = pd.Timestamp.now(tz="Europe/London")
 
         if dt.date() == today.date():
-            return dt.strftime("Today â€¢ %H:%M BST")
+            return dt.strftime("Today • %H:%M BST")
 
-        return dt.strftime("%d %b %Y â€¢ %H:%M BST")
+        return dt.strftime("%d %b %Y • %H:%M BST")
 
     except Exception:
         return "Unknown"
@@ -928,7 +928,7 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
 
 st.set_page_config(
     page_title="Garner Quant",
-    page_icon="ðŸ“Š",
+    page_icon="📊",
     layout="wide",
 )
 
@@ -1048,7 +1048,7 @@ page = "Home"
 
 
 if page == "Home":
-    st.subheader("ðŸš€ 30 Day Paper Trading Challenge")
+    st.subheader("🚀 30 Day Paper Trading Challenge")
 
     if paper_30.empty:
         st.info("30 day tracker has not started yet.")
@@ -1083,20 +1083,20 @@ if page == "Home":
             metric_card("Return", f"{total_return:.2%}", True)
             metric_card(
                 "Realised PnL",
-                f"Â£{paper_row['realised_pnl']:,.2f}",
+                f"£{paper_row['realised_pnl']:,.2f}",
                 True,
             )
 
         with col2:
-            metric_card("Starting Balance", f"Â£{start_balance:,.2f}")
-            metric_card("Current Balance", f"Â£{current_balance:,.2f}")
+            metric_card("Starting Balance", f"£{start_balance:,.2f}")
+            metric_card("Current Balance", f"£{current_balance:,.2f}")
             metric_card(
                 "Unrealised PnL",
-                f"Â£{current_unrealised_pnl:,.2f}",
+                f"£{current_unrealised_pnl:,.2f}",
                 True,
             )
 
-        st.subheader("ðŸ“ˆ 30 Day Equity Curve")
+        st.subheader("📈 30 Day Equity Curve")
 
         chart_data = paper_30.copy()
         chart_data["date"] = pd.to_datetime(chart_data["date"])
@@ -1107,7 +1107,7 @@ if page == "Home":
 
     st.divider()
 
-    st.subheader("ðŸ“Š Strategy Analytics")
+    st.subheader("📊 Strategy Analytics")
 
     cash_value = broker_row["cash"]
     portfolio_value = broker_row["portfolio_value"]
@@ -1123,11 +1123,11 @@ if page == "Home":
         metric_card("Cash %", f"{cash_percent:.2%}", True)
         metric_card(
             "Unrealised PnL",
-            f"Â£{current_unrealised_pnl:,.2f}",
+            f"£{current_unrealised_pnl:,.2f}",
             True,
         )
 
-    st.subheader("ðŸ“Š Benchmark")
+    st.subheader("📊 Benchmark")
 
     if not paper_30.empty:
         latest_tracker_row = paper_30.sort_values("date").iloc[-1]
@@ -1161,18 +1161,18 @@ if page == "Home":
     with col1:
         metric_card(
             "Portfolio Value",
-            f"Â£{broker_row['portfolio_value']:,.2f}",
+            f"£{broker_row['portfolio_value']:,.2f}",
         )
         metric_card(
             "Buying Power",
-            f"Â£{broker_row['buying_power']:,.2f}",
+            f"£{broker_row['buying_power']:,.2f}",
         )
 
     with col2:
-        metric_card("Cash", f"Â£{broker_row['cash']:,.2f}")
+        metric_card("Cash", f"£{broker_row['cash']:,.2f}")
         metric_card(
             "Unrealised PnL",
-            f"Â£{current_unrealised_pnl:,.2f}",
+            f"£{current_unrealised_pnl:,.2f}",
             True,
         )
 
@@ -1257,14 +1257,14 @@ if page == "Home":
                 ascending=False,
             )
 
-            st.caption(f"Comparing {yesterday} â†’ {today}")
+            st.caption(f"Comparing {yesterday} → {today}")
 
             responsive_table(
                 attribution.style.format(
                     {
-                        "Yesterday Value": "Â£{:,.2f}",
-                        "Today Value": "Â£{:,.2f}",
-                        "Daily PnL": "Â£{:,.2f}",
+                        "Yesterday Value": "£{:,.2f}",
+                        "Today Value": "£{:,.2f}",
+                        "Daily PnL": "£{:,.2f}",
                         "Contribution %": "{:.2f}%",
                     }
                 ),
@@ -1354,11 +1354,11 @@ if page == "Home":
             display_holdings.style.format(
                 {
                     "Shares": "{:.2f}",
-                    "Entry Price": "Â£{:,.2f}",
-                    "Current Price": "Â£{:,.2f}",
-                    "Market Value": "Â£{:,.2f}",
+                    "Entry Price": "£{:,.2f}",
+                    "Current Price": "£{:,.2f}",
+                    "Market Value": "£{:,.2f}",
                     "Weight %": "{:.2f}%",
-                    "PnL": "Â£{:,.2f}",
+                    "PnL": "£{:,.2f}",
                 }
             ),
             hide_index=True,
@@ -1405,7 +1405,7 @@ if page == "Home":
             )
             metric_card(
                 "Realised PnL",
-                f"Â£{analytics_row['realised_pnl']:,.2f}",
+                f"£{analytics_row['realised_pnl']:,.2f}",
                 True,
             )
 
@@ -1528,19 +1528,19 @@ if page == "Home":
             metric_card("Losers", losing_trades)
 
         with c3:
-            metric_card("Total PnL", f"Â£{total_pnl:,.2f}", total_pnl >= 0)
+            metric_card("Total PnL", f"£{total_pnl:,.2f}", total_pnl >= 0)
             metric_card("Profit Factor", f"{profit_factor:.2f}", profit_factor >= 1)
 
         c4, c5, c6 = responsive_columns(3)
 
         with c4:
-            metric_card("Average PnL", f"Â£{avg_pnl:,.2f}", avg_pnl >= 0)
+            metric_card("Average PnL", f"£{avg_pnl:,.2f}", avg_pnl >= 0)
 
         with c5:
-            metric_card("Best Trade", f"Â£{best_trade:,.2f}", best_trade >= 0)
+            metric_card("Best Trade", f"£{best_trade:,.2f}", best_trade >= 0)
 
         with c6:
-            metric_card("Worst Trade", f"Â£{worst_trade:,.2f}", worst_trade >= 0)
+            metric_card("Worst Trade", f"£{worst_trade:,.2f}", worst_trade >= 0)
 
         st.divider()
 
@@ -1572,10 +1572,10 @@ if page == "Home":
             open_reason = trade.get("open_reason", "N/A")
             close_reason = trade.get("close_reason", "N/A")
 
-            result = "WIN âœ…" if pnl > 0 else "LOSS âŒ" if pnl < 0 else "FLAT âž–"
+            result = "WIN ✅" if pnl > 0 else "LOSS ❌" if pnl < 0 else "FLAT ➖"
 
             with st.container(border=True):
-                st.subheader(f"{symbol} â€” {result}")
+                st.subheader(f"{symbol} — {result}")
 
                 col1, col2 = responsive_columns(2)
 
@@ -1586,11 +1586,11 @@ if page == "Home":
                 st.write(f"**Shares:** {shares:.4f}")
 
             with col2:
-                st.write(f"**Buy:** Â£{buy_price:,.2f}")
-                st.write(f"**Sell:** Â£{sell_price:,.2f}")
-                st.write(f"**PnL:** Â£{pnl:,.2f} ({pnl_pct:.2f}%)")
+                st.write(f"**Buy:** £{buy_price:,.2f}")
+                st.write(f"**Sell:** £{sell_price:,.2f}")
+                st.write(f"**PnL:** £{pnl:,.2f} ({pnl_pct:.2f}%)")
 
-            with st.expander("ðŸ” Trade Replay"):
+            with st.expander("🔍 Trade Replay"):
                 trade_snapshot = pd.DataFrame()
 
                 if not snapshots.empty:
@@ -1624,23 +1624,23 @@ if page == "Home":
                     buy = buy_rows.iloc[0]
                     sell = sell_rows.iloc[-1] if not sell_rows.empty else None
 
-                    st.markdown("### ðŸŸ¢ Entry")
+                    st.markdown("### 🟢 Entry")
 
                     c1, c2 = responsive_columns(2)
 
                     with c1:
-                        st.metric("Cash", f"Â£{buy['cash']:,.2f}")
+                        st.metric("Cash", f"£{buy['cash']:,.2f}")
                         st.metric("Weight", f"{buy['portfolio_weight']:.1%}")
 
                     with c2:
-                        st.metric("Stop Loss", f"Â£{buy['stop_loss']:,.2f}")
-                        st.metric("Take Profit", f"Â£{buy['take_profit']:,.2f}")
+                        st.metric("Stop Loss", f"£{buy['stop_loss']:,.2f}")
+                        st.metric("Take Profit", f"£{buy['take_profit']:,.2f}")
 
                     st.write(f"**Reason:** {buy['reason']}")
 
                     st.divider()
 
-                    st.markdown("### ðŸ”´ Exit")
+                    st.markdown("### 🔴 Exit")
 
                     if sell is None:
                         st.info("No exit snapshot available yet. This trade may still be open or was created before snapshot logging.")
@@ -1649,17 +1649,17 @@ if page == "Home":
 
                         st.metric(
                             "Portfolio Value",
-                            f"Â£{sell['portfolio_value']:,.2f}"
+                            f"£{sell['portfolio_value']:,.2f}"
                         )
 
                     st.divider()
 
-                    st.markdown("### ðŸ“ˆ Result")
+                    st.markdown("### 📈 Result")
 
                     c1, c2 = responsive_columns(2)
 
                     with c1:
-                        st.metric("PnL", f"Â£{pnl:,.2f}")
+                        st.metric("PnL", f"£{pnl:,.2f}")
 
                     with c2:
                         st.metric("Return", f"{pnl_pct:.2f}%")
@@ -1669,7 +1669,7 @@ if page == "Home":
     if audit.empty or "close_time" not in audit.columns or "pnl" not in audit.columns:
         st.info("No completed trade equity curve available yet.")
     else:
-        st.subheader("ðŸ“ˆ Realised Equity Curve")
+        st.subheader("📈 Realised Equity Curve")
 
         equity = audit.copy()
         equity["close_time"] = pd.to_datetime(
@@ -1787,9 +1787,9 @@ if page == "Home":
             display_trades.style.format(
                 {
                     "Shares": "{:.2f}",
-                    "Price": "Â£{:,.2f}",
-                    "Value": "Â£{:,.2f}",
-                    "PnL": "Â£{:,.2f}",
+                    "Price": "£{:,.2f}",
+                    "Value": "£{:,.2f}",
+                    "PnL": "£{:,.2f}",
                 }
             ),
             hide_index=True,
