@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
 import json
+import math
 import os
 import smtplib
 import sys
@@ -27,9 +28,14 @@ def _safe_float(value):
     try:
         if value is None or value == "":
             return None
-        return float(value)
+        numeric_value = float(value)
     except (TypeError, ValueError):
         return None
+
+    if not math.isfinite(numeric_value):
+        return None
+
+    return numeric_value
 
 
 def _format_money(value):

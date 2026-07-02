@@ -1,41 +1,137 @@
-def build_telegram_message(report, signal_rows, fundamental_scores, summary, v3_trades, trade_stats, broker, holdings_report, benchmark_stats):
-    message = "📈 Garner Quant Daily Update\n\n"
+import math
+
+
+MARKET_DATA_WAITING = "Waiting for latest market data"
+PRICE_UNAVAILABLE = "Price unavailable"
+VALUE_UNAVAILABLE = "Unavailable"
+
+
+def _safe_float(value):
+    try:
+        if value is None or value == "":
+            return None
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if not math.isfinite(numeric_value):
+        return None
+
+    return numeric_value
+
+
+def _format_money(value, missing_label=MARKET_DATA_WAITING):
+    numeric_value = _safe_float(value)
+    if numeric_value is None:
+        return missing_label
+    return f"\u00a3{numeric_value:,.2f}"
+
+
+def _format_percent(value, missing_label=MARKET_DATA_WAITING):
+    numeric_value = _safe_float(value)
+    if numeric_value is None:
+        return missing_label
+    return f"{numeric_value:.2%}"
+
+
+def _format_number(value, decimals=2, missing_label=VALUE_UNAVAILABLE):
+    numeric_value = _safe_float(value)
+    if numeric_value is None:
+        return missing_label
+    return f"{numeric_value:,.{decimals}f}"
+
+
+def _format_raw(value, missing_label=VALUE_UNAVAILABLE):
+    if value is None:
+        return missing_label
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "nat"}:
+        return missing_label
+    return text
+
+
+def _format_position_count(positions):
+    try:
+        return str(len(positions))
+    except TypeError:
+        return "0"
+
+
+def _format_holding_line(row):
+    ticker = _format_raw(row.get("ticker"), "Unknown")
+    market_value = _format_money(row.get("market_value"), PRICE_UNAVAILABLE)
+    pnl = _format_money(row.get("unrealised_pnl"), VALUE_UNAVAILABLE)
+    pnl_percent = _format_percent(
+        row.get("unrealised_pnl_percent"),
+        VALUE_UNAVAILABLE,
+    )
+
+    return f"{ticker}: {market_value} PnL {pnl} ({pnl_percent})"
+
+
+def build_telegram_message(
+    report,
+    signal_rows,
+    fundamental_scores,
+    summary,
+    v3_trades,
+    trade_stats,
+    broker,
+    holdings_report,
+    benchmark_stats,
+):
+    message = "\U0001f4c8 Garner Quant Daily Update\n\n"
 
     message += "Live Paper Account:\n"
-    message += f"Portfolio Value: £{broker['portfolio_value']:,.2f}\n"
-    message += f"Cash: £{broker['cash']:,.2f}\n"
-    message += f"Buying Power: £{broker['buying_power']:,.2f}\n"
-    message += f"Realised PnL: £{broker['realised_pnl']:,.2f}\n"
-    message += f"Unrealised PnL: £{broker['unrealised_pnl']:,.2f}\n\n"
+    message += (
+        f"Portfolio Value: {_format_money(broker.get('portfolio_value'))}\n"
+    )
+    message += f"Cash: {_format_money(broker.get('cash'), VALUE_UNAVAILABLE)}\n"
+    message += (
+        f"Buying Power: {_format_money(broker.get('buying_power'), VALUE_UNAVAILABLE)}\n"
+    )
+    message += (
+        f"Realised PnL: {_format_money(broker.get('realised_pnl'), VALUE_UNAVAILABLE)}\n"
+    )
+    message += f"Unrealised PnL: {_format_money(broker.get('unrealised_pnl'))}\n\n"
 
     message += "Backtest Snapshot:\n"
     message += (
-        f"Final Value: £{report['final_value']:,.2f}\n"
-        f"Return: {report['total_return']:.2%}\n"
-        f"Max Drawdown: {report['max_drawdown']:.2%}\n"
-        f"Sharpe: {report['sharpe_ratio']:.2f}\n\n"
+        f"Final Value: {_format_money(report.get('final_value'), VALUE_UNAVAILABLE)}\n"
+        f"Return: {_format_percent(report.get('total_return'), VALUE_UNAVAILABLE)}\n"
+        f"Max Drawdown: {_format_percent(report.get('max_drawdown'), VALUE_UNAVAILABLE)}\n"
+        f"Sharpe: {_format_number(report.get('sharpe_ratio'))}\n\n"
     )
 
-    message += "📊 Benchmark:\n"
+    message += "\U0001f4ca Benchmark:\n"
     message += (
-        f"Garner Quant: {benchmark_stats['portfolio_return']:.2%}\n"
-        f"{benchmark_stats['ticker']}: {benchmark_stats['benchmark_return']:.2%}\n"
-        f"Alpha: {benchmark_stats['alpha']:.2%}\n\n"
+        f"Garner Quant: {_format_percent(benchmark_stats.get('portfolio_return'), VALUE_UNAVAILABLE)}\n"
+        f"{_format_raw(benchmark_stats.get('ticker'), 'Benchmark')}: "
+        f"{_format_percent(benchmark_stats.get('benchmark_return'), VALUE_UNAVAILABLE)}\n"
+        f"Alpha: {_format_percent(benchmark_stats.get('alpha'), VALUE_UNAVAILABLE)}\n\n"
     )
 
     message += "Current Signals:\n"
     for row in signal_rows:
-        message += f"{row['ticker']}: {row['status']} ({row['weight']:.2%})\n"
+        message += (
+            f"{_format_raw(row.get('ticker'), 'Unknown')}: "
+            f"{_format_raw(row.get('status'))} "
+            f"({_format_percent(row.get('weight'), VALUE_UNAVAILABLE)})\n"
+        )
 
     message += "\nFundamental Scores:\n"
     for _, row in fundamental_scores.iterrows():
-        message += f"{row['ticker']}: {row['fundamental_score']}\n"
+        message += (
+            f"{_format_raw(row.get('ticker'), 'Unknown')}: "
+            f"{_format_raw(row.get('fundamental_score'))}\n"
+        )
 
+    positions = summary.get("positions", [])
     message += "\nPortfolio Manager V3:\n"
-    message += f"Paper Value: £{summary['total_value']:,.2f}\n"
-    message += f"Cash: £{summary['cash']:,.2f}\n"
-    message += f"Open Positions: {len(summary['positions'])}\n"
-    message += f"Unrealised PnL: £{summary['unrealised_pnl']:,.2f}\n\n"
+    message += f"Paper Value: {_format_money(summary.get('total_value'))}\n"
+    message += f"Cash: {_format_money(summary.get('cash'), VALUE_UNAVAILABLE)}\n"
+    message += f"Open Positions: {_format_position_count(positions)}\n"
+    message += f"Unrealised PnL: {_format_money(summary.get('unrealised_pnl'))}\n\n"
 
     message += "Today's V3 Trades:\n"
     if len(v3_trades) == 0:
@@ -43,15 +139,19 @@ def build_telegram_message(report, signal_rows, fundamental_scores, summary, v3_
     else:
         for _, trade in v3_trades.iterrows():
             message += (
-                f"{trade['action']} {trade['ticker']} "
-                f"at {trade['price']:.2f} ({trade['reason']})\n"
+                f"{_format_raw(trade.get('action'))} "
+                f"{_format_raw(trade.get('ticker'), 'Unknown')} "
+                f"at {_format_number(trade.get('price'), missing_label=PRICE_UNAVAILABLE)} "
+                f"({_format_raw(trade.get('reason'))})\n"
             )
 
     message += "\nTrade Analytics:\n"
-    message += f"Total Trades: {trade_stats['total_trades']}\n"
-    message += f"Win Rate: {trade_stats['win_rate']:.2%}\n"
-    message += f"Profit Factor: {trade_stats['profit_factor']:.2f}\n"
-    message += f"Realised PnL: £{trade_stats['realised_pnl']:,.2f}\n"
+    message += f"Total Trades: {_format_raw(trade_stats.get('total_trades'), '0')}\n"
+    message += f"Win Rate: {_format_percent(trade_stats.get('win_rate'), VALUE_UNAVAILABLE)}\n"
+    message += f"Profit Factor: {_format_number(trade_stats.get('profit_factor'))}\n"
+    message += (
+        f"Realised PnL: {_format_money(trade_stats.get('realised_pnl'), VALUE_UNAVAILABLE)}\n"
+    )
 
     message += "\nHoldings:\n"
 
@@ -59,11 +159,6 @@ def build_telegram_message(report, signal_rows, fundamental_scores, summary, v3_
         message += "No open holdings.\n"
     else:
         for _, row in holdings_report.iterrows():
-            message += (
-                f"{row['ticker']}: "
-                f"£{row['market_value']:,.2f} "
-                f"PnL £{row['unrealised_pnl']:,.2f} "
-                f"({row['unrealised_pnl_percent']:.2%})\n"
-            )
+            message += f"{_format_holding_line(row)}\n"
 
     return message
