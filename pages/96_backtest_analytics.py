@@ -160,7 +160,11 @@ else:
             format_days,
         )
 
-    responsive_table(trade_display[columns], hide_index=True)
+    responsive_table(
+        trade_display[columns],
+        hide_index=True,
+        mobile_columns=["ticker", "pnl", "pnl_percent", "is_winner"],
+    )
 
 st.divider()
 st.subheader("Data Availability")

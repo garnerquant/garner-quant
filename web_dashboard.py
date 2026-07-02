@@ -675,6 +675,11 @@ if page == "Home":
         responsive_table(
             signals,
             hide_index=False,
+            mobile_columns=[
+                column
+                for column in ["ticker", "signal", "status", "weight"]
+                if column in signals.columns
+            ],
         )
 
     st.divider()
@@ -752,6 +757,7 @@ if page == "Home":
         responsive_table(
             display_signals,
             hide_index=True,
+            mobile_columns=["Ticker", "Signal", "Weight", "Status"],
         )
 
     st.divider()

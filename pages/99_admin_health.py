@@ -1227,11 +1227,31 @@ def inject_mission_control_css():
         .gq-badge-traded { color:#1d4ed8; background:#dbeafe; padding:0.15rem 0.45rem; border-radius:999px; font-weight:700; }
         .gq-badge-neutral { color:#374151; background:#e5e7eb; padding:0.15rem 0.45rem; border-radius:999px; font-weight:700; }
         @media (max-width: 900px) {
-            .gq-hero-grid, .gq-pipeline, .gq-health-grid, .gq-performance-grid, .gq-freshness-grid {
+            .gq-hero-grid, .gq-health-grid, .gq-performance-grid, .gq-freshness-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .gq-pipeline {
                 grid-template-columns: 1fr;
             }
             .gq-hero-title {
                 font-size: 1.3rem;
+            }
+        }
+        @media (max-width: 600px) {
+            .gq-hero {
+                padding: 0.9rem;
+                border-left-width: 5px;
+            }
+            .gq-hero-grid, .gq-health-grid, .gq-performance-grid, .gq-freshness-grid {
+                grid-template-columns: 1fr;
+            }
+            .gq-hero-title {
+                font-size: 1.15rem;
+            }
+            .gq-stage {
+                min-height: 3.2rem;
+                justify-content: flex-start;
+                text-align: left;
             }
         }
         </style>
@@ -2465,25 +2485,41 @@ mi_tabs = st.tabs(
 )
 with mi_tabs[0]:
     if headline_rows:
-        responsive_table(pd.DataFrame(headline_rows), hide_index=True)
+        responsive_table(
+            pd.DataFrame(headline_rows),
+            hide_index=True,
+            mobile_columns=["Time", "Tickers", "Headline"],
+        )
     else:
         st.info("No market intelligence headlines have been collected yet.")
 with mi_tabs[1]:
     exposure_rows = portfolio_exposure_rows(intelligence)
     if exposure_rows:
-        responsive_table(pd.DataFrame(exposure_rows), hide_index=True)
+        responsive_table(
+            pd.DataFrame(exposure_rows),
+            hide_index=True,
+            mobile_columns=["Ticker", "Stories", "Top Importance"],
+        )
     else:
         st.info("No current portfolio exposure has been matched to headlines yet.")
 with mi_tabs[2]:
     top_rows = top_story_rows(intelligence)
     if top_rows:
-        responsive_table(pd.DataFrame(top_rows), hide_index=True)
+        responsive_table(
+            pd.DataFrame(top_rows),
+            hide_index=True,
+            mobile_columns=["Time", "Headline", "Importance"],
+        )
     else:
         st.info("No top stories have been identified yet.")
 with mi_tabs[3]:
     calendar_rows = macro_calendar_rows(intelligence)
     if calendar_rows:
-        responsive_table(pd.DataFrame(calendar_rows), hide_index=True)
+        responsive_table(
+            pd.DataFrame(calendar_rows),
+            hide_index=True,
+            mobile_columns=["Event", "Region", "Importance"],
+        )
     else:
         st.info("No macro calendar items are available yet.")
 
@@ -2580,7 +2616,11 @@ if today_trade_rows:
                 "Telegram Sent": row.get("telegram_status", "No/Unknown"),
             }
         )
-    responsive_table(pd.DataFrame(today_trade_display), hide_index=True)
+    responsive_table(
+        pd.DataFrame(today_trade_display),
+        hide_index=True,
+        mobile_columns=["Time", "Action", "Ticker", "PnL"],
+    )
 else:
     st.info("No paper trades recorded today.")
 
@@ -2597,7 +2637,11 @@ render_performance_strip(
 portfolio_rows = portfolio_snapshot_rows(portfolio, holdings, portfolio_value)
 st.markdown("**Mini Portfolio**")
 if portfolio_rows:
-    responsive_table(pd.DataFrame(portfolio_rows), hide_index=True)
+    responsive_table(
+        pd.DataFrame(portfolio_rows),
+        hide_index=True,
+        mobile_columns=["Ticker", "Weight", "PnL %"],
+    )
 else:
     st.info("No open paper holdings.")
 
@@ -2859,7 +2903,11 @@ st.caption(
 st.markdown("**Runtime Activity Timeline**")
 timeline_rows = build_timeline_rows(recent_cycles, runtime_status, limit=14)
 if timeline_rows:
-    responsive_table(pd.DataFrame(timeline_rows), hide_index=True)
+    responsive_table(
+        pd.DataFrame(timeline_rows),
+        hide_index=True,
+        mobile_columns=["Time", "Activity", "Stage"],
+    )
 else:
     st.info("No runtime timeline events have been recorded yet.")
 
@@ -3100,7 +3148,11 @@ if recent_cycles:
                 "Summary": cycle.get("cycle_summary", ""),
             }
         )
-    responsive_table(pd.DataFrame(recent_rows), hide_index=True)
+    responsive_table(
+        pd.DataFrame(recent_rows),
+        hide_index=True,
+        mobile_columns=["Time", "Duration", "Status"],
+    )
 else:
     st.info("No recent runtime cycles are available.")
 
@@ -3486,6 +3538,12 @@ else:
         responsive_table(
             display_positions[visible_columns],
             hide_index=True,
+            mobile_columns=[
+                "ticker",
+                "current_price",
+                "unrealised_pnl",
+                "status",
+            ],
         )
 
 st.divider()
@@ -3511,13 +3569,18 @@ for section in [
         continue
 
     st.subheader(section)
-    responsive_table(section_df, hide_index=True)
+    responsive_table(
+        section_df,
+        hide_index=True,
+        mobile_columns=["Section", "Check name", "Status"],
+    )
 
 st.divider()
 st.subheader("Data Freshness")
 responsive_table(
     pd.DataFrame(freshness_rows),
     hide_index=True,
+    mobile_columns=["filename", "age", "freshness status"],
 )
 
 st.divider()
@@ -3562,4 +3625,8 @@ st.subheader("Warnings")
 if warnings_df.empty:
     st.success("No warnings detected.")
 else:
-    responsive_table(warnings_df, hide_index=True)
+    responsive_table(
+        warnings_df,
+        hide_index=True,
+        mobile_columns=["Section", "Check name", "Status"],
+    )
