@@ -315,11 +315,6 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
         .tail(1)
         .reset_index(drop=True)
     )
-    plot_data["challenge_day"] = range(1, len(plot_data) + 1)
-    plot_data["challenge_day_label"] = plot_data["challenge_day"].map(
-        lambda day: f"Day {day}"
-    )
-
     if plot_data.empty:
         st.info("No valid equity values available for the chart yet.")
         return
@@ -330,13 +325,27 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
         baseline_value = first_value
     can_show_return = pd.notna(baseline_value) and float(baseline_value) != 0
 
-    chart_options = ["Return from start (%)", "Zoomed GBP equity"]
-    if not can_show_return:
-        chart_options = ["Zoomed GBP equity"]
+    if can_show_return and abs(float(first_value) - float(baseline_value)) > 0.01:
+        baseline_row = {
+            "date": plot_data["date"].iloc[0] - pd.Timedelta(days=1),
+            "portfolio_value": float(baseline_value),
+            "trading_date": (
+                plot_data["date"].iloc[0] - pd.Timedelta(days=1)
+            ).date(),
+        }
+        plot_data = pd.concat(
+            [pd.DataFrame([baseline_row]), plot_data],
+            ignore_index=True,
+        )
+
+    plot_data["challenge_day"] = range(0, len(plot_data))
+    plot_data["challenge_day_label"] = plot_data["challenge_day"].map(
+        lambda day: f"Day {day}"
+    )
 
     chart_mode = st.radio(
         "Equity chart view",
-        chart_options,
+        ["Return from start (%)", "Zoomed GBP equity"],
         horizontal=True,
         key="thirty_day_equity_chart_view",
     )
