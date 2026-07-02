@@ -105,19 +105,7 @@ def _render_lock_screen(password):
 
     with st.form("gq_dashboard_login"):
         entered_password = st.text_input("Password", type="password")
-        remember_device = st.checkbox(
-            "Remember this device",
-            value=False,
-            disabled=True,
-            help=(
-                "Persistent signed-cookie login is not enabled in this "
-                "deployment yet."
-            ),
-        )
         submitted = st.form_submit_button("Unlock", type="primary")
-
-    if remember_device:
-        st.caption("Remember this device is not available in this build.")
 
     if submitted:
         if _password_matches(entered_password, password):

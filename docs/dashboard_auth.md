@@ -36,6 +36,10 @@ is tied to the configured password.
 
 ## Remember This Device
 
-Session login is implemented now. Persistent signed-cookie login is intentionally
-not enabled until a safe cookie component or first-party Streamlit support is
-available in this deployment.
+Session login is implemented now. The dashboard stays unlocked during normal
+Streamlit reruns and page navigation, but closing the browser session may require
+signing in again.
+
+Persistent remember-device login is planned but not currently active, so the
+login screen does not show a remember-device checkbox. Add it only after a safe
+signed-cookie implementation is available for this deployment.
