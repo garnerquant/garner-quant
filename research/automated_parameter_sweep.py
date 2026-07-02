@@ -1,4 +1,5 @@
 from uuid import uuid4
+from itertools import product
 import traceback
 
 import pandas as pd
@@ -76,13 +77,31 @@ def _metrics_from_summary(summary):
 
 
 def run_research_backtest(parameter_key, value, dry_run=False, base_path="."):
+    return run_research_backtest_config(
+        {parameter_key: value},
+        dry_run=dry_run,
+        base_path=base_path,
+    )
+
+
+def run_research_backtest_config(parameter_config, dry_run=False, base_path="."):
+    parameter_config = dict(parameter_config or {})
+
     if dry_run:
         analytics = load_backtest_analytics(base_path)
         metrics = _metrics_from_summary(analytics.get("summary", {}))
-        numeric_value = _safe_metric(value)
-        metrics["sharpe_ratio"] = metrics["sharpe_ratio"] + numeric_value * 0.001
-        metrics["cagr"] = metrics["cagr"] + numeric_value * 0.0005
-        metrics["max_drawdown"] = metrics["max_drawdown"] - numeric_value * 0.0001
+        numeric_values = [
+            _safe_metric(value)
+            for value in parameter_config.values()
+            if isinstance(value, (int, float))
+        ]
+        numeric_total = sum(numeric_values)
+        numeric_count = len(numeric_values) or 1
+        metrics["sharpe_ratio"] = metrics["sharpe_ratio"] + numeric_total * 0.001
+        metrics["cagr"] = metrics["cagr"] + numeric_total * 0.0005
+        metrics["max_drawdown"] = (
+            metrics["max_drawdown"] - (numeric_total / numeric_count) * 0.0001
+        )
         return metrics
 
     try:
@@ -92,7 +111,7 @@ def run_research_backtest(parameter_key, value, dry_run=False, base_path="."):
 
     experiment_config = build_experiment_config(
         live_config,
-        {parameter_key: value},
+        parameter_config,
     )
     equity_curve, holdings, trade_journal, summary = run_from_saved_files(
         experiment_config=experiment_config,
@@ -237,3 +256,166 @@ def sweep_history(path=DEFAULT_EXPERIMENTS_FILE):
             sweep_ids.append(sweep_id)
 
     return [build_sweep_summary(sweep_id, path=path) for sweep_id in sweep_ids]
+
+
+def generate_parameter_combinations(parameter_grid, dry_run=False):
+    normalised = []
+
+    for parameter_name, candidate_values in (parameter_grid or {}).items():
+        parameter_key = normalise_parameter_name(parameter_name, validate=not dry_run)
+        values = normalise_candidate_values(candidate_values)
+        if values:
+            normalised.append((parameter_key, values))
+
+    if not normalised:
+        return []
+
+    keys = [key for key, _ in normalised]
+    value_sets = [values for _, values in normalised]
+
+    return [
+        dict(zip(keys, values))
+        for values in product(*value_sets)
+    ]
+
+
+def run_parameter_grid(
+    parameter_grid,
+    experiment_name,
+    notes="",
+    path=DEFAULT_EXPERIMENTS_FILE,
+    dry_run=False,
+    base_path=".",
+):
+    combinations = generate_parameter_combinations(parameter_grid, dry_run=dry_run)
+    grid_id = str(uuid4())
+    saved_runs = []
+
+    for index, parameter_config in enumerate(combinations, start=1):
+        status = "completed"
+        metrics = {}
+        run_notes = notes
+
+        try:
+            metrics = run_research_backtest_config(
+                parameter_config,
+                dry_run=dry_run,
+                base_path=base_path,
+            )
+        except Exception as exc:
+            status = "failed"
+            metrics = {"error": str(exc)}
+            run_notes = (
+                f"{notes}\n{traceback.format_exc()}"
+                if notes
+                else traceback.format_exc()
+            )
+
+        label = ", ".join(
+            f"{key}={value}"
+            for key, value in parameter_config.items()
+        )
+        experiment = create_experiment(
+            name=f"{experiment_name} - {label}",
+            parameter_config={
+                **parameter_config,
+                "grid": {
+                    "grid_id": grid_id,
+                    "index": index,
+                    "total": len(combinations),
+                    "dry_run": bool(dry_run),
+                },
+            },
+            metrics=metrics,
+            status=status,
+            notes=run_notes,
+            extra_fields={
+                "grid_id": grid_id,
+            },
+        )
+        saved_runs.append(save_experiment(experiment, path))
+
+    return {
+        "grid_id": grid_id,
+        "experiment_name": experiment_name,
+        "runs": saved_runs,
+        "summary": build_grid_summary(grid_id, path=path),
+        "leaderboard": build_grid_leaderboard(grid_id, path=path),
+    }
+
+
+def build_grid_leaderboard(grid_id, path=DEFAULT_EXPERIMENTS_FILE, sort_by="sharpe_ratio"):
+    leaderboard = build_leaderboard(sort_by=sort_by, path=path)
+    if leaderboard.empty or "grid_id" not in leaderboard.columns:
+        return leaderboard
+
+    return leaderboard[leaderboard["grid_id"] == grid_id].reset_index(drop=True)
+
+
+def _best_grid_config(grid_id, metric, path=DEFAULT_EXPERIMENTS_FILE, highest=True):
+    leaderboard = build_grid_leaderboard(grid_id, path=path, sort_by=metric)
+    if leaderboard.empty or metric not in leaderboard.columns:
+        return None
+
+    values = pd.to_numeric(leaderboard[metric], errors="coerce")
+    if values.dropna().empty:
+        return None
+
+    index = values.idxmax() if highest else values.idxmin()
+    experiment_id = leaderboard.loc[index, "experiment_id"]
+    for experiment in load_experiments(path):
+        if experiment.get("experiment_id") == experiment_id:
+            config = dict(experiment.get("parameter_config") or {})
+            config.pop("grid", None)
+            config.pop("sweep", None)
+            return config
+
+    return None
+
+
+def build_grid_summary(grid_id, path=DEFAULT_EXPERIMENTS_FILE):
+    experiments = [
+        experiment
+        for experiment in load_experiments(path)
+        if experiment.get("grid_id") == grid_id
+    ]
+
+    return {
+        "grid_id": grid_id,
+        "runs": len(experiments),
+        "completed_runs": len(
+            [experiment for experiment in experiments if experiment.get("status") == "completed"]
+        ),
+        "failed_runs": len(
+            [experiment for experiment in experiments if experiment.get("status") == "failed"]
+        ),
+        "best_sharpe_config": _best_grid_config(
+            grid_id,
+            "sharpe_ratio",
+            path=path,
+            highest=True,
+        ),
+        "best_cagr_config": _best_grid_config(
+            grid_id,
+            "cagr",
+            path=path,
+            highest=True,
+        ),
+        "lowest_drawdown_config": _best_grid_config(
+            grid_id,
+            "max_drawdown",
+            path=path,
+            highest=True,
+        ),
+    }
+
+
+def grid_history(path=DEFAULT_EXPERIMENTS_FILE):
+    experiments = load_experiments(path)
+    grid_ids = []
+    for experiment in experiments:
+        grid_id = experiment.get("grid_id")
+        if grid_id and grid_id not in grid_ids:
+            grid_ids.append(grid_id)
+
+    return [build_grid_summary(grid_id, path=path) for grid_id in grid_ids]

@@ -54,7 +54,9 @@ except Exception:
 
 try:
     from research.automated_parameter_sweep import (
+        build_grid_leaderboard,
         build_sweep_leaderboard,
+        grid_history,
         sweep_history,
     )
     from research.experiment_registry import (
@@ -62,8 +64,10 @@ try:
         load_experiments as load_registry_experiments,
     )
 except Exception:
+    build_grid_leaderboard = None
     build_sweep_leaderboard = None
     build_registry_leaderboard = None
+    grid_history = None
     load_registry_experiments = None
     sweep_history = None
 
@@ -593,6 +597,53 @@ def render_registry_preview():
         st.write("Latest Sweep Leaderboard")
         responsive_table(
             latest_leaderboard[sweep_columns].head(10),
+            hide_index=True,
+        )
+
+    if grid_history is None or build_grid_leaderboard is None:
+        return
+
+    grids = grid_history()
+    if not grids:
+        return
+
+    st.write("Grid Search History")
+    grid_rows = []
+    for grid in reversed(grids[-10:]):
+        grid_rows.append(
+            {
+                "grid_id": grid.get("grid_id"),
+                "runs": grid.get("runs"),
+                "completed": grid.get("completed_runs"),
+                "failed": grid.get("failed_runs"),
+                "best_sharpe_config": grid.get("best_sharpe_config"),
+                "best_cagr_config": grid.get("best_cagr_config"),
+                "lowest_drawdown_config": grid.get("lowest_drawdown_config"),
+            }
+        )
+    responsive_table(pd.DataFrame(grid_rows), hide_index=True)
+
+    latest_grid = grids[-1]
+    latest_grid_leaderboard = build_grid_leaderboard(
+        latest_grid["grid_id"],
+        sort_by="sharpe_ratio",
+    )
+    if latest_grid_leaderboard is not None and not latest_grid_leaderboard.empty:
+        grid_columns = [
+            column
+            for column in [
+                "status",
+                "sharpe_ratio",
+                "cagr",
+                "max_drawdown",
+                "trade_count",
+                "name",
+            ]
+            if column in latest_grid_leaderboard.columns
+        ]
+        st.write("Latest Grid Search Leaderboard")
+        responsive_table(
+            latest_grid_leaderboard[grid_columns].head(10),
             hide_index=True,
         )
 

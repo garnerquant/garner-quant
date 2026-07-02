@@ -126,6 +126,7 @@ def build_leaderboard(sort_by="sharpe_ratio", path=DEFAULT_EXPERIMENTS_FILE):
         row = {
             "experiment_id": experiment.get("experiment_id"),
             "sweep_id": experiment.get("sweep_id"),
+            "grid_id": experiment.get("grid_id"),
             "parameter_tested": experiment.get("parameter_tested"),
             "value_tested": experiment.get("value_tested"),
             "timestamp": experiment.get("timestamp"),
