@@ -246,6 +246,17 @@ def json_safe(value):
     return value
 
 
+def date_string(value):
+    timestamp = pd.to_datetime(value, errors="coerce")
+    if not pd.isna(timestamp):
+        return timestamp.strftime("%Y-%m-%d")
+
+    if value is None:
+        return ""
+
+    return str(value)
+
+
 def signal_label(value):
     if value == 1:
         return "BUY"
@@ -362,6 +373,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
     snapshots = load_trade_snapshots()
 
     latest_date = signals.index[-1]
+    trade_date = date_string(latest_date)
     latest_signals = signals.loc[latest_date]
     latest_prices = prices.loc[latest_date]
     latest_weights = weights.loc[latest_date]
@@ -490,7 +502,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
             value = current_price * position["shares"]
 
             journal.loc[len(journal)] = [
-                latest_date,
+                trade_date,
                 trade_time,
                 "SELL",
                 ticker,
@@ -503,7 +515,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
             ]
 
             transaction_log.loc[len(transaction_log)] = [
-                latest_date,
+                trade_date,
                 "SELL",
                 ticker,
                 current_price,
@@ -540,7 +552,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
             trades.append(
                 {
                     "trade_id": trade_id,
-                    "date": latest_date,
+                    "date": trade_date,
                     "time": trade_time,
                     "timestamp": timestamp,
                     "ticker": ticker,
@@ -638,7 +650,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
 
             portfolio.loc[len(portfolio)] = [
                 ticker,
-                latest_date,
+                trade_date,
                 price,
                 shares,
                 position_value,
@@ -653,7 +665,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
             timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
 
             transaction_log.loc[len(transaction_log)] = [
-                latest_date,
+                trade_date,
                 "BUY",
                 ticker,
                 price,
@@ -663,7 +675,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
             ]
 
             journal.loc[len(journal)] = [
-                latest_date,
+                trade_date,
                 trade_time,
                 "BUY",
                 ticker,
@@ -676,7 +688,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
             ]
 
             snapshots.loc[len(snapshots)] = [
-                f"{ticker}_{latest_date}_BUY",
+                f"{ticker}_{trade_date}_BUY",
                 "BUY",
                 ticker,
                 timestamp,
@@ -692,14 +704,14 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 take_profits[ticker],
             ]
 
-            trade_id = f"{ticker}_{latest_date}_BUY"
+            trade_id = f"{ticker}_{trade_date}_BUY"
 
             cash -= position_value
 
             trades.append(
                 {
                     "trade_id": trade_id,
-                    "date": latest_date,
+                    "date": trade_date,
                     "time": trade_time,
                     "timestamp": timestamp,
                     "ticker": ticker,
