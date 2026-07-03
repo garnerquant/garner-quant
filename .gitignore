@@ -12,6 +12,10 @@ __pycache__/
 !trade_journal_v3.csv
 !v3_trades.csv
 
+# Global scanner static universe inputs
+!data/universes/
+!data/universes/*.csv
+
 old_files/
 .streamlit/secrets.toml
 .env

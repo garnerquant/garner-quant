@@ -1,0 +1,3 @@
+symbol,yahoo_ticker,name,country,region,exchange,currency,asset_class,index_source,sector,active
+CBA,CBA.AX,Commonwealth Bank of Australia,Australia,Australia,ASX,AUD,Equity,ASX 200,Financials,true
+BHP,BHP.AX,BHP Group Ltd,Australia,Australia,ASX,AUD,Equity,ASX 200,Materials,true

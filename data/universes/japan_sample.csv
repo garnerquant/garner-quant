@@ -1,0 +1,3 @@
+symbol,yahoo_ticker,name,country,region,exchange,currency,asset_class,index_source,sector,active
+7203,7203.T,Toyota Motor Corp,Japan,Japan,TSE,JPY,Equity,Nikkei 225,Consumer Discretionary,true
+6758,6758.T,Sony Group Corp,Japan,Japan,TSE,JPY,Equity,Nikkei 225,Consumer Discretionary,true

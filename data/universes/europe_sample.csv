@@ -1,0 +1,4 @@
+symbol,yahoo_ticker,name,country,region,exchange,currency,asset_class,index_source,sector,active
+ASML,ASML.AS,ASML Holding NV,Netherlands,Europe,Euronext Amsterdam,EUR,Equity,Euro Stoxx sample,Technology,true
+SAP,SAP.DE,SAP SE,Germany,Europe,XETRA,EUR,Equity,Euro Stoxx sample,Technology,true
+NOVO-B,NOVO-B.CO,Novo Nordisk A/S,Denmark,Europe,Nasdaq Copenhagen,DKK,Equity,Euro Stoxx sample,Healthcare,true

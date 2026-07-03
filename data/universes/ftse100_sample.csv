@@ -1,0 +1,4 @@
+symbol,yahoo_ticker,name,country,region,exchange,currency,asset_class,index_source,sector,active
+AZN,AZN.L,AstraZeneca PLC,United Kingdom,UK,LSE,GBp,Equity,FTSE 100,Healthcare,true
+SHEL,SHEL.L,Shell PLC,United Kingdom,UK,LSE,GBp,Equity,FTSE 100,Energy,true
+ULVR,ULVR.L,Unilever PLC,United Kingdom,UK,LSE,GBp,Equity,FTSE 100,Consumer Staples,true

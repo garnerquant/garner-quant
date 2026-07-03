@@ -1,0 +1,10 @@
+symbol,yahoo_ticker,name,country,region,exchange,currency,asset_class,index_source,sector,active
+VWRL,VWRL.L,Vanguard FTSE All-World UCITS ETF,United Kingdom,Global,LSE,GBp,ETF,current_assets,Global Equity,true
+IUSA,IUSA.L,iShares Core S&P 500 UCITS ETF,United Kingdom,US,LSE,GBp,ETF,current_assets,US Equity,true
+SGLN,SGLN.L,iShares Physical Gold ETC,United Kingdom,Global,LSE,GBp,Commodity,current_assets,Gold,true
+AAPL,AAPL,Apple Inc,United States,US,NASDAQ,USD,Equity,current_assets,Technology,true
+MSFT,MSFT,Microsoft Corp,United States,US,NASDAQ,USD,Equity,current_assets,Technology,true
+NVDA,NVDA,NVIDIA Corp,United States,US,NASDAQ,USD,Equity,current_assets,Technology,true
+TSLA,TSLA,Tesla Inc,United States,US,NASDAQ,USD,Equity,current_assets,Consumer Discretionary,true
+BTC-GBP,BTC-GBP,Bitcoin GBP,Global,Global,Crypto,GBP,Crypto,current_assets,Crypto,true
+ETH-GBP,ETH-GBP,Ethereum GBP,Global,Global,Crypto,GBP,Crypto,current_assets,Crypto,true
