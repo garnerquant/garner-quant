@@ -192,15 +192,82 @@ def freshness_item(label, filename, modified_at, badge, level, age, display=None
     }
 
 
-def runtime_current_item(label, filename, runtime_status, badge, display):
+HEALTH_FRESH = "fresh"
+HEALTH_EXPECTED_IDLE = "expected-idle"
+HEALTH_WAITING = "waiting"
+HEALTH_STALE = "stale"
+HEALTH_ERROR = "error"
+
+HEALTH_BADGES = {
+    HEALTH_FRESH: "\U0001f7e2 Fresh",
+    HEALTH_EXPECTED_IDLE: "\U0001f535 Expected Idle",
+    HEALTH_WAITING: "\U0001f7e1 Waiting",
+    HEALTH_STALE: "\U0001f534 Stale",
+    HEALTH_ERROR: "\u26ab Error",
+}
+
+
+def freshness_health_state(freshness):
+    level = freshness.get("level")
+    if level in {"live", "recent", "slightly-stale"}:
+        return HEALTH_FRESH
+    if level == "missing":
+        return HEALTH_ERROR
+    return HEALTH_STALE
+
+
+def freshness_health_item(label, filename, reference_time, display=None):
+    freshness = freshness_for_timestamp(reference_time)
+    state = freshness_health_state(freshness)
+    age = freshness["age"] if freshness.get("age") else "Unavailable"
+    return freshness_item(
+        label,
+        filename,
+        freshness["timestamp"],
+        HEALTH_BADGES[state],
+        state,
+        age,
+        display or ("Recently updated" if state == HEALTH_FRESH else None),
+    )
+
+
+def contextual_freshness_item(
+    label,
+    filename,
+    modified_at,
+    state,
+    display,
+):
+    return freshness_item(
+        label,
+        filename,
+        modified_at,
+        HEALTH_BADGES[state],
+        state,
+        format_age(modified_at) if modified_at else "Unavailable",
+        display,
+    )
+
+
+def runtime_current_item(label, filename, runtime_status, badge, display, state=None):
     reference_time = runtime_reference_time(runtime_status)
     freshness = freshness_for_timestamp(reference_time)
+    explicit_state = state
+    if explicit_state is None:
+        explicit_state = next(
+            (
+                health_state
+                for health_state, health_badge in HEALTH_BADGES.items()
+                if health_badge == badge
+            ),
+            None,
+        )
     return freshness_item(
         label,
         filename,
         freshness["timestamp"],
         badge,
-        freshness["level"] if freshness["level"] != "missing" else "recent",
+        explicit_state or freshness_health_state(freshness),
         freshness["age"],
         display,
     )
@@ -1189,21 +1256,37 @@ def inject_mission_control_css():
             border: 1px solid rgba(148,163,184,0.28);
             background: rgba(255,255,255,0.035);
         }
-        .gq-freshness.live, .gq-freshness.recent {
+        .gq-freshness-summary {
+            border-radius: 8px;
+            padding: 0.8rem 0.95rem;
+            margin: 0.35rem 0 0.75rem 0;
+            border: 1px solid rgba(148,163,184,0.28);
+            background: rgba(255,255,255,0.035);
+        }
+        .gq-summary-title {
+            font-weight: 800;
+            color: #f8fafc;
+            margin-bottom: 0.25rem;
+        }
+        .gq-summary-detail {
+            color: #cbd5e1;
+            line-height: 1.45;
+        }
+        .gq-freshness.fresh, .gq-freshness-summary.fresh {
             border-color: rgba(34,197,94,0.55);
         }
-        .gq-freshness.slightly-stale {
+        .gq-freshness.expected-idle, .gq-freshness-summary.expected-idle {
+            border-color: rgba(59,130,246,0.62);
+        }
+        .gq-freshness.waiting, .gq-freshness-summary.waiting {
             border-color: rgba(234,179,8,0.6);
         }
-        .gq-freshness.stale {
-            border-color: rgba(249,115,22,0.65);
-        }
-        .gq-freshness.very-stale {
+        .gq-freshness.stale, .gq-freshness-summary.stale {
             border-color: rgba(239,68,68,0.65);
         }
-        .gq-freshness.missing {
-            border-color: rgba(148,163,184,0.35);
-            opacity: 0.78;
+        .gq-freshness.error, .gq-freshness-summary.error {
+            border-color: rgba(15,23,42,0.85);
+            box-shadow: inset 0 0 0 1px rgba(239,68,68,0.35);
         }
         .gq-badge-buy { color:#166534; background:#dcfce7; padding:0.15rem 0.45rem; border-radius:999px; font-weight:700; }
         .gq-badge-sell { color:#991b1b; background:#fee2e2; padding:0.15rem 0.45rem; border-radius:999px; font-weight:700; }
@@ -1386,10 +1469,49 @@ def render_performance_strip(items):
     st.markdown("".join(cards), unsafe_allow_html=True)
 
 
-def data_freshness_items(runtime_status=None):
+def data_freshness_market_context(configured_markets):
+    statuses = market_statuses(configured_markets, MARKET_SESSIONS)
+    scheduled = [status for status in statuses if status.code != "CRYPTO"] or statuses
+    open_markets = [status for status in scheduled if status.is_open]
+    holidays = [status for status in scheduled if status.state == "HOLIDAY"]
+    now = pd.Timestamp.now(tz="Europe/London")
+    weekend = now.weekday() >= 5 and not open_markets
+
+    if holidays:
+        reason = "Holiday schedule: " + ", ".join(status.label for status in holidays)
+    elif weekend:
+        reason = "Weekend schedule"
+    elif not open_markets:
+        reason = "Awaiting next market session"
+    else:
+        reason = ""
+
+    return {
+        "statuses": statuses,
+        "open_markets": open_markets,
+        "holidays": holidays,
+        "weekend": weekend,
+        "reason": reason,
+        "scheduled_markets_closed": bool(scheduled and not open_markets),
+    }
+
+
+def no_trade_activity(execution_summary, runtime_status):
+    trade_count = int(
+        execution_summary.get("paper_trades")
+        or execution_summary.get("trades_recorded")
+        or runtime_status.get("trades_recorded_last_cycle")
+        or 0
+    )
+    return trade_count == 0
+
+
+def data_freshness_items(runtime_status=None, configured_markets=None):
     runtime_status = runtime_status or {}
+    configured_markets = configured_markets or ["LSE", "US", "TSE"]
     runtime_current = runtime_is_current(runtime_status)
     runtime_fresh = runtime_freshness(runtime_status)
+    runtime_state_info = runtime_state(runtime_status)
     execution_summary = runtime_status.get("execution_summary") or {}
     valuation_refresh = runtime_status.get("valuation_refresh") or {}
     market_intelligence = runtime_status.get("market_intelligence") or {}
@@ -1398,104 +1520,156 @@ def data_freshness_items(runtime_status=None):
     notifications_sent = int(runtime_status.get("notifications_sent", 0) or 0)
     trace_count = int(execution_summary.get("decision_trace_count", 0) or 0)
 
+    market_context = data_freshness_market_context(configured_markets)
+    idle_reason = market_context["reason"] or "No updates expected"
+    last_execution_status = runtime_status.get("last_execution_status")
+    execution_error = last_execution_status == "error" or bool(runtime_status.get("last_error"))
+
+    runtime_state_name = freshness_health_state(runtime_fresh)
+    if runtime_state_info["level"] == "error" or runtime_state_name == HEALTH_ERROR:
+        runtime_state_name = HEALTH_ERROR
+        runtime_display = runtime_state_info["last_error"] or "Requires attention"
+    elif not runtime_state_info["running"]:
+        runtime_state_name = HEALTH_ERROR
+        runtime_display = "Runtime stopped"
+    elif runtime_state_name == HEALTH_FRESH:
+        runtime_display = "Runtime active"
+    else:
+        runtime_display = "Runtime heartbeat requires attention"
+
     items = [
         freshness_item(
             "Runtime Status",
             "data/live_runtime_status.json",
             runtime_fresh["timestamp"],
-            runtime_fresh["badge"],
-            runtime_fresh["level"],
+            HEALTH_BADGES[runtime_state_name],
+            runtime_state_name,
             runtime_fresh["age"],
+            runtime_display,
         )
     ]
 
     execution_log_mtime = file_mtime("data/live_runtime_execution_log.json")
-    if runtime_current and (
+    if execution_error:
+        items.append(
+            contextual_freshness_item(
+                "Execution Log",
+                "data/live_runtime_execution_log.json",
+                execution_log_mtime,
+                HEALTH_ERROR,
+                runtime_status.get("last_error") or "Last execution requires attention",
+            )
+        )
+    elif runtime_current and (
         not markets_open
+        or market_context["scheduled_markets_closed"]
         or blocked_reason
         or not runtime_status.get("last_execution_at")
     ):
-        reason = blocked_reason or "market closed"
+        reason = blocked_reason or idle_reason
         items.append(
             runtime_current_item(
                 "Execution Log",
                 "data/live_runtime_execution_log.json",
                 runtime_status,
-                "No execution due",
-                f"Runtime current; paper execution not expected ({reason}).",
+                HEALTH_BADGES[HEALTH_WAITING],
+                f"Waiting for next execution ({reason})",
             )
         )
     else:
-        badge, level = freshness_badge(execution_log_mtime)
         items.append(
-            freshness_item(
+            freshness_health_item(
                 "Execution Log",
                 "data/live_runtime_execution_log.json",
                 execution_log_mtime,
-                badge,
-                level,
-                format_age(execution_log_mtime),
             )
         )
 
     trade_journal_mtime = file_mtime("trade_journal_v3.csv")
-    if runtime_current and not markets_open:
+    if execution_error:
+        items.append(
+            contextual_freshness_item(
+                "Trade Journal",
+                "trade_journal_v3.csv",
+                trade_journal_mtime,
+                HEALTH_ERROR,
+                "Paper execution failed before journal update",
+            )
+        )
+    elif runtime_current and (
+        not markets_open
+        or market_context["scheduled_markets_closed"]
+        or blocked_reason
+        or no_trade_activity(execution_summary, runtime_status)
+    ):
+        reason = (
+            idle_reason
+            if not markets_open or market_context["scheduled_markets_closed"]
+            else "No paper trades recorded"
+        )
         items.append(
             runtime_current_item(
                 "Trade Journal",
                 "trade_journal_v3.csv",
                 runtime_status,
-                "Event-based",
-                "No paper execution expected while markets are closed.",
+                HEALTH_BADGES[HEALTH_EXPECTED_IDLE],
+                f"Healthy - no activity required ({reason})",
             )
         )
     else:
-        badge, level = freshness_badge(trade_journal_mtime)
         items.append(
-            freshness_item(
+            freshness_health_item(
                 "Trade Journal",
                 "trade_journal_v3.csv",
                 trade_journal_mtime,
-                badge,
-                level,
-                format_age(trade_journal_mtime),
             )
         )
 
     portfolio_mtime = file_mtime("paper_portfolio_v3.csv")
     missing_tickers = valuation_refresh.get("missing_tickers") or []
-    if valuation_refresh.get("reason") == "missing prices for open holdings":
+    if (
+        valuation_refresh.get("status") == "error"
+        or valuation_refresh.get("reason") == "missing prices for open holdings"
+    ):
         items.append(
-            freshness_item(
+            contextual_freshness_item(
                 "Portfolio",
                 "paper_portfolio_v3.csv",
                 portfolio_mtime,
-                "Missing prices",
-                "stale",
-                format_age(portfolio_mtime),
-                f"Missing latest prices for: {', '.join(map(str, missing_tickers))}",
+                HEALTH_ERROR,
+                (
+                    f"Missing latest prices for: {', '.join(map(str, missing_tickers))}"
+                    if missing_tickers
+                    else valuation_refresh.get("error", "Portfolio valuation requires attention")
+                ),
             )
         )
     elif runtime_current and valuation_refresh:
+        changed_files = safe_list(valuation_refresh.get("changed_files"))
+        state = (
+            HEALTH_FRESH
+            if "paper_portfolio_v3.csv" in changed_files
+            else HEALTH_EXPECTED_IDLE
+        )
         items.append(
             runtime_current_item(
                 "Portfolio",
                 "paper_portfolio_v3.csv",
                 runtime_status,
-                "Valuation checked",
-                "Runtime checked valuation; file writes only when values change.",
+                HEALTH_BADGES[state],
+                (
+                    "Recently updated"
+                    if state == HEALTH_FRESH
+                    else "Healthy - no position changes"
+                ),
             )
         )
     else:
-        badge, level = freshness_badge(portfolio_mtime)
         items.append(
-            freshness_item(
+            freshness_health_item(
                 "Portfolio",
                 "paper_portfolio_v3.csv",
                 portfolio_mtime,
-                badge,
-                level,
-                format_age(portfolio_mtime),
             )
         )
 
@@ -1506,8 +1680,8 @@ def data_freshness_items(runtime_status=None):
                 "Decision Trace",
                 "data/runtime_decision_trace.json",
                 runtime_status,
-                "Not created yet",
-                "Created only after a paper execution decision pass.",
+                HEALTH_BADGES[HEALTH_EXPECTED_IDLE],
+                "No decision pass expected yet",
             )
         )
     elif decision_trace_mtime == "" and runtime_current and trace_count > 0:
@@ -1516,72 +1690,102 @@ def data_freshness_items(runtime_status=None):
                 "Decision Trace",
                 "data/runtime_decision_trace.json",
                 runtime_status,
-                "Remote trace reported",
+                HEALTH_BADGES[HEALTH_FRESH],
                 "Runtime reports decisions, but no local trace file is available.",
             )
         )
-    else:
-        badge, level = freshness_badge(decision_trace_mtime)
+    elif runtime_current and trace_count == 0 and (
+        blocked_reason or not markets_open or market_context["scheduled_markets_closed"]
+    ):
         items.append(
-            freshness_item(
+            runtime_current_item(
+                "Decision Trace",
+                "data/runtime_decision_trace.json",
+                runtime_status,
+                HEALTH_BADGES[HEALTH_EXPECTED_IDLE],
+                f"No decision trace expected ({blocked_reason or idle_reason})",
+            )
+        )
+    else:
+        items.append(
+            freshness_health_item(
                 "Decision Trace",
                 "data/runtime_decision_trace.json",
                 decision_trace_mtime,
-                badge,
-                level,
-                format_age(decision_trace_mtime),
             )
         )
 
     notification_mtime = file_mtime("data/notification_state.json")
-    if runtime_current and notifications_sent == 0:
+    notification_summary = runtime_status.get("notification_summary") or {}
+    notification_errors = safe_list(notification_summary.get("errors"))
+    if notification_errors:
+        items.append(
+            contextual_freshness_item(
+                "Telegram Notifications",
+                "data/notification_state.json",
+                notification_mtime,
+                HEALTH_ERROR,
+                "Telegram delivery requires attention",
+            )
+        )
+    elif runtime_current and notifications_sent == 0:
         items.append(
             runtime_current_item(
                 "Telegram Notifications",
                 "data/notification_state.json",
                 runtime_status,
-                "No notifications due",
-                "Notification state changes only when alerts or trade messages are sent.",
+                HEALTH_BADGES[HEALTH_EXPECTED_IDLE],
+                "No alerts or trade messages due",
             )
         )
     else:
-        badge, level = freshness_badge(notification_mtime)
         items.append(
-            freshness_item(
+            freshness_health_item(
                 "Telegram Notifications",
                 "data/notification_state.json",
                 notification_mtime,
-                badge,
-                level,
-                format_age(notification_mtime),
             )
         )
 
     intelligence_time = market_intelligence.get("generated_at") or file_mtime(
         "data/market_intelligence.json"
     )
-    if market_intelligence.get("generated_at"):
-        freshness = freshness_for_timestamp(intelligence_time)
+    intelligence_freshness = freshness_for_timestamp(intelligence_time)
+    intelligence_state = freshness_health_state(intelligence_freshness)
+    if (
+        runtime_current
+        and intelligence_state == HEALTH_STALE
+        and market_context["scheduled_markets_closed"]
+    ):
         items.append(
-            freshness_item(
+            contextual_freshness_item(
                 "Market Intelligence",
                 "data/market_intelligence.json",
-                freshness["timestamp"],
-                freshness["badge"],
-                freshness["level"],
-                freshness["age"],
+                intelligence_freshness["timestamp"],
+                HEALTH_EXPECTED_IDLE,
+                f"No updates expected ({idle_reason})",
             )
         )
-    else:
-        badge, level = freshness_badge(intelligence_time)
+    elif market_intelligence.get("generated_at"):
+        display = (
+            "Recently updated with source warnings"
+            if int(market_intelligence.get("errors", 0) or 0) > 0
+            else None
+        )
         items.append(
-            freshness_item(
+            freshness_health_item(
                 "Market Intelligence",
                 "data/market_intelligence.json",
                 intelligence_time,
-                badge,
-                level,
-                format_age(intelligence_time),
+                display=display,
+            )
+        )
+    else:
+        items.append(
+            freshness_health_item(
+                "Market Intelligence",
+                "data/market_intelligence.json",
+                intelligence_time,
             )
         )
 
@@ -1590,13 +1794,89 @@ def data_freshness_items(runtime_status=None):
 
 def data_freshness_summary(items):
     levels = [item["level"] for item in items]
-    if any(level == "missing" for level in levels):
-        return "Some runtime data files are missing."
-    if any(level in {"stale", "very-stale"} for level in levels):
-        return "Runtime appears inactive."
-    if any(level == "slightly-stale" for level in levels):
-        return "Some runtime data appears stale."
-    return "All runtime data is current."
+    if any(level == HEALTH_ERROR for level in levels):
+        return "Attention required. One or more runtime data checks reported an error."
+    if any(level == HEALTH_STALE for level in levels):
+        return "Attention required. Data expected by the dashboard has not updated."
+    if any(level == HEALTH_WAITING for level in levels):
+        return "Waiting for the next scheduled runtime or market event."
+    if any(level == HEALTH_EXPECTED_IDLE for level in levels):
+        return "System healthy. Some files are idle because no update is currently required."
+    return "System healthy. Runtime data is current."
+
+
+def data_freshness_banner(items, runtime_status, configured_markets):
+    levels = [item["level"] for item in items]
+    state = runtime_state(runtime_status)
+    market_context = data_freshness_market_context(configured_markets)
+
+    if any(level == HEALTH_ERROR for level in levels) or not state["running"]:
+        problem = next(
+            (
+                item
+                for item in items
+                if item["level"] in {HEALTH_ERROR, HEALTH_STALE}
+            ),
+            None,
+        )
+        detail = (
+            f"{problem['label']} requires attention."
+            if problem
+            else "Runtime is stopped or unavailable."
+        )
+        return HEALTH_ERROR, "Attention Required", [
+            detail,
+            "Review the runtime status before relying on live figures.",
+        ]
+
+    if any(level == HEALTH_STALE for level in levels):
+        problem = next(item for item in items if item["level"] == HEALTH_STALE)
+        return HEALTH_STALE, "Attention Required", [
+            f"{problem['label']} data expected but has not updated.",
+            "Red is reserved for files that should have changed.",
+        ]
+
+    if market_context["scheduled_markets_closed"]:
+        reason = market_context["reason"] or "Markets closed"
+        return HEALTH_EXPECTED_IDLE, "System Healthy", [
+            "Runtime active.",
+            reason + ".",
+            "No updates currently expected.",
+        ]
+
+    if any(level == HEALTH_WAITING for level in levels):
+        return HEALTH_WAITING, "Waiting for Market Open", [
+            "Runtime active.",
+            "Waiting for the next execution window.",
+        ]
+
+    return HEALTH_FRESH, "System Healthy", [
+        "Runtime active.",
+        "Recently updated.",
+    ]
+
+
+def render_data_freshness_summary_banner(items, runtime_status, configured_markets):
+    state, title, lines = data_freshness_banner(
+        items,
+        runtime_status,
+        configured_markets,
+    )
+    icon = HEALTH_BADGES[state].split(" ", 1)[0]
+    detail_html = "".join(
+        f"<div>{html.escape(line)}</div>"
+        for line in lines
+        if line
+    )
+    st.markdown(
+        (
+            f'<div class="gq-freshness-summary {html.escape(state)}">'
+            f'<div class="gq-summary-title">{html.escape(icon)} {html.escape(title)}</div>'
+            f'<div class="gq-summary-detail">{detail_html}</div>'
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def render_data_freshness_card(items):
@@ -2610,7 +2890,12 @@ st.info(
 )
 
 st.markdown("**Data Freshness**")
-freshness_items = data_freshness_items(runtime_status)
+freshness_items = data_freshness_items(runtime_status, configured_markets)
+render_data_freshness_summary_banner(
+    freshness_items,
+    runtime_status,
+    configured_markets,
+)
 render_data_freshness_card(freshness_items)
 st.caption(data_freshness_summary(freshness_items))
 
