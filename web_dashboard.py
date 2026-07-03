@@ -175,6 +175,105 @@ def inject_mobile_css():
             text-align:right;
         }
 
+        .scanner-card {
+            background:#0b1220;
+            border:1px solid rgba(148,163,184,0.24);
+            border-radius:8px;
+            padding:14px;
+            margin-bottom:14px;
+            min-height:250px;
+        }
+
+        .scanner-card-head {
+            display:flex;
+            justify-content:space-between;
+            gap:12px;
+            align-items:flex-start;
+            margin-bottom:8px;
+        }
+
+        .scanner-rank {
+            color:#93c5fd;
+            font-size:13px;
+            font-weight:700;
+        }
+
+        .scanner-ticker {
+            color:#f8fafc;
+            font-size:20px;
+            font-weight:760;
+            line-height:1.15;
+            overflow-wrap:anywhere;
+        }
+
+        .scanner-name {
+            color:#cbd5e1;
+            font-size:13px;
+            margin-top:2px;
+            overflow-wrap:anywhere;
+        }
+
+        .scanner-score {
+            color:#68ff8b;
+            font-size:18px;
+            font-weight:760;
+            text-align:right;
+            white-space:nowrap;
+        }
+
+        .scanner-badges {
+            display:flex;
+            flex-wrap:wrap;
+            gap:6px;
+            margin:8px 0;
+        }
+
+        .scanner-badge {
+            color:#dbeafe;
+            background:rgba(37,99,235,0.18);
+            border:1px solid rgba(96,165,250,0.28);
+            border-radius:999px;
+            padding:2px 8px;
+            font-size:12px;
+            line-height:1.5;
+        }
+
+        .scanner-quality-pass {
+            color:#bbf7d0;
+            background:rgba(22,101,52,0.22);
+            border-color:rgba(74,222,128,0.28);
+        }
+
+        .scanner-quality-fail {
+            color:#fecaca;
+            background:rgba(153,27,27,0.22);
+            border-color:rgba(248,113,113,0.28);
+        }
+
+        .scanner-facts {
+            display:grid;
+            grid-template-columns:1fr 1fr;
+            gap:6px 10px;
+            color:#cbd5e1;
+            font-size:12px;
+            margin:8px 0;
+        }
+
+        .scanner-fact-label {
+            color:#94a3b8;
+        }
+
+        .scanner-card ul {
+            margin:8px 0 0 18px;
+            padding:0;
+            color:#d1d5db;
+            font-size:13px;
+        }
+
+        .scanner-card li {
+            margin-bottom:4px;
+        }
+
         .signal-badge {
             display:inline-flex;
             align-items:center;
@@ -1299,6 +1398,172 @@ def render_scanner_table(frame, columns):
     responsive_table(frame[display_columns], hide_index=True)
 
 
+def scanner_display_value(row, column, fallback="Unavailable"):
+    if column not in row.index:
+        return fallback
+
+    value = row.get(column)
+    if pd.isna(value):
+        return fallback
+
+    text = str(value).strip()
+    return text if text else fallback
+
+
+def scanner_number(row, column, fallback=None):
+    if column not in row.index:
+        return fallback
+
+    try:
+        value = float(row.get(column))
+    except Exception:
+        return fallback
+
+    if pd.isna(value):
+        return fallback
+
+    return value
+
+
+def scanner_yes(row, column):
+    if column not in row.index:
+        return False
+
+    return str(row.get(column)).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def scanner_compact_number(value):
+    if value is None or pd.isna(value):
+        return "Unavailable"
+
+    abs_value = abs(float(value))
+    if abs_value >= 1_000_000_000_000:
+        return f"{value / 1_000_000_000_000:.1f}T"
+    if abs_value >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.1f}B"
+    if abs_value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if abs_value >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    return f"{value:.0f}"
+
+
+def scanner_quality_label(row):
+    return "Pass" if scanner_yes(row, "data_quality_pass") else "Fail"
+
+
+def scanner_why_selected(row):
+    bullets = []
+
+    scanner_score = scanner_number(row, "scanner_score")
+    if scanner_score is not None:
+        if scanner_score >= 140:
+            bullets.append("Strong scanner score")
+        else:
+            bullets.append("Ranked by scanner score")
+
+    if scanner_yes(row, "latest_close_present") and not scanner_yes(
+        row,
+        "stale_latest_price",
+    ):
+        bullets.append("Clean recent price data")
+
+    liquidity = scanner_number(row, "avg_traded_value_60d")
+    if liquidity is not None and liquidity > 0:
+        bullets.append("Liquidity proxy available from recent price and volume")
+
+    technical_score = scanner_number(row, "technical_score")
+    if technical_score is not None and technical_score >= 3:
+        bullets.append("Positive momentum / technical score")
+
+    region = scanner_display_value(row, "region", "")
+    if region:
+        bullets.append(f"Selected from {region} opportunity set")
+
+    return bullets[:5]
+
+
+def render_opportunity_intelligence(selected):
+    st.divider()
+    st.subheader("Opportunity Intelligence")
+    st.caption(
+        "Research-only explanations based on scanner output fields. These cards "
+        "do not place or modify trades."
+    )
+    st.caption(
+        f"Last Scanner Run: {scanner_file_modified_label('latest_rankings.csv')}"
+    )
+
+    if selected.empty:
+        st.info("No selected candidates available for opportunity intelligence.")
+        return
+
+    cards = selected.copy()
+    if "rank" in cards.columns:
+        cards = cards.sort_values("rank", ascending=True)
+    cards = cards.head(5)
+
+    columns = responsive_columns(min(3, max(1, len(cards))))
+    for index, (_, row) in enumerate(cards.iterrows()):
+        rank = scanner_display_value(row, "rank", "?")
+        ticker = html.escape(scanner_display_value(row, "yahoo_ticker", "UNKNOWN"))
+        name = html.escape(scanner_display_value(row, "name", "Unnamed candidate"))
+        region = html.escape(scanner_display_value(row, "region", "Unknown region"))
+        sector = html.escape(scanner_display_value(row, "sector", "Unknown sector"))
+        quality = scanner_quality_label(row)
+        quality_class = (
+            "scanner-quality-pass"
+            if quality == "Pass"
+            else "scanner-quality-fail"
+        )
+        score = scanner_number(row, "scanner_score")
+        score_label = "Unavailable" if score is None else f"{score:.1f}"
+        close = scanner_number(row, "latest_close")
+        close_label = "Unavailable" if close is None else f"{close:,.2f}"
+        liquidity = scanner_number(row, "avg_traded_value_60d")
+        liquidity_label = scanner_compact_number(liquidity)
+        technical_score = scanner_number(row, "technical_score")
+        technical_label = (
+            "Unavailable"
+            if technical_score is None
+            else f"{technical_score:.1f}"
+        )
+        bullets = scanner_why_selected(row)
+        bullet_html = "".join(
+            f"<li>{html.escape(str(bullet))}</li>"
+            for bullet in bullets
+        )
+
+        with columns[index % len(columns)]:
+            st.markdown(
+                f"""
+                <div class="scanner-card">
+                    <div class="scanner-card-head">
+                        <div>
+                            <div class="scanner-rank">Rank {html.escape(str(rank))}</div>
+                            <div class="scanner-ticker">{ticker}</div>
+                            <div class="scanner-name">{name}</div>
+                        </div>
+                        <div class="scanner-score">{html.escape(score_label)}</div>
+                    </div>
+                    <div class="scanner-badges">
+                        <span class="scanner-badge">{region}</span>
+                        <span class="scanner-badge">{sector}</span>
+                        <span class="scanner-badge {quality_class}">Data Quality: {quality}</span>
+                    </div>
+                    <div class="scanner-facts">
+                        <div><span class="scanner-fact-label">Latest close</span><br>{html.escape(close_label)}</div>
+                        <div><span class="scanner-fact-label">Liquidity proxy</span><br>{html.escape(liquidity_label)}</div>
+                        <div><span class="scanner-fact-label">Technical score</span><br>{html.escape(technical_label)}</div>
+                        <div><span class="scanner-fact-label">Scanner score</span><br>{html.escape(score_label)}</div>
+                    </div>
+                    <ul>{bullet_html}</ul>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
 def render_global_scanner_page():
     st.subheader("Global Scanner")
     st.caption("Research Only / Not Live Trading")
@@ -1375,6 +1640,8 @@ def render_global_scanner_page():
         "Research outputs are local to this dashboard session and may reset "
         "when the app restarts."
     )
+
+    render_opportunity_intelligence(selected)
 
     st.divider()
     st.subheader("Region Breakdown")
