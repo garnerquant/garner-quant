@@ -6,7 +6,7 @@
     "paper_execution"
   ],
   "cycle_seconds": 300,
-  "markets": ["LSE", "US", "TSE"],
+  "markets": ["LSE", "US", "TSE", "CRYPTO"],
   "send_notifications": true,
   "paper_execution_enabled": true
 }

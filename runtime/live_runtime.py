@@ -16,6 +16,7 @@ from execution.live_market_monitor import (  # noqa: E402
     load_current_holding_tickers,
     run_live_market_monitor,
 )
+from config import ASSETS  # noqa: E402
 from notifications.alert_notifier import notify_alerts  # noqa: E402
 
 
@@ -29,7 +30,7 @@ DEFAULT_CONFIG = {
     "mode": "monitor_only",
     "allowed_modes": ["monitor_only", "paper_execution"],
     "cycle_seconds": 300,
-    "markets": ["LSE", "US", "TSE"],
+    "markets": ["LSE", "US", "TSE", "CRYPTO"],
     "send_notifications": True,
     "paper_execution_enabled": False,
 }
@@ -49,6 +50,10 @@ MARKET_SESSIONS = {
         "timezone": "Asia/Tokyo",
         "open": time(9, 0),
         "close": time(15, 0),
+    },
+    "CRYPTO": {
+        "timezone": "UTC",
+        "always_open": True,
     },
 }
 
@@ -341,10 +346,65 @@ def market_for_ticker(ticker):
     if ticker.endswith(".T"):
         return "TSE"
 
+    if is_crypto_ticker(ticker):
+        return "CRYPTO"
+
     if ticker and "." not in ticker:
         return "US"
 
     return "UNKNOWN"
+
+
+def is_crypto_ticker(ticker):
+    ticker = str(ticker or "").strip().upper()
+
+    asset_config = ASSETS.get(ticker, {})
+    if str(asset_config.get("type", "")).lower() == "crypto":
+        return True
+
+    if "-" not in ticker:
+        return False
+
+    base, quote = ticker.split("-", 1)
+    crypto_bases = {
+        "BTC",
+        "ETH",
+        "SOL",
+        "ADA",
+        "XRP",
+        "DOGE",
+        "LTC",
+        "BCH",
+        "DOT",
+        "LINK",
+        "AVAX",
+        "MATIC",
+    }
+    crypto_quotes = {
+        "GBP",
+        "USD",
+        "EUR",
+        "USDT",
+        "USDC",
+    }
+    return base in crypto_bases and quote in crypto_quotes
+
+
+def strategy_universe_tickers():
+    return list(ASSETS.keys())
+
+
+def relevant_market_tickers(holding_tickers):
+    return sorted(
+        {
+            str(ticker)
+            for ticker in [
+                *strategy_universe_tickers(),
+                *(holding_tickers or []),
+            ]
+            if str(ticker).strip()
+        }
+    )
 
 
 def markets_for_holdings(tickers):
@@ -359,7 +419,7 @@ def markets_for_holdings(tickers):
             markets.add(market)
 
     if unknown:
-        markets.update(["LSE", "US", "TSE"])
+        markets.update(MARKET_SESSIONS.keys())
 
     return sorted(markets), unknown
 
@@ -369,6 +429,9 @@ def is_session_open(market, now=None):
 
     if session is None:
         return False
+
+    if session.get("always_open"):
+        return True
 
     now = now or utc_now()
     local_now = now.astimezone(ZoneInfo(session["timezone"]))
@@ -781,9 +844,10 @@ def run_cycle(config, started_at, cycle_count):
     )
     save_execution_log(load_execution_log())
     tickers = load_current_holding_tickers()
-    holding_markets, unknown_tickers = markets_for_holdings(tickers)
+    market_tickers = relevant_market_tickers(tickers)
+    relevant_markets, unknown_tickers = markets_for_holdings(market_tickers)
     configured_markets = set(config.get("markets", []))
-    markets_checked = sorted(set(holding_markets) & configured_markets)
+    markets_checked = sorted(set(relevant_markets) & configured_markets)
 
     if not markets_checked:
         markets_checked = sorted(configured_markets)
