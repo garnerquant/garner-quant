@@ -27,6 +27,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 SCANNER_OUTPUT_DIR = PROJECT_ROOT / "data" / "global_scanner"
 SCANNER_UNIVERSE_DIR = PROJECT_ROOT / "data" / "universes"
 SCANNER_HISTORY_DIR = SCANNER_OUTPUT_DIR / "history"
+SCANNER_REQUIRED_OUTPUTS = [
+    "universe_validated.csv",
+    "latest_rankings.csv",
+    "selected_candidates.csv",
+]
+SCANNER_STALE_AFTER = pd.Timedelta(hours=6)
 
 try:
     from ui.auto_refresh import (
@@ -712,6 +718,93 @@ def scanner_file_modified_label(filename):
         return modified.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return "Unknown"
+
+
+def scanner_output_state():
+    files = {
+        filename: SCANNER_OUTPUT_DIR / filename
+        for filename in SCANNER_REQUIRED_OUTPUTS
+    }
+    missing = [
+        filename
+        for filename, path in files.items()
+        if not path.exists()
+    ]
+    latest_rankings = files["latest_rankings.csv"]
+    modified = None
+    age = None
+    stale = False
+
+    if latest_rankings.exists():
+        try:
+            modified = pd.Timestamp.fromtimestamp(latest_rankings.stat().st_mtime)
+            age = pd.Timestamp.now() - modified
+            stale = bool(age > SCANNER_STALE_AFTER)
+        except Exception:
+            stale = True
+
+    return {
+        "missing": missing,
+        "modified": modified,
+        "age": age,
+        "stale": stale if not missing else False,
+        "fresh": not missing and not stale,
+    }
+
+
+def scanner_state_label(state):
+    if state["missing"]:
+        return "missing"
+    if state["stale"]:
+        return "stale"
+    return "fresh"
+
+
+def render_scanner_auto_refresh_status():
+    state = scanner_output_state()
+    label = scanner_state_label(state)
+
+    if label == "fresh":
+        modified = state.get("modified")
+        if modified is not None:
+            st.success(
+                "Scanner output is fresh. "
+                f"Last refreshed {modified.strftime('%Y-%m-%d %H:%M:%S')}."
+            )
+        else:
+            st.success("Scanner output is fresh.")
+        return scanner_output_state()
+
+    session_key = f"global_scanner_auto_refresh_attempted_{label}"
+    if st.session_state.get(session_key):
+        if label == "missing":
+            st.warning(
+                "Scanner outputs are missing. Automatic refresh was already "
+                "attempted in this session."
+            )
+        else:
+            st.warning(
+                "Scanner outputs are stale. Automatic refresh was already "
+                "attempted in this session."
+            )
+        return scanner_output_state()
+
+    st.session_state[session_key] = True
+    reason = "missing" if label == "missing" else "older than 6 hours"
+
+    with st.spinner(f"Refreshing research scanner because outputs are {reason}..."):
+        try:
+            result = run_research_scanner_from_dashboard()
+            st.success(
+                "Scanner refreshed automatically: "
+                f"{result.get('validated_rows', 0)} validated, "
+                f"{result.get('selected_rows', 0)} selected, "
+                f"{result.get('quality_failures', 0)} failed."
+            )
+        except Exception as exc:
+            st.error(f"Scanner refresh failed: {exc}")
+
+    return scanner_output_state()
 
 
 def scanner_bool_series(frame, column):
@@ -2209,12 +2302,14 @@ def render_global_scanner_page():
         "reset when the app restarts."
     )
 
-    if st.button("Run Research Scanner", type="primary"):
+    render_scanner_auto_refresh_status()
+
+    if st.button("Refresh Scanner Now", type="primary"):
         with st.spinner("Running research scanner..."):
             try:
                 result = run_research_scanner_from_dashboard()
                 st.success(
-                    "Scanner completed: "
+                    "Scanner refreshed: "
                     f"{result.get('validated_rows', 0)} validated, "
                     f"{result.get('selected_rows', 0)} selected, "
                     f"{result.get('quality_failures', 0)} failed."
@@ -2230,7 +2325,7 @@ def render_global_scanner_page():
     if validated.empty and rankings.empty and selected.empty:
         st.warning("No scanner outputs found yet.")
         st.caption(
-            "Use the Run Research Scanner button above to generate local "
+            "Use the Refresh Scanner Now button above to generate local "
             "research outputs for this dashboard session."
         )
         return
