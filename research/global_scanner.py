@@ -158,14 +158,26 @@ def calculate_quality(universe, prices, volumes):
             and volume_present
         )
 
-        score = 0.0
-        score += 20.0 if latest_close_present else 0.0
-        score += min(valid_bar_count / 252.0, 1.0) * 20.0
-        score += max(0.0, 1.0 - missing_close_pct) * 20.0
-        score += 20.0 if not stale_latest_price else 0.0
-        score += 10.0 if volume_present else 0.0
-        score += 0.0 if pd.isna(tech_score) else float(tech_score) * 10.0
-        score += min(np.log10(max(avg_traded_value_60d, 1.0)) * 2.0, 20.0)
+        freshness_component = (
+            (20.0 if latest_close_present else 0.0)
+            + (20.0 if not stale_latest_price else 0.0)
+        )
+        history_component = min(valid_bar_count / 252.0, 1.0) * 20.0
+        missing_data_component = max(0.0, 1.0 - missing_close_pct) * 20.0
+        volume_component = 10.0 if volume_present else 0.0
+        technical_component = 0.0 if pd.isna(tech_score) else float(tech_score) * 10.0
+        liquidity_component = min(
+            np.log10(max(avg_traded_value_60d, 1.0)) * 2.0,
+            20.0,
+        )
+        score = (
+            freshness_component
+            + history_component
+            + missing_data_component
+            + volume_component
+            + technical_component
+            + liquidity_component
+        )
 
         rows.append(
             {
@@ -180,6 +192,12 @@ def calculate_quality(universe, prices, volumes):
                 "avg_traded_value_60d": avg_traded_value_60d,
                 "technical_score": tech_score,
                 "data_quality_pass": data_quality_pass,
+                "freshness_component": freshness_component,
+                "history_component": history_component,
+                "missing_data_component": missing_data_component,
+                "volume_component": volume_component,
+                "technical_component": technical_component,
+                "liquidity_component": liquidity_component,
                 "scanner_score": score,
             }
         )

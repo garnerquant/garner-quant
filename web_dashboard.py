@@ -1915,6 +1915,24 @@ def scanner_rank_label(value):
     return f"#{numeric}"
 
 
+SCANNER_SCORE_COMPONENTS = [
+    "freshness_component",
+    "history_component",
+    "missing_data_component",
+    "volume_component",
+    "technical_component",
+    "liquidity_component",
+]
+
+
+def scanner_has_score_components(row):
+    return all(column in row.index for column in SCANNER_SCORE_COMPONENTS)
+
+
+def scanner_component_number(row, column):
+    return scanner_number(row, column)
+
+
 def scanner_change_cards(selected, history):
     if len(history) < 2 or selected.empty:
         return None
@@ -2185,6 +2203,68 @@ def render_scanner_history_intelligence(validated, selected, history):
 
 def scanner_why_selected(row):
     bullets = []
+
+    if scanner_has_score_components(row):
+        freshness = scanner_component_number(row, "freshness_component")
+        history = scanner_component_number(row, "history_component")
+        missing_data = scanner_component_number(row, "missing_data_component")
+        volume = scanner_component_number(row, "volume_component")
+        technical = scanner_component_number(row, "technical_component")
+        liquidity = scanner_component_number(row, "liquidity_component")
+
+        if freshness is not None:
+            if freshness >= 40:
+                bullets.append("Data current")
+            elif freshness >= 20:
+                bullets.append("Caution: price freshness is mixed")
+            else:
+                bullets.append("Caution: price data may be stale or unavailable")
+
+        if history is not None:
+            if history >= 18:
+                bullets.append("Strong history coverage")
+            elif history >= 10:
+                bullets.append("Moderate history coverage")
+            else:
+                bullets.append("Caution: limited price history")
+
+        if missing_data is not None:
+            if missing_data >= 18:
+                bullets.append("Missing data low")
+            elif missing_data >= 15:
+                bullets.append("Some missing data in history")
+            else:
+                bullets.append("Caution: elevated missing data")
+
+        technical_score = scanner_number(row, "technical_score")
+        if technical is not None:
+            technical_label = (
+                "unavailable"
+                if technical_score is None
+                else f"{technical_score:.1f}/5"
+            )
+            if technical >= 40:
+                bullets.append(f"Strong technical score ({technical_label})")
+            elif technical >= 30:
+                bullets.append(f"Positive technical score ({technical_label})")
+            else:
+                bullets.append(f"Caution: technical score is modest ({technical_label})")
+
+        if liquidity is not None:
+            if liquidity >= 16:
+                bullets.append("Liquidity component healthy")
+            elif liquidity >= 8:
+                bullets.append("Liquidity component moderate")
+            else:
+                bullets.append("Caution: liquidity component is weak")
+
+        if volume is not None:
+            if volume >= 10:
+                bullets.append("Recent volume data present")
+            else:
+                bullets.append("Caution: recent volume data is weak")
+
+        return bullets
 
     scanner_score = scanner_number(row, "scanner_score")
     if scanner_score is not None:
