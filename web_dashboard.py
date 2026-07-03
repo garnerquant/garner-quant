@@ -1303,8 +1303,10 @@ def render_global_scanner_page():
     st.subheader("Global Scanner")
     st.caption("Research Only / Not Live Trading")
     st.info(
-        "Scanner outputs are read-only research artifacts. They are not wired "
-        "into main_v2.py, runtime execution, Portfolio Manager, or live trades."
+        "**Research Only**\n\n"
+        "The Global Scanner generates investment research and opportunity "
+        "rankings. Running the scanner updates research results only and does "
+        "not place or modify trades."
     )
     st.caption(
         "On Streamlit Cloud, scanner outputs are local ephemeral files and may "
