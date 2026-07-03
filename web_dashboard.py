@@ -1334,7 +1334,6 @@ def render_global_scanner_page():
             "Use the Run Research Scanner button above to generate local "
             "research outputs for this dashboard session."
         )
-        st.code("python -m research.global_scanner", language="bash")
         return
 
     validated_pass = scanner_bool_series(validated, "data_quality_pass")
@@ -1355,15 +1354,25 @@ def render_global_scanner_page():
     with cols[3]:
         metric_card("Failed Tickers", len(failed), len(failed) == 0)
 
-    st.caption(
-        "Output timestamps | "
-        f"validated: {scanner_file_modified_label('universe_validated.csv')} | "
-        f"rankings: {scanner_file_modified_label('latest_rankings.csv')} | "
-        f"selected: {scanner_file_modified_label('selected_candidates.csv')}"
-    )
+    st.subheader("Research Status")
+    status_cols = responsive_columns(4)
+    with status_cols[0]:
+        metric_card(
+            "Last Scanner Run",
+            scanner_file_modified_label("latest_rankings.csv"),
+            True,
+        )
+    with status_cols[1]:
+        metric_card("Universe Size", len(validated))
+    with status_cols[2]:
+        metric_card("Selected Candidates", len(selected), len(selected) > 0)
+    with status_cols[3]:
+        metric_card("Failed Tickers", len(failed), len(failed) == 0)
 
-    st.markdown("Run or refresh the scanner from a terminal:")
-    st.code("python -m research.global_scanner", language="bash")
+    st.caption(
+        "Research outputs are local to this dashboard session and may reset "
+        "when the app restarts."
+    )
 
     st.divider()
     st.subheader("Region Breakdown")
