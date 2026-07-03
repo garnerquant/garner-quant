@@ -972,48 +972,55 @@ def scanner_state_label(state):
     return "fresh"
 
 
-def render_scanner_auto_refresh_status():
+def render_scanner_auto_refresh_status(show_messages=True):
     state = scanner_output_state()
     label = scanner_state_label(state)
 
     if label == "fresh":
         modified = state.get("modified")
-        if modified is not None:
-            st.success(
-                "Scanner output is fresh. "
-                f"Last refreshed {format_scanner_timestamp(modified)}."
-            )
-        else:
-            st.success("Scanner output is fresh.")
+        if show_messages:
+            if modified is not None:
+                st.success(
+                    "Scanner output is fresh. "
+                    f"Last refreshed {format_scanner_timestamp(modified)}."
+                )
+            else:
+                st.success("Scanner output is fresh.")
         return scanner_output_state()
 
     session_key = f"global_scanner_auto_refresh_attempted_{label}"
     if st.session_state.get(session_key):
-        if label == "missing":
-            st.warning(
-                "Scanner outputs are missing. Automatic refresh was already "
-                "attempted in this session."
-            )
-        else:
-            st.warning(
-                "Scanner outputs are stale. Automatic refresh was already "
-                "attempted in this session."
-            )
+        if show_messages:
+            if label == "missing":
+                st.warning(
+                    "Scanner outputs are missing. Automatic refresh was already "
+                    "attempted in this session."
+                )
+            else:
+                st.warning(
+                    "Scanner outputs are stale. Automatic refresh was already "
+                    "attempted in this session."
+                )
         return scanner_output_state()
 
     st.session_state[session_key] = True
     reason = "missing" if label == "missing" else "older than 6 hours"
 
-    with st.spinner(f"Refreshing research scanner because outputs are {reason}..."):
-        try:
+    try:
+        if show_messages:
+            with st.spinner(f"Refreshing research scanner because outputs are {reason}..."):
+                result = run_research_scanner_from_dashboard()
+        else:
             result = run_research_scanner_from_dashboard()
+        if show_messages:
             st.success(
                 "Scanner refreshed automatically: "
                 f"{result.get('validated_rows', 0)} validated, "
                 f"{result.get('selected_rows', 0)} selected, "
                 f"{result.get('quality_failures', 0)} failed."
             )
-        except Exception as exc:
+    except Exception as exc:
+        if show_messages:
             st.error(f"Scanner refresh failed: {exc}")
 
     return scanner_output_state()
@@ -2979,9 +2986,13 @@ def scanner_history_table(history):
     return table.drop(columns=["sort_timestamp"], errors="ignore")[columns]
 
 
-def render_scanner_history_intelligence(validated, selected, history):
+def render_scanner_research_overview(validated, selected, history):
     st.divider()
-    st.subheader("What's Changed Today")
+    st.subheader("Research Overview")
+
+    st.markdown("**Today's Scanner Summary**")
+    for bullet in scanner_summary_bullets(validated, selected, history):
+        st.markdown(f"- {bullet}")
 
     if len(history) < 2:
         st.info("Historical comparisons will appear after the next scanner run.")
@@ -3006,16 +3017,49 @@ def render_scanner_history_intelligence(validated, selected, history):
         else:
             st.info("No rank changes are available for the latest scanner run.")
 
-    st.subheader("Today's Scanner Summary")
-    for bullet in scanner_summary_bullets(validated, selected, history):
-        st.markdown(f"- {bullet}")
 
+def render_scanner_history_section(history):
     with st.expander("Scanner History", expanded=False):
         table = scanner_history_table(history)
         if table.empty:
             st.info("No scanner history snapshots found.")
         else:
             responsive_table(table, hide_index=True)
+
+
+def scanner_health_status(state, failed):
+    if state.get("missing"):
+        return "Error", False
+    if state.get("stale") or not failed.empty:
+        return "Warning", False
+    return "Healthy", True
+
+
+def render_scanner_status_mission_control(validated, selected, failed, state):
+    st.subheader("Scanner Status")
+    st.info(
+        "Research only: scanner refreshes update local research outputs and do not place or modify trades."
+    )
+
+    health_label, health_ok = scanner_health_status(state, failed)
+    cols = responsive_columns(5)
+    with cols[0]:
+        metric_card("Scanner Health", health_label, health_ok)
+    with cols[1]:
+        metric_card(
+            "Last Scan",
+            scanner_file_modified_label("latest_rankings.csv"),
+            state.get("fresh"),
+        )
+    with cols[2]:
+        metric_card("Universe Size", len(validated))
+    with cols[3]:
+        metric_card("Selected Candidates", len(selected), len(selected) > 0)
+    with cols[4]:
+        metric_card("Failed Tickers", len(failed), len(failed) == 0)
+
+    refresh_clicked = st.button("Refresh Scanner Now", type="primary")
+    return refresh_clicked
 
 
 def scanner_why_selected(row):
@@ -3123,14 +3167,10 @@ def scanner_why_selected(row):
 
 
 def render_opportunity_intelligence(selected):
-    st.divider()
     st.subheader("Opportunity Intelligence")
     st.caption(
         "Research-only explanations based on scanner output fields. These cards "
         "do not place or modify trades."
-    )
-    st.caption(
-        f"Last Scanner Run: {scanner_file_modified_label('latest_rankings.csv')}"
     )
 
     if selected.empty:
@@ -3243,32 +3283,7 @@ def render_opportunity_intelligence(selected):
 
 def render_global_scanner_page():
     st.subheader("Global Scanner")
-    st.caption("Research Only / Not Live Trading")
-    st.info(
-        "**Research Only**\n\n"
-        "The Global Scanner generates investment research and opportunity "
-        "rankings. Running the scanner updates research results only and does "
-        "not place or modify trades."
-    )
-    st.caption(
-        "On Streamlit Cloud, scanner outputs are local ephemeral files and may "
-        "reset when the app restarts."
-    )
-
-    render_scanner_auto_refresh_status()
-
-    if st.button("Refresh Scanner Now", type="primary"):
-        with st.spinner("Running research scanner..."):
-            try:
-                result = run_research_scanner_from_dashboard()
-                st.success(
-                    "Scanner refreshed: "
-                    f"{result.get('validated_rows', 0)} validated, "
-                    f"{result.get('selected_rows', 0)} selected, "
-                    f"{result.get('quality_failures', 0)} failed."
-                )
-            except Exception as exc:
-                st.error(f"Scanner failed: {exc}")
+    render_scanner_auto_refresh_status(show_messages=False)
 
     validated = load_scanner_csv("universe_validated.csv")
     rankings = load_scanner_csv("latest_rankings.csv")
@@ -3291,38 +3306,30 @@ def render_global_scanner_page():
         else pd.DataFrame()
     )
 
-    cols = responsive_columns(4)
-    with cols[0]:
-        metric_card("Universe Size", len(validated))
-    with cols[1]:
-        metric_card("Validated Tickers", int(validated_pass.sum()), True)
-    with cols[2]:
-        metric_card("Selected Candidates", len(selected), len(selected) > 0)
-    with cols[3]:
-        metric_card("Failed Tickers", len(failed), len(failed) == 0)
-
-    st.subheader("Research Status")
-    status_cols = responsive_columns(4)
-    with status_cols[0]:
-        metric_card(
-            "Last Scanner Run",
-            scanner_file_modified_label("latest_rankings.csv"),
-            True,
-        )
-    with status_cols[1]:
-        metric_card("Universe Size", len(validated))
-    with status_cols[2]:
-        metric_card("Selected Candidates", len(selected), len(selected) > 0)
-    with status_cols[3]:
-        metric_card("Failed Tickers", len(failed), len(failed) == 0)
-
-    st.caption(
-        "Research outputs are local to this dashboard session and may reset "
-        "when the app restarts."
+    refresh_clicked = render_scanner_status_mission_control(
+        validated,
+        selected,
+        failed,
+        scanner_output_state(),
     )
+    if refresh_clicked:
+        with st.spinner("Running research scanner..."):
+            try:
+                result = run_research_scanner_from_dashboard()
+                st.success(
+                    "Scanner refreshed: "
+                    f"{result.get('validated_rows', 0)} validated, "
+                    f"{result.get('selected_rows', 0)} selected, "
+                    f"{result.get('quality_failures', 0)} failed."
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Scanner failed: {exc}")
 
-    render_scanner_history_intelligence(validated, selected, history)
+    render_scanner_research_overview(validated, selected, history)
 
+    st.divider()
+    st.subheader("Research Analysis")
     render_opportunity_intelligence(selected)
     render_opportunity_comparison(selected)
 
@@ -3353,68 +3360,70 @@ def render_global_scanner_page():
         )
         responsive_table(sector_breakdown, hide_index=True)
 
-    st.divider()
-    st.subheader("Top Ranked Opportunities")
-    if not rankings.empty and len(selected_flag) == len(rankings):
-        ranked_display = rankings.copy()
-        ranked_display["selected"] = selected_flag.map(
-            {True: "Selected", False: ""}
-        )
-    else:
-        ranked_display = rankings
+    render_scanner_history_section(history)
 
-    render_scanner_table(
-        ranked_display.head(25),
-        [
-            "rank",
-            "selected",
-            "yahoo_ticker",
-            "name",
-            "region",
-            "exchange",
-            "currency",
-            "sector",
-            "latest_close",
-            "technical_score",
-            "scanner_score",
-            "avg_traded_value_60d",
-        ],
-    )
+    with st.expander("Scanner Output Tables", expanded=False):
+        st.subheader("Top Ranked Opportunities")
+        if not rankings.empty and len(selected_flag) == len(rankings):
+            ranked_display = rankings.copy()
+            ranked_display["selected"] = selected_flag.map(
+                {True: "Selected", False: ""}
+            )
+        else:
+            ranked_display = rankings
 
-    st.subheader("Selected Candidates")
-    render_scanner_table(
-        selected,
-        [
-            "rank",
-            "yahoo_ticker",
-            "name",
-            "region",
-            "exchange",
-            "currency",
-            "sector",
-            "latest_close",
-            "technical_score",
-            "scanner_score",
-        ],
-    )
-
-    st.subheader("Failed / Invalid Tickers")
-    if failed.empty:
-        st.success("No failed scanner tickers in the latest validation output.")
-    else:
         render_scanner_table(
-            failed,
+            ranked_display.head(25),
             [
+                "rank",
+                "selected",
                 "yahoo_ticker",
                 "name",
                 "region",
-                "latest_close_present",
-                "valid_bar_count",
-                "missing_close_pct",
-                "stale_latest_price",
-                "volume_present",
+                "exchange",
+                "currency",
+                "sector",
+                "latest_close",
+                "technical_score",
+                "scanner_score",
+                "avg_traded_value_60d",
             ],
         )
+
+        st.subheader("Selected Candidates")
+        render_scanner_table(
+            selected,
+            [
+                "rank",
+                "yahoo_ticker",
+                "name",
+                "region",
+                "exchange",
+                "currency",
+                "sector",
+                "latest_close",
+                "technical_score",
+                "scanner_score",
+            ],
+        )
+
+        st.subheader("Failed / Invalid Tickers")
+        if failed.empty:
+            st.success("No failed scanner tickers in the latest validation output.")
+        else:
+            render_scanner_table(
+                failed,
+                [
+                    "yahoo_ticker",
+                    "name",
+                    "region",
+                    "latest_close_present",
+                    "valid_bar_count",
+                    "missing_close_pct",
+                    "stale_latest_price",
+                    "volume_present",
+                ],
+            )
 
 
 def equity_curve_y_domain(equity_series, reference_value=None):
