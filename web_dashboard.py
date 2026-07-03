@@ -25,6 +25,7 @@ from ui.runtime_status import load_runtime_status, runtime_freshness, runtime_st
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 SCANNER_OUTPUT_DIR = PROJECT_ROOT / "data" / "global_scanner"
+SCANNER_UNIVERSE_DIR = PROJECT_ROOT / "data" / "universes"
 
 try:
     from ui.auto_refresh import (
@@ -454,6 +455,15 @@ def scanner_bool_series(frame, column):
 
     return frame[column].astype(str).str.strip().str.lower().isin(
         {"1", "true", "yes", "y"}
+    )
+
+
+def run_research_scanner_from_dashboard():
+    from research.global_scanner import run_global_scanner
+
+    return run_global_scanner(
+        universe_dir=SCANNER_UNIVERSE_DIR,
+        output_dir=SCANNER_OUTPUT_DIR,
     )
 
 
@@ -1296,6 +1306,23 @@ def render_global_scanner_page():
         "Scanner outputs are read-only research artifacts. They are not wired "
         "into main_v2.py, runtime execution, Portfolio Manager, or live trades."
     )
+    st.caption(
+        "On Streamlit Cloud, scanner outputs are local ephemeral files and may "
+        "reset when the app restarts."
+    )
+
+    if st.button("Run Research Scanner", type="primary"):
+        with st.spinner("Running research scanner..."):
+            try:
+                result = run_research_scanner_from_dashboard()
+                st.success(
+                    "Scanner completed: "
+                    f"{result.get('validated_rows', 0)} validated, "
+                    f"{result.get('selected_rows', 0)} selected, "
+                    f"{result.get('quality_failures', 0)} failed."
+                )
+            except Exception as exc:
+                st.error(f"Scanner failed: {exc}")
 
     validated = load_scanner_csv("universe_validated.csv")
     rankings = load_scanner_csv("latest_rankings.csv")
@@ -1303,6 +1330,10 @@ def render_global_scanner_page():
 
     if validated.empty and rankings.empty and selected.empty:
         st.warning("No scanner outputs found yet.")
+        st.caption(
+            "Use the Run Research Scanner button above to generate local "
+            "research outputs for this dashboard session."
+        )
         st.code("python -m research.global_scanner", language="bash")
         return
 
