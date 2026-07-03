@@ -464,6 +464,10 @@ def inject_mobile_css():
             color:#cbd5e1;
             font-size:12px;
             border-right:1px solid rgba(148,163,184,0.10);
+            min-width:0;
+            white-space:normal;
+            overflow-wrap:anywhere;
+            word-break:normal;
         }
 
         .scanner-compare-cell:last-child {
@@ -474,6 +478,7 @@ def inject_mobile_css():
             color:#f8fafc;
             font-weight:760;
             background:rgba(30,41,59,0.78);
+            line-height:1.25;
         }
 
         .scanner-compare-label {
@@ -484,6 +489,7 @@ def inject_mobile_css():
         .scanner-compare-value {
             color:#f8fafc;
             font-weight:720;
+            overflow-wrap:anywhere;
         }
 
         .scanner-compare-indicator {
@@ -2502,23 +2508,44 @@ def scanner_comparison_summary(frame):
     stable_leader, _ = scanner_metric_leader(frame, "trend_stability_score")
     drawdown_leader, _ = scanner_metric_leader(frame, "max_drawdown_1y", mode="min")
     volatility_leader, _ = scanner_metric_leader(frame, "volatility_60d", mode="min")
-    risk_candidates = []
-    if stable_leader is not None:
-        risk_candidates.append(
-            f"{scanner_compare_label(stable_leader)} has the steadier trend"
+    risk_leaders = [
+        ("trend stability", stable_leader),
+        ("drawdown", drawdown_leader),
+        ("volatility", volatility_leader),
+    ]
+    risk_by_asset = {}
+    for metric_label, row in risk_leaders:
+        if row is None:
+            continue
+        asset_label = scanner_compare_label(row)
+        risk_by_asset.setdefault(asset_label, []).append(metric_label)
+
+    if risk_by_asset:
+        asset_label, metric_labels = max(
+            risk_by_asset.items(),
+            key=lambda item: len(item[1]),
         )
-    if drawdown_leader is not None:
-        risk_candidates.append(
-            f"{scanner_compare_label(drawdown_leader)} shows the lowest drawdown"
-        )
-    if volatility_leader is not None:
-        risk_candidates.append(
-            f"{scanner_compare_label(volatility_leader)} has the lower 60d volatility"
-        )
-    if risk_candidates:
-        observations.append(
-            "Risk and stability balance: " + "; ".join(risk_candidates[:3]) + "."
-        )
+        if len(metric_labels) >= 2:
+            observations.append(
+                f"{asset_label} has the strongest risk/stability profile across {', '.join(metric_labels)}."
+            )
+        else:
+            risk_notes = []
+            if stable_leader is not None:
+                risk_notes.append(
+                    f"{scanner_compare_label(stable_leader)} has the steadier trend"
+                )
+            if drawdown_leader is not None:
+                risk_notes.append(
+                    f"{scanner_compare_label(drawdown_leader)} shows the lowest drawdown"
+                )
+            if volatility_leader is not None:
+                risk_notes.append(
+                    f"{scanner_compare_label(volatility_leader)} has the lower 60d volatility"
+                )
+            observations.append(
+                "Risk and stability balance: " + "; ".join(risk_notes[:3]) + "."
+            )
 
     persistence_leader, _ = scanner_metric_leader(frame, "persistence_score")
     if persistence_leader is not None:
