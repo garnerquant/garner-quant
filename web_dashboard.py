@@ -23,6 +23,9 @@ from ui.responsive import (
 )
 from ui.runtime_status import load_runtime_status, runtime_freshness, runtime_state
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+SCANNER_OUTPUT_DIR = PROJECT_ROOT / "data" / "global_scanner"
+
 try:
     from ui.auto_refresh import (
         fragment_runner as _shared_fragment_runner,
@@ -430,11 +433,11 @@ def load_json_file(path):
 
 
 def load_scanner_csv(filename):
-    return load_csv(Path("data/global_scanner") / filename)
+    return load_csv(SCANNER_OUTPUT_DIR / filename)
 
 
 def scanner_file_modified_label(filename):
-    path = Path("data/global_scanner") / filename
+    path = SCANNER_OUTPUT_DIR / filename
     if not path.exists():
         return "Missing"
 
