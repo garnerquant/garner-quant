@@ -18,6 +18,7 @@ from execution.live_market_monitor import (  # noqa: E402
 )
 from config import ASSETS  # noqa: E402
 from notifications.alert_notifier import notify_alerts  # noqa: E402
+from runtime.startup_validation import validate_runtime_startup  # noqa: E402
 
 
 CONFIG_FILE = ROOT_DIR / "runtime" / "live_runtime_config.json"
@@ -1288,6 +1289,7 @@ def mark_stopped(started_at, cycle_count):
 
 
 def run_runtime(run_once=False):
+    validate_runtime_startup(ROOT_DIR)
     config = load_config()
     started_at = iso_timestamp()
     cycle_count = 0

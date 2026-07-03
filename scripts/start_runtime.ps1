@@ -33,6 +33,16 @@ if (-not (Test-Path -LiteralPath $runtimeScript)) {
     throw "Runtime script not found: $runtimeScript"
 }
 
+Push-Location $projectRoot
+try {
+    python -m runtime.startup_validation --root $projectRoot
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+} finally {
+    Pop-Location
+}
+
 $command = @"
 Set-Location -LiteralPath '$($projectRoot.Replace("'", "''"))'
 python runtime/live_runtime.py *>> '$($runtimeLog.Replace("'", "''"))'

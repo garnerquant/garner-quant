@@ -1,22 +1,7 @@
-venv/
-__pycache__/
+# Garner Quant generated runtime state.
+# These files are local outputs, not source code. Keep them out of stash/pop,
+# rebase/merge conflict resolution, and source-code review.
 
-*.png
-*.pyc
-
-# Ignore most CSVs
-*.csv
-
-# Global scanner static universe inputs
-!data/universes/
-!data/universes/*.csv
-
-old_files/
-.streamlit/secrets.toml
-.env
-
-# Runtime-generated files
-data/runtime_decision_trace.json
 broker_account.csv
 holdings_report.csv
 paper_30_day_tracker.csv
@@ -33,6 +18,7 @@ trade_snapshots.csv
 trade_transactions_v1.csv
 v3_trades.csv
 weights_v2.csv
+
 data/live_monitor_runtime.json
 data/live_monitor_snapshot.json
 data/live_runtime_execution_log.json
@@ -40,10 +26,8 @@ data/live_runtime_status.json
 data/market_intelligence.json
 data/news_events.json
 data/notification_state.json
+data/runtime_decision_trace.json
 data/runtime_operations_log.json
+
 data/runtime/
 runtime_data/
-logs/
-
-# Research Lab generated experiment registry
-research/experiments/
