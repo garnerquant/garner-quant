@@ -1773,16 +1773,12 @@ render_investment_brief(
     win_rate_value,
 )
 
-page = st.sidebar.radio(
-    "Page",
-    ["Home", "Global Scanner"],
-    index=0,
-)
+home_tab, scanner_tab = st.tabs(["Home", "Global Scanner"])
 
-if page == "Global Scanner":
+with scanner_tab:
     render_global_scanner_page()
 
-elif page == "Home":
+with home_tab:
     render_holdings_exposure(holdings, broker_row)
 
     st.divider()
