@@ -26,6 +26,7 @@ from ui.runtime_status import load_runtime_status, runtime_freshness, runtime_st
 PROJECT_ROOT = Path(__file__).resolve().parent
 SCANNER_OUTPUT_DIR = PROJECT_ROOT / "data" / "global_scanner"
 SCANNER_UNIVERSE_DIR = PROJECT_ROOT / "data" / "universes"
+SCANNER_HISTORY_DIR = SCANNER_OUTPUT_DIR / "history"
 
 try:
     from ui.auto_refresh import (
@@ -249,6 +250,80 @@ def inject_mobile_css():
             padding:2px 8px;
             font-size:12px;
             line-height:1.5;
+        }
+
+        .scanner-move {
+            display:inline-flex;
+            align-items:center;
+            border-radius:999px;
+            padding:2px 8px;
+            font-size:12px;
+            font-weight:700;
+            margin-top:5px;
+        }
+
+        .scanner-move-up {
+            color:#bbf7d0;
+            background:rgba(22,101,52,0.22);
+            border:1px solid rgba(74,222,128,0.28);
+        }
+
+        .scanner-move-down {
+            color:#fecaca;
+            background:rgba(153,27,27,0.22);
+            border:1px solid rgba(248,113,113,0.28);
+        }
+
+        .scanner-move-new {
+            color:#dbeafe;
+            background:rgba(37,99,235,0.20);
+            border:1px solid rgba(96,165,250,0.34);
+        }
+
+        .scanner-move-flat {
+            color:#d1d5db;
+            background:rgba(107,114,128,0.18);
+            border:1px solid rgba(156,163,175,0.24);
+        }
+
+        .scanner-change-grid {
+            display:grid;
+            grid-template-columns:repeat(4,minmax(0,1fr));
+            gap:12px;
+            margin:10px 0 18px 0;
+        }
+
+        .scanner-change-card {
+            background:#0b1220;
+            border:1px solid rgba(148,163,184,0.22);
+            border-radius:8px;
+            padding:12px;
+            min-height:116px;
+        }
+
+        .scanner-change-label {
+            color:#94a3b8;
+            font-size:12px;
+            margin-bottom:6px;
+        }
+
+        .scanner-change-main {
+            color:#f8fafc;
+            font-size:17px;
+            font-weight:760;
+            overflow-wrap:anywhere;
+        }
+
+        .scanner-change-detail {
+            color:#cbd5e1;
+            font-size:13px;
+            margin-top:5px;
+        }
+
+        @media (max-width: 768px) {
+            .scanner-change-grid {
+                grid-template-columns:1fr;
+            }
         }
 
         .scanner-region-us {
@@ -646,6 +721,59 @@ def scanner_bool_series(frame, column):
     return frame[column].astype(str).str.strip().str.lower().isin(
         {"1", "true", "yes", "y"}
     )
+
+
+def load_scanner_history():
+    if not SCANNER_HISTORY_DIR.exists():
+        return []
+
+    snapshots = []
+    for path in sorted(SCANNER_HISTORY_DIR.glob("*_rankings.csv")):
+        try:
+            frame = pd.read_csv(path)
+        except Exception:
+            continue
+
+        timestamp = scanner_history_timestamp(path, frame)
+        snapshots.append(
+            {
+                "path": path,
+                "timestamp": timestamp,
+                "frame": frame,
+            }
+        )
+
+    return snapshots
+
+
+def scanner_history_timestamp(path, frame):
+    if "scanner_run_timestamp" in frame.columns and not frame.empty:
+        value = frame["scanner_run_timestamp"].dropna()
+        if not value.empty:
+            return str(value.iloc[0])
+
+    stem = path.name.replace("_rankings.csv", "")
+    parsed = pd.to_datetime(stem, format="%Y-%m-%d_%H%M%S_%f", errors="coerce")
+    if pd.notna(parsed):
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        return pd.Timestamp.fromtimestamp(path.stat().st_mtime).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+    except Exception:
+        return "Unknown"
+
+
+def scanner_selected_rows(frame):
+    if frame.empty:
+        return frame.copy()
+
+    if "selected_for_research" not in frame.columns:
+        return frame.head(15).copy()
+
+    selected_mask = scanner_bool_series(frame, "selected_for_research")
+    return frame.loc[selected_mask].copy()
 
 
 def run_research_scanner_from_dashboard():
@@ -1591,6 +1719,22 @@ def scanner_bar_pct(value, max_value):
     return int(round(pct * 100))
 
 
+def scanner_rank_movement(row):
+    if scanner_yes(row, "new_entry"):
+        return "NEW", "scanner-move-new"
+
+    change = scanner_number(row, "rank_change")
+    if change is None:
+        return "UNCHANGED", "scanner-move-flat"
+
+    if change > 0:
+        return f"▲ +{int(change)}", "scanner-move-up"
+    if change < 0:
+        return f"▼ {int(change)}", "scanner-move-down"
+
+    return "UNCHANGED", "scanner-move-flat"
+
+
 def scanner_research_summary(row):
     region = scanner_display_value(row, "region", "")
     sector = scanner_display_value(row, "sector", "")
@@ -1615,6 +1759,283 @@ def scanner_research_summary(row):
         return "Ranks highly due to scanner score and clean available data."
 
     return "Selected by the scanner from the validated research universe."
+
+
+def scanner_rank_label(value):
+    try:
+        numeric = int(float(value))
+    except Exception:
+        return "?"
+    return f"#{numeric}"
+
+
+def scanner_change_cards(selected, history):
+    if len(history) < 2 or selected.empty:
+        return None
+
+    previous_selected = scanner_selected_rows(history[-2]["frame"])
+    if previous_selected.empty:
+        return None
+
+    current = selected.copy()
+    if "rank_change" not in current.columns:
+        return None
+
+    current["rank_change_numeric"] = pd.to_numeric(
+        current["rank_change"],
+        errors="coerce",
+    )
+    current_new = scanner_bool_series(current, "new_entry")
+    previous_tickers = set(previous_selected["yahoo_ticker"].astype(str))
+    current_tickers = set(current["yahoo_ticker"].astype(str))
+    dropped = previous_selected[
+        ~previous_selected["yahoo_ticker"].astype(str).isin(current_tickers)
+    ].copy()
+
+    risers = current[current["rank_change_numeric"] > 0].sort_values(
+        "rank_change_numeric",
+        ascending=False,
+    )
+    fallers = current[current["rank_change_numeric"] < 0].sort_values(
+        "rank_change_numeric",
+        ascending=True,
+    )
+    new_entries = current[current_new].copy()
+
+    cards = []
+    if not risers.empty:
+        row = risers.iloc[0]
+        cards.append(
+            {
+                "label": "▲ Biggest Risers",
+                "main": scanner_display_value(row, "yahoo_ticker", "Unknown"),
+                "detail": (
+                    f"{scanner_rank_label(row.get('previous_rank'))} → "
+                    f"{scanner_rank_label(row.get('current_rank'))} | "
+                    f"▲ +{int(row['rank_change_numeric'])}"
+                ),
+            }
+        )
+    else:
+        cards.append(
+            {
+                "label": "▲ Biggest Risers",
+                "main": "None",
+                "detail": "No selected candidates improved rank.",
+            }
+        )
+
+    if not fallers.empty:
+        row = fallers.iloc[0]
+        cards.append(
+            {
+                "label": "▼ Biggest Fallers",
+                "main": scanner_display_value(row, "yahoo_ticker", "Unknown"),
+                "detail": (
+                    f"{scanner_rank_label(row.get('previous_rank'))} → "
+                    f"{scanner_rank_label(row.get('current_rank'))} | "
+                    f"▼ {int(row['rank_change_numeric'])}"
+                ),
+            }
+        )
+    else:
+        cards.append(
+            {
+                "label": "▼ Biggest Fallers",
+                "main": "None",
+                "detail": "No selected candidates declined rank.",
+            }
+        )
+
+    if not new_entries.empty:
+        row = new_entries.iloc[0]
+        cards.append(
+            {
+                "label": "New Opportunities",
+                "main": scanner_display_value(row, "yahoo_ticker", "Unknown"),
+                "detail": f"NEW | Entered Top {len(current)}",
+            }
+        )
+    else:
+        cards.append(
+            {
+                "label": "New Opportunities",
+                "main": "None",
+                "detail": "No new selected candidates.",
+            }
+        )
+
+    if not dropped.empty:
+        row = dropped.iloc[0]
+        cards.append(
+            {
+                "label": "Dropped Out",
+                "main": scanner_display_value(row, "yahoo_ticker", "Unknown"),
+                "detail": f"{scanner_rank_label(row.get('rank'))} → OUT",
+            }
+        )
+    else:
+        cards.append(
+            {
+                "label": "Dropped Out",
+                "main": "None",
+                "detail": "No previous selected candidates dropped out.",
+            }
+        )
+
+    return cards
+
+
+def scanner_summary_bullets(validated, selected, history):
+    bullets = [
+        f"{len(validated)} companies scanned",
+        f"{len(selected)} selected",
+    ]
+
+    if len(history) >= 2 and not selected.empty:
+        new_entries = int(scanner_bool_series(selected, "new_entry").sum())
+        previous_selected = scanner_selected_rows(history[-2]["frame"])
+        dropped_count = 0
+        if not previous_selected.empty and "yahoo_ticker" in previous_selected.columns:
+            current_tickers = set(selected["yahoo_ticker"].astype(str))
+            dropped_count = int(
+                (~previous_selected["yahoo_ticker"].astype(str).isin(current_tickers)).sum()
+            )
+        bullets.append(f"{new_entries} new opportunities entered the Top {len(selected)}")
+        bullets.append(f"{dropped_count} candidates dropped out")
+
+    if not selected.empty and "sector" in selected.columns:
+        sectors = selected["sector"].dropna().astype(str)
+        if not sectors.empty:
+            bullets.append(
+                f"{sectors.value_counts().idxmax()} is the strongest represented sector"
+            )
+
+    if len(history) >= 2 and "region" in selected.columns:
+        previous_selected = scanner_selected_rows(history[-2]["frame"])
+        if "region" in previous_selected.columns:
+            current_counts = selected["region"].dropna().astype(str).value_counts()
+            previous_counts = previous_selected["region"].dropna().astype(str).value_counts()
+            deltas = current_counts.subtract(previous_counts, fill_value=0)
+            positive = deltas[deltas > 0]
+            if not positive.empty:
+                bullets.append(
+                    f"{positive.idxmax()} gained the most high-ranking candidates"
+                )
+
+    return bullets
+
+
+def scanner_history_table(history):
+    rows = []
+    for index, snapshot in enumerate(history):
+        frame = snapshot["frame"]
+        selected = scanner_selected_rows(frame)
+        previous_selected = (
+            scanner_selected_rows(history[index - 1]["frame"])
+            if index > 0
+            else pd.DataFrame()
+        )
+
+        top_candidate = (
+            scanner_display_value(selected.iloc[0], "yahoo_ticker", "None")
+            if not selected.empty
+            else "None"
+        )
+        new_entries = 0
+        largest_rise = ""
+        largest_fall = ""
+
+        if index > 0 and not selected.empty:
+            previous_ranks = (
+                previous_selected.set_index("yahoo_ticker")["rank"].to_dict()
+                if not previous_selected.empty
+                else {}
+            )
+            current = selected.copy()
+            previous_values = current["yahoo_ticker"].map(previous_ranks)
+            rank_change = previous_values - current["rank"]
+            new_entries = int(previous_values.isna().sum())
+
+            if rank_change.notna().any():
+                max_change = rank_change.max()
+                min_change = rank_change.min()
+                if pd.notna(max_change) and max_change > 0:
+                    row = current.loc[rank_change.idxmax()]
+                    largest_rise = (
+                        f"{row['yahoo_ticker']} ▲ +{int(max_change)}"
+                    )
+                if pd.notna(min_change) and min_change < 0:
+                    row = current.loc[rank_change.idxmin()]
+                    largest_fall = (
+                        f"{row['yahoo_ticker']} ▼ {int(min_change)}"
+                    )
+
+        rows.append(
+            {
+                "timestamp": snapshot["timestamp"],
+                "top candidate": top_candidate,
+                "number selected": len(selected),
+                "new entries": new_entries,
+                "largest rise": largest_rise,
+                "largest fall": largest_fall,
+            }
+        )
+
+    columns = [
+        "timestamp",
+        "top candidate",
+        "number selected",
+        "new entries",
+        "largest rise",
+        "largest fall",
+    ]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+
+    return pd.DataFrame(rows, columns=columns).sort_values(
+        "timestamp",
+        ascending=False,
+    )
+
+
+def render_scanner_history_intelligence(validated, selected, history):
+    st.divider()
+    st.subheader("What's Changed Today")
+
+    if len(history) < 2:
+        st.info("Historical comparisons will appear after the next scanner run.")
+    else:
+        cards = scanner_change_cards(selected, history)
+        if cards:
+            card_html = []
+            for card in cards:
+                card_html.append(
+                    (
+                        '<div class="scanner-change-card">'
+                        f'<div class="scanner-change-label">{html.escape(card["label"])}</div>'
+                        f'<div class="scanner-change-main">{html.escape(card["main"])}</div>'
+                        f'<div class="scanner-change-detail">{html.escape(card["detail"])}</div>'
+                        "</div>"
+                    )
+                )
+            st.markdown(
+                f'<div class="scanner-change-grid">{"".join(card_html)}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.info("No rank changes are available for the latest scanner run.")
+
+    st.subheader("Today's Scanner Summary")
+    for bullet in scanner_summary_bullets(validated, selected, history):
+        st.markdown(f"- {bullet}")
+
+    with st.expander("Scanner History", expanded=False):
+        table = scanner_history_table(history)
+        if table.empty:
+            st.info("No scanner history snapshots found.")
+        else:
+            responsive_table(table, hide_index=True)
 
 
 def scanner_why_selected(row):
@@ -1688,6 +2109,7 @@ def render_opportunity_intelligence(selected):
     columns = responsive_columns(min(3, max(1, len(cards))))
     for index, (_, row) in enumerate(cards.iterrows()):
         rank = scanner_display_value(row, "rank", "?")
+        movement_label, movement_class = scanner_rank_movement(row)
         ticker = html.escape(scanner_display_value(row, "yahoo_ticker", "UNKNOWN"))
         name = html.escape(scanner_display_value(row, "name", "Unnamed candidate"))
         region_raw = scanner_display_value(row, "region", "Unknown region")
@@ -1732,6 +2154,7 @@ def render_opportunity_intelligence(selected):
                             <div class="scanner-rank">Rank {html.escape(str(rank))}</div>
                             <div class="scanner-ticker">{ticker}</div>
                             <div class="scanner-name">{name}</div>
+                            <span class="scanner-move {movement_class}">{html.escape(movement_label)}</span>
                         </div>
                         <div class="scanner-score">
                             <div>{html.escape(score_label)}</div>
@@ -1802,6 +2225,7 @@ def render_global_scanner_page():
     validated = load_scanner_csv("universe_validated.csv")
     rankings = load_scanner_csv("latest_rankings.csv")
     selected = load_scanner_csv("selected_candidates.csv")
+    history = load_scanner_history()
 
     if validated.empty and rankings.empty and selected.empty:
         st.warning("No scanner outputs found yet.")
@@ -1848,6 +2272,8 @@ def render_global_scanner_page():
         "Research outputs are local to this dashboard session and may reset "
         "when the app restarts."
     )
+
+    render_scanner_history_intelligence(validated, selected, history)
 
     render_opportunity_intelligence(selected)
 

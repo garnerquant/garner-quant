@@ -9,6 +9,8 @@ from indicators.technical import technical_score
 
 UNIVERSE_DIR = Path("data/universes")
 OUTPUT_DIR = Path("data/global_scanner")
+HISTORY_DIR_NAME = "history"
+MAX_HISTORY_SNAPSHOTS = 100
 REQUIRED_COLUMNS = [
     "symbol",
     "yahoo_ticker",
@@ -200,6 +202,103 @@ def rank_candidates(validated, top_n=15):
     return rankings, selected
 
 
+def history_dir(output_dir):
+    return Path(output_dir) / HISTORY_DIR_NAME
+
+
+def history_files(output_dir):
+    directory = history_dir(output_dir)
+    if not directory.exists():
+        return []
+    return sorted(directory.glob("*_rankings.csv"))
+
+
+def latest_history_snapshot(output_dir):
+    files = history_files(output_dir)
+    if not files:
+        return pd.DataFrame()
+
+    try:
+        return pd.read_csv(files[-1])
+    except Exception:
+        return pd.DataFrame()
+
+
+def _bool_series(frame, column):
+    if frame.empty or column not in frame.columns:
+        return pd.Series(dtype=bool)
+
+    return frame[column].astype(str).str.strip().str.lower().isin(
+        {"1", "true", "yes", "y"}
+    )
+
+
+def consecutive_seen_count(ticker, previous_snapshots):
+    count = 1
+    for snapshot in reversed(previous_snapshots):
+        if "yahoo_ticker" not in snapshot.columns:
+            break
+
+        tickers = set(snapshot["yahoo_ticker"].dropna().astype(str))
+        if str(ticker) not in tickers:
+            break
+
+        count += 1
+
+    return count
+
+
+def add_history_comparison(rankings, output_dir):
+    rankings = rankings.copy()
+    files = history_files(output_dir)
+    previous = latest_history_snapshot(output_dir)
+
+    if previous.empty or "yahoo_ticker" not in previous.columns:
+        rankings["previous_rank"] = pd.NA
+        rankings["current_rank"] = rankings["rank"]
+        rankings["rank_change"] = pd.NA
+        rankings["new_entry"] = True
+        rankings["dropped_out"] = False
+        rankings["consecutive_days_seen"] = 1
+        return rankings
+
+    previous_rank = previous.set_index("yahoo_ticker")["rank"].to_dict()
+    previous_snapshots = []
+    for path in files:
+        try:
+            previous_snapshots.append(pd.read_csv(path))
+        except Exception:
+            continue
+
+    previous_values = rankings["yahoo_ticker"].map(previous_rank)
+    rankings["previous_rank"] = previous_values
+    rankings["current_rank"] = rankings["rank"]
+    rankings["rank_change"] = previous_values - rankings["rank"]
+    rankings["new_entry"] = previous_values.isna()
+    rankings["dropped_out"] = False
+    rankings["consecutive_days_seen"] = rankings["yahoo_ticker"].apply(
+        lambda ticker: consecutive_seen_count(ticker, previous_snapshots)
+    )
+    return rankings
+
+
+def write_history_snapshot(rankings, output_dir, run_timestamp):
+    directory = history_dir(output_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+
+    snapshot = rankings.copy()
+    snapshot["scanner_run_timestamp"] = run_timestamp.isoformat(timespec="seconds")
+    filename = f"{pd.Timestamp(run_timestamp).strftime('%Y-%m-%d_%H%M%S_%f')}_rankings.csv"
+    snapshot.to_csv(directory / filename, index=False)
+
+    files = history_files(output_dir)
+    for old_file in files[:-MAX_HISTORY_SNAPSHOTS]:
+        try:
+            old_file.unlink()
+        except Exception:
+            pass
+
+
 def run_global_scanner(
     universe_dir=UNIVERSE_DIR,
     output_dir=OUTPUT_DIR,
@@ -208,6 +307,7 @@ def run_global_scanner(
 ):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    run_timestamp = pd.Timestamp.now()
 
     universe = load_universe(universe_dir)
     active = active_universe(universe)
@@ -216,10 +316,13 @@ def run_global_scanner(
     prices, volumes = download_recent_data(tickers, period=period)
     validated = calculate_quality(active, prices, volumes)
     rankings, selected = rank_candidates(validated, top_n=top_n)
+    rankings = add_history_comparison(rankings, output_dir)
+    selected = rankings[rankings["selected_for_research"]].copy()
 
     validated.to_csv(output_dir / "universe_validated.csv", index=False)
     rankings.to_csv(output_dir / "latest_rankings.csv", index=False)
     selected.to_csv(output_dir / "selected_candidates.csv", index=False)
+    write_history_snapshot(rankings, output_dir, run_timestamp)
 
     return {
         "universe_rows": len(universe),
@@ -227,6 +330,7 @@ def run_global_scanner(
         "validated_rows": len(validated),
         "selected_rows": len(selected),
         "quality_failures": int((~validated["data_quality_pass"]).sum()),
+        "history_snapshots": len(history_files(output_dir)),
         "output_dir": str(output_dir),
     }
 
