@@ -394,6 +394,167 @@ def consecutive_seen_count(ticker, previous_snapshots):
     return count
 
 
+def _ticker_history_rows(ticker, snapshots):
+    rows = []
+    ticker_text = str(ticker)
+    for snapshot in snapshots:
+        if "yahoo_ticker" not in snapshot.columns:
+            continue
+
+        matches = snapshot[snapshot["yahoo_ticker"].astype(str) == ticker_text]
+        if matches.empty:
+            continue
+
+        rows.append(matches.iloc[0])
+
+    return rows
+
+
+def _selected_history_rows(rows):
+    selected_rows = []
+    for row in rows:
+        if "selected_for_research" not in row.index:
+            selected_rows.append(row)
+            continue
+
+        selected = str(row.get("selected_for_research")).strip().lower()
+        if selected in {"1", "true", "yes", "y"}:
+            selected_rows.append(row)
+
+    return selected_rows
+
+
+def _consecutive_selected_count(ticker, snapshots, current_selected):
+    if not current_selected:
+        return 0
+
+    count = 1
+    ticker_text = str(ticker)
+    for snapshot in reversed(snapshots):
+        if "yahoo_ticker" not in snapshot.columns:
+            break
+
+        matches = snapshot[snapshot["yahoo_ticker"].astype(str) == ticker_text]
+        if matches.empty:
+            break
+
+        row = matches.iloc[0]
+        if "selected_for_research" in row.index:
+            selected = str(row.get("selected_for_research")).strip().lower()
+            if selected not in {"1", "true", "yes", "y"}:
+                break
+
+        count += 1
+
+    return count
+
+
+def _persistence_level(score):
+    if pd.isna(score):
+        return "New"
+    if score < 20:
+        return "New"
+    if score < 40:
+        return "Emerging"
+    if score < 65:
+        return "Established"
+    if score < 85:
+        return "Persistent"
+    return "Core Candidate"
+
+
+def add_persistence_metrics(rankings, output_dir, top_n=15):
+    rankings = rankings.copy()
+    snapshots = []
+    for path in history_files(output_dir):
+        try:
+            snapshots.append(pd.read_csv(path))
+        except Exception:
+            continue
+
+    rows = []
+    rank_window = max(float(top_n), 1.0)
+    for _, row in rankings.iterrows():
+        ticker = row.get("yahoo_ticker")
+        history_rows = _ticker_history_rows(ticker, snapshots)
+        all_rows = history_rows + [row]
+        selected_rows = _selected_history_rows(all_rows)
+        current_selected = str(row.get("selected_for_research")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "y",
+        }
+
+        selected_ranks = pd.to_numeric(
+            pd.Series([item.get("rank") for item in selected_rows]),
+            errors="coerce",
+        ).dropna()
+
+        days_in_top_list = int(len(selected_ranks))
+        consecutive_days = int(
+            _consecutive_selected_count(ticker, snapshots, current_selected)
+        )
+        highest_rank = (
+            int(selected_ranks.min())
+            if not selected_ranks.empty
+            else pd.NA
+        )
+        average_rank = (
+            float(selected_ranks.mean())
+            if not selected_ranks.empty
+            else np.nan
+        )
+        rank_volatility = (
+            float(selected_ranks.std(ddof=0))
+            if len(selected_ranks) > 1
+            else 0.0 if len(selected_ranks) == 1 else np.nan
+        )
+
+        if len(selected_ranks) > 1:
+            rank_swings = selected_ranks.diff().abs().dropna()
+            large_swing_frequency = float((rank_swings > 5).mean())
+        else:
+            large_swing_frequency = 0.0
+
+        time_component = min(days_in_top_list / 20.0, 1.0) * 30.0
+        consecutive_component = min(consecutive_days / 10.0, 1.0) * 25.0
+        if pd.notna(average_rank):
+            average_rank_component = (
+                1.0 - min(max(average_rank - 1.0, 0.0) / rank_window, 1.0)
+            ) * 20.0
+        else:
+            average_rank_component = 0.0
+        volatility_value = 10.0 if pd.isna(rank_volatility) else rank_volatility
+        consistency_component = (
+            1.0 - min(float(volatility_value) / 10.0, 1.0)
+        ) * 15.0
+        swing_component = (
+            1.0 - min(large_swing_frequency / 0.50, 1.0)
+        ) * 10.0
+
+        persistence_score = (
+            time_component
+            + consecutive_component
+            + average_rank_component
+            + consistency_component
+            + swing_component
+        )
+        persistence_score = float(max(0.0, min(persistence_score, 100.0)))
+
+        updated = row.copy()
+        updated["days_in_top_list"] = days_in_top_list
+        updated["consecutive_days_seen"] = consecutive_days
+        updated["highest_rank_seen"] = highest_rank
+        updated["average_rank"] = average_rank
+        updated["rank_volatility"] = rank_volatility
+        updated["persistence_score"] = persistence_score
+        updated["persistence_level"] = _persistence_level(persistence_score)
+        rows.append(updated)
+
+    return pd.DataFrame(rows)
+
+
 def add_history_comparison(rankings, output_dir):
     rankings = rankings.copy()
     files = history_files(output_dir)
@@ -468,6 +629,7 @@ def run_global_scanner(
     validated = calculate_quality(active, prices, volumes, highs=highs, lows=lows)
     rankings, selected = rank_candidates(validated, top_n=top_n)
     rankings = add_history_comparison(rankings, output_dir)
+    rankings = add_persistence_metrics(rankings, output_dir, top_n=top_n)
     selected = rankings[rankings["selected_for_research"]].copy()
 
     validated.to_csv(output_dir / "universe_validated.csv", index=False)

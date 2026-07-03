@@ -2057,8 +2057,23 @@ SCANNER_RISK_COLUMNS = [
 ]
 
 
+SCANNER_PERSISTENCE_COLUMNS = [
+    "days_in_top_list",
+    "consecutive_days_seen",
+    "highest_rank_seen",
+    "average_rank",
+    "rank_volatility",
+    "persistence_score",
+    "persistence_level",
+]
+
+
 def scanner_has_risk_profile(row):
     return all(column in row.index for column in SCANNER_RISK_COLUMNS)
+
+
+def scanner_has_persistence_profile(row):
+    return all(column in row.index for column in SCANNER_PERSISTENCE_COLUMNS)
 
 
 def scanner_percent_label(value):
@@ -2113,6 +2128,53 @@ def scanner_risk_bullets(row):
     return bullets
 
 
+def scanner_integer_label(value):
+    numeric = scanner_number(pd.Series({"value": value}), "value")
+    if numeric is None:
+        return "Unavailable"
+    return f"{numeric:.0f}"
+
+
+def scanner_decimal_label(value):
+    numeric = scanner_number(pd.Series({"value": value}), "value")
+    if numeric is None:
+        return "Unavailable"
+    return f"{numeric:.1f}"
+
+
+def scanner_persistence_bullets(row):
+    if not scanner_has_persistence_profile(row):
+        return []
+
+    bullets = []
+    level = scanner_display_value(row, "persistence_level", "")
+    score = scanner_number(row, "persistence_score")
+    days = scanner_number(row, "days_in_top_list")
+    consecutive = scanner_number(row, "consecutive_days_seen")
+    volatility = scanner_number(row, "rank_volatility")
+
+    if level == "New" or (days is not None and days <= 1):
+        bullets.append("Recently entered the research shortlist")
+    elif days is not None and days >= 10:
+        bullets.append("Consistently ranked over multiple scans")
+
+    if consecutive is not None and consecutive >= 7:
+        bullets.append("Long-term research candidate")
+    elif consecutive is not None and consecutive >= 3:
+        bullets.append("Building consecutive shortlist history")
+
+    if volatility is not None:
+        if volatility <= 2:
+            bullets.append("Stable ranking history")
+        elif volatility >= 6:
+            bullets.append("Rank fluctuates significantly")
+
+    if score is not None and score >= 85:
+        bullets.append("Core candidate by persistence profile")
+
+    return bullets
+
+
 def scanner_risk_profile_html(row):
     if not scanner_has_risk_profile(row):
         return ""
@@ -2137,6 +2199,31 @@ def scanner_risk_profile_html(row):
                 <div><span class="scanner-fact-label">20d Volatility</span><br><span class="scanner-risk-value">{html.escape(volatility)}</span></div>
                 <div><span class="scanner-fact-label">1Y Max Drawdown</span><br><span class="scanner-risk-value">{html.escape(drawdown)}</span></div>
                 <div><span class="scanner-fact-label">ATR</span><br><span class="scanner-risk-value">{html.escape(atr_pct)}</span></div>
+            </div>
+        </div>
+    """
+
+
+def scanner_persistence_profile_html(row):
+    if not scanner_has_persistence_profile(row):
+        return ""
+
+    level = html.escape(scanner_display_value(row, "persistence_level", "Unavailable"))
+    score = scanner_number(row, "persistence_score")
+    score_label = "Unavailable" if score is None else f"{score:.0f} / 100"
+    days = scanner_integer_label(row.get("days_in_top_list"))
+    highest_rank = scanner_integer_label(row.get("highest_rank_seen"))
+    average_rank = scanner_decimal_label(row.get("average_rank"))
+
+    return f"""
+        <div class="scanner-risk-profile">
+            <div class="scanner-risk-title">Persistence</div>
+            <div class="scanner-risk-grid">
+                <div><span class="scanner-fact-label">Level</span><br><span class="scanner-risk-value">{level}</span></div>
+                <div><span class="scanner-fact-label">Score</span><br><span class="scanner-risk-value">{html.escape(score_label)}</span></div>
+                <div><span class="scanner-fact-label">Days tracked</span><br><span class="scanner-risk-value">{html.escape(days)}</span></div>
+                <div><span class="scanner-fact-label">Highest rank</span><br><span class="scanner-risk-value">{html.escape(highest_rank)}</span></div>
+                <div><span class="scanner-fact-label">Average rank</span><br><span class="scanner-risk-value">{html.escape(average_rank)}</span></div>
             </div>
         </div>
     """
@@ -2262,6 +2349,18 @@ def scanner_comparison_metrics(frame):
             "label": "Opportunity Score",
             "column": "scanner_score",
             "kind": "score",
+            "compare": "higher",
+        },
+        {
+            "label": "Persistence Level",
+            "column": "persistence_level",
+            "kind": "text",
+            "compare": "none",
+        },
+        {
+            "label": "Persistence Score",
+            "column": "persistence_score",
+            "kind": "stability",
             "compare": "higher",
         },
         {
@@ -2861,6 +2960,7 @@ def scanner_why_selected(row):
             else:
                 bullets.append("Caution: recent volume data is weak")
 
+        bullets.extend(scanner_persistence_bullets(row))
         bullets.extend(scanner_risk_bullets(row))
         return bullets
 
@@ -2896,6 +2996,7 @@ def scanner_why_selected(row):
     if sector:
         bullets.append(f"Strong candidate within the {sector} sector")
 
+    bullets.extend(scanner_persistence_bullets(row))
     bullets.extend(scanner_risk_bullets(row))
     return bullets[:5]
 
@@ -2964,6 +3065,7 @@ def render_opportunity_intelligence(selected):
             f"<li>{html.escape(str(bullet))}</li>"
             for bullet in bullets
         )
+        persistence_profile_html = scanner_persistence_profile_html(row)
         risk_profile_html = scanner_risk_profile_html(row)
         summary = html.escape(scanner_research_summary(row))
         scanner_pct = scanner_bar_pct(score, 150)
@@ -3013,6 +3115,7 @@ def render_opportunity_intelligence(selected):
                         <div><span class="scanner-fact-label">Latest close</span><br>{html.escape(close_label)}</div>
                         <div><span class="scanner-fact-label">Liquidity proxy</span><br>{html.escape(liquidity_label)}</div>
                     </div>
+                    {persistence_profile_html}
                     {risk_profile_html}
                     <ul>{bullet_html}</ul>
                 </div>
