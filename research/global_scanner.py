@@ -87,8 +87,10 @@ def _field_frame(market_data, field, tickers):
 def download_recent_data(tickers, period="1y"):
     market_data = download_market_data(tickers, period=period)
     prices = _field_frame(market_data, "Close", tickers)
+    highs = _field_frame(market_data, "High", tickers)
+    lows = _field_frame(market_data, "Low", tickers)
     volumes = _field_frame(market_data, "Volume", tickers)
-    return prices, volumes
+    return prices, volumes, highs, lows
 
 
 def _latest_value(series):
@@ -118,7 +120,109 @@ def _technical_score_latest(ticker, close, volume):
     return float(valid_score.iloc[-1])
 
 
-def calculate_quality(universe, prices, volumes):
+def _annualised_volatility(close, window):
+    returns = close.dropna().pct_change().dropna().tail(window)
+    if len(returns) < 2:
+        return np.nan
+    return float(returns.std() * np.sqrt(252) * 100.0)
+
+
+def _max_drawdown_percent(close):
+    valid_close = close.dropna()
+    if valid_close.empty:
+        return np.nan
+
+    running_high = valid_close.cummax()
+    drawdown = (valid_close / running_high) - 1.0
+    return float(abs(drawdown.min()) * 100.0)
+
+
+def _atr_percent(close, high, low, window=14):
+    valid_close = close.dropna()
+    if valid_close.empty:
+        return np.nan
+
+    high = high.reindex(close.index) if high is not None else pd.Series(dtype=float)
+    low = low.reindex(close.index) if low is not None else pd.Series(dtype=float)
+    high = pd.to_numeric(high, errors="coerce")
+    low = pd.to_numeric(low, errors="coerce")
+
+    if high.notna().sum() and low.notna().sum():
+        previous_close = close.shift()
+        true_range = pd.concat(
+            [
+                high - low,
+                (high - previous_close).abs(),
+                (low - previous_close).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+        atr = true_range.dropna().tail(window).mean()
+    else:
+        atr = valid_close.pct_change().abs().dropna().tail(window).mean()
+        if pd.notna(atr):
+            atr = atr * valid_close.iloc[-1]
+
+    if pd.isna(atr) or valid_close.iloc[-1] == 0:
+        return np.nan
+    return float((atr / valid_close.iloc[-1]) * 100.0)
+
+
+def _trend_stability_score(close, volatility_60d, max_drawdown_1y):
+    valid_close = close.dropna()
+    if len(valid_close) < 60:
+        return np.nan
+
+    ema50 = valid_close.ewm(span=50, adjust=False).mean()
+    trend_consistency = (valid_close.tail(60) > ema50.tail(60)).mean()
+    trend_component = float(trend_consistency) * 40.0
+
+    returns = valid_close.pct_change().dropna()
+    recent_returns = returns.tail(60)
+    if recent_returns.empty:
+        swing_component = 0.0
+    else:
+        swing_threshold = max(0.03, float(recent_returns.std() * 2.0))
+        large_swing_frequency = (recent_returns.abs() > swing_threshold).mean()
+        swing_component = (1.0 - min(float(large_swing_frequency) / 0.20, 1.0)) * 20.0
+
+    volatility_value = 80.0 if pd.isna(volatility_60d) else float(volatility_60d)
+    volatility_component = (1.0 - min(volatility_value / 80.0, 1.0)) * 20.0
+
+    drawdown_value = 50.0 if pd.isna(max_drawdown_1y) else float(max_drawdown_1y)
+    drawdown_component = (1.0 - min(drawdown_value / 50.0, 1.0)) * 20.0
+
+    score = (
+        trend_component
+        + swing_component
+        + volatility_component
+        + drawdown_component
+    )
+    return float(max(0.0, min(score, 100.0)))
+
+
+def _risk_level(volatility_60d, max_drawdown_1y, atr_pct):
+    components = []
+    if pd.notna(volatility_60d):
+        components.append(min(float(volatility_60d) / 80.0, 1.0) * 40.0)
+    if pd.notna(max_drawdown_1y):
+        components.append(min(float(max_drawdown_1y) / 60.0, 1.0) * 40.0)
+    if pd.notna(atr_pct):
+        components.append(min(float(atr_pct) / 8.0, 1.0) * 20.0)
+
+    risk_score = sum(components) if components else 50.0
+    if risk_score <= 20:
+        return "Very Low"
+    if risk_score <= 40:
+        return "Low"
+    if risk_score <= 60:
+        return "Medium"
+    if risk_score <= 80:
+        return "High"
+    return "Very High"
+
+
+def calculate_quality(universe, prices, volumes, highs=None, lows=None):
     if prices.empty:
         reference_date = pd.Timestamp.utcnow().normalize().tz_localize(None)
     else:
@@ -132,6 +236,14 @@ def calculate_quality(universe, prices, volumes):
         close = pd.to_numeric(prices.get(ticker, pd.Series(dtype=float)), errors="coerce")
         volume = pd.to_numeric(
             volumes.get(ticker, pd.Series(dtype=float)),
+            errors="coerce",
+        )
+        high = pd.to_numeric(
+            highs.get(ticker, pd.Series(dtype=float)) if highs is not None else pd.Series(dtype=float),
+            errors="coerce",
+        )
+        low = pd.to_numeric(
+            lows.get(ticker, pd.Series(dtype=float)) if lows is not None else pd.Series(dtype=float),
             errors="coerce",
         )
 
@@ -150,6 +262,16 @@ def calculate_quality(universe, prices, volumes):
             avg_traded_value_60d = 0.0
 
         tech_score = _technical_score_latest(ticker, close, volume)
+        volatility_20d = _annualised_volatility(close, 20)
+        volatility_60d = _annualised_volatility(close, 60)
+        atr_pct = _atr_percent(close, high, low)
+        max_drawdown_1y = _max_drawdown_percent(close)
+        trend_stability = _trend_stability_score(
+            close,
+            volatility_60d,
+            max_drawdown_1y,
+        )
+        risk_level = _risk_level(volatility_60d, max_drawdown_1y, atr_pct)
         data_quality_pass = (
             latest_close_present
             and valid_bar_count >= 126
@@ -191,6 +313,12 @@ def calculate_quality(universe, prices, volumes):
                 "volume_present": volume_present,
                 "avg_traded_value_60d": avg_traded_value_60d,
                 "technical_score": tech_score,
+                "volatility_20d": volatility_20d,
+                "volatility_60d": volatility_60d,
+                "atr_percent": atr_pct,
+                "max_drawdown_1y": max_drawdown_1y,
+                "trend_stability_score": trend_stability,
+                "risk_level": risk_level,
                 "data_quality_pass": data_quality_pass,
                 "freshness_component": freshness_component,
                 "history_component": history_component,
@@ -331,8 +459,13 @@ def run_global_scanner(
     active = active_universe(universe)
     tickers = active["yahoo_ticker"].tolist()
 
-    prices, volumes = download_recent_data(tickers, period=period)
-    validated = calculate_quality(active, prices, volumes)
+    recent_data = download_recent_data(tickers, period=period)
+    if len(recent_data) == 2:
+        prices, volumes = recent_data
+        highs = lows = None
+    else:
+        prices, volumes, highs, lows = recent_data
+    validated = calculate_quality(active, prices, volumes, highs=highs, lows=lows)
     rankings, selected = rank_candidates(validated, top_n=top_n)
     rankings = add_history_comparison(rankings, output_dir)
     selected = rankings[rankings["selected_for_research"]].copy()

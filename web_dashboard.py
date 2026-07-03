@@ -407,6 +407,35 @@ def inject_mobile_css():
             color:#94a3b8;
         }
 
+        .scanner-risk-profile {
+            border:1px solid rgba(148,163,184,0.18);
+            border-radius:8px;
+            padding:10px;
+            margin:10px 0;
+            background:rgba(15,23,42,0.58);
+        }
+
+        .scanner-risk-title {
+            color:#e5e7eb;
+            font-size:12px;
+            font-weight:760;
+            margin-bottom:8px;
+        }
+
+        .scanner-risk-grid {
+            display:grid;
+            grid-template-columns:1fr 1fr;
+            gap:8px;
+            color:#cbd5e1;
+            font-size:12px;
+        }
+
+        .scanner-risk-value {
+            color:#f8fafc;
+            font-size:14px;
+            font-weight:720;
+        }
+
         .scanner-bars {
             display:grid;
             gap:8px;
@@ -1933,6 +1962,101 @@ def scanner_component_number(row, column):
     return scanner_number(row, column)
 
 
+SCANNER_RISK_COLUMNS = [
+    "volatility_20d",
+    "volatility_60d",
+    "atr_percent",
+    "max_drawdown_1y",
+    "trend_stability_score",
+    "risk_level",
+]
+
+
+def scanner_has_risk_profile(row):
+    return all(column in row.index for column in SCANNER_RISK_COLUMNS)
+
+
+def scanner_percent_label(value):
+    numeric = scanner_number(pd.Series({"value": value}), "value")
+    if numeric is None:
+        return "Unavailable"
+    return f"{numeric:.1f}%"
+
+
+def scanner_risk_bullets(row):
+    if not scanner_has_risk_profile(row):
+        return []
+
+    bullets = []
+    stability = scanner_number(row, "trend_stability_score")
+    volatility = scanner_number(row, "volatility_60d")
+    drawdown = scanner_number(row, "max_drawdown_1y")
+    atr_pct = scanner_number(row, "atr_percent")
+
+    if stability is not None:
+        if stability >= 80:
+            bullets.append("Stable long-term trend")
+        elif stability >= 60:
+            bullets.append("Moderately stable trend")
+        else:
+            bullets.append("Caution: trend stability is weak")
+
+    if volatility is not None:
+        if volatility < 20:
+            bullets.append("Low volatility profile")
+        elif volatility < 45:
+            bullets.append("Moderate volatility")
+        else:
+            bullets.append("High volatility")
+
+    if drawdown is not None:
+        if drawdown < 15:
+            bullets.append("Limited historical drawdowns")
+        elif drawdown < 35:
+            bullets.append("Moderate historical drawdowns")
+        else:
+            bullets.append("Large historical drawdowns")
+
+    if atr_pct is not None:
+        if atr_pct < 2:
+            bullets.append("Tight recent price ranges")
+        elif atr_pct < 5:
+            bullets.append("Normal recent price ranges")
+        else:
+            bullets.append("Expect wider price swings")
+
+    return bullets
+
+
+def scanner_risk_profile_html(row):
+    if not scanner_has_risk_profile(row):
+        return ""
+
+    risk = html.escape(scanner_display_value(row, "risk_level", "Unavailable"))
+    stability = scanner_number(row, "trend_stability_score")
+    stability_label = (
+        "Unavailable"
+        if stability is None
+        else f"{stability:.0f} / 100"
+    )
+    volatility = scanner_percent_label(row.get("volatility_20d"))
+    drawdown = scanner_percent_label(row.get("max_drawdown_1y"))
+    atr_pct = scanner_percent_label(row.get("atr_percent"))
+
+    return f"""
+        <div class="scanner-risk-profile">
+            <div class="scanner-risk-title">Risk Profile</div>
+            <div class="scanner-risk-grid">
+                <div><span class="scanner-fact-label">Risk</span><br><span class="scanner-risk-value">{risk}</span></div>
+                <div><span class="scanner-fact-label">Trend Stability</span><br><span class="scanner-risk-value">{html.escape(stability_label)}</span></div>
+                <div><span class="scanner-fact-label">20d Volatility</span><br><span class="scanner-risk-value">{html.escape(volatility)}</span></div>
+                <div><span class="scanner-fact-label">1Y Max Drawdown</span><br><span class="scanner-risk-value">{html.escape(drawdown)}</span></div>
+                <div><span class="scanner-fact-label">ATR</span><br><span class="scanner-risk-value">{html.escape(atr_pct)}</span></div>
+            </div>
+        </div>
+    """
+
+
 def scanner_change_cards(selected, history):
     if len(history) < 2 or selected.empty:
         return None
@@ -2264,6 +2388,7 @@ def scanner_why_selected(row):
             else:
                 bullets.append("Caution: recent volume data is weak")
 
+        bullets.extend(scanner_risk_bullets(row))
         return bullets
 
     scanner_score = scanner_number(row, "scanner_score")
@@ -2298,6 +2423,7 @@ def scanner_why_selected(row):
     if sector:
         bullets.append(f"Strong candidate within the {sector} sector")
 
+    bullets.extend(scanner_risk_bullets(row))
     return bullets[:5]
 
 
@@ -2365,6 +2491,7 @@ def render_opportunity_intelligence(selected):
             f"<li>{html.escape(str(bullet))}</li>"
             for bullet in bullets
         )
+        risk_profile_html = scanner_risk_profile_html(row)
         summary = html.escape(scanner_research_summary(row))
         scanner_pct = scanner_bar_pct(score, 150)
         technical_pct = scanner_bar_pct(technical_score, 5)
@@ -2413,6 +2540,7 @@ def render_opportunity_intelligence(selected):
                         <div><span class="scanner-fact-label">Latest close</span><br>{html.escape(close_label)}</div>
                         <div><span class="scanner-fact-label">Liquidity proxy</span><br>{html.escape(liquidity_label)}</div>
                     </div>
+                    {risk_profile_html}
                     <ul>{bullet_html}</ul>
                 </div>
                 """,
