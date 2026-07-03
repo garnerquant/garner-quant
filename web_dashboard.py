@@ -410,8 +410,8 @@ def inject_mobile_css():
         .scanner-risk-profile {
             border:1px solid rgba(148,163,184,0.18);
             border-radius:8px;
-            padding:10px;
-            margin:10px 0;
+            padding:9px 10px;
+            margin:9px 0;
             background:rgba(15,23,42,0.58);
         }
 
@@ -425,7 +425,7 @@ def inject_mobile_css():
         .scanner-risk-grid {
             display:grid;
             grid-template-columns:1fr 1fr;
-            gap:8px;
+            gap:7px;
             color:#cbd5e1;
             font-size:12px;
         }
@@ -595,6 +595,27 @@ def inject_mobile_css():
 
         .scanner-bullet-text {
             overflow-wrap:anywhere;
+        }
+
+        .scanner-takeaway-title {
+            color:#e5e7eb;
+            font-size:12px;
+            font-weight:760;
+            margin-top:10px;
+        }
+
+        .scanner-diagnostics {
+            margin-top:10px;
+            color:#cbd5e1;
+            font-size:12px;
+            border-top:1px solid rgba(148,163,184,0.14);
+            padding-top:8px;
+        }
+
+        .scanner-diagnostics summary {
+            color:#94a3b8;
+            cursor:pointer;
+            font-weight:700;
         }
 
         .signal-badge {
@@ -2473,6 +2494,105 @@ def scanner_portfolio_fit_bullets(row):
     return []
 
 
+def scanner_add_unique_takeaway(items, text):
+    if not text:
+        return
+
+    key = str(text).strip().lower()
+    if key and key not in {item.lower() for item in items}:
+        items.append(str(text).strip())
+
+
+def scanner_key_takeaways(row):
+    takeaways = []
+
+    for bullet in scanner_portfolio_fit_bullets(row):
+        scanner_add_unique_takeaway(takeaways, bullet)
+        if len(takeaways) >= 2:
+            break
+
+    risk_level = scanner_display_value(row, "risk_level", "")
+    volatility = scanner_number(row, "volatility_60d")
+    drawdown = scanner_number(row, "max_drawdown_1y")
+    if risk_level in {"High", "Very High"}:
+        scanner_add_unique_takeaway(takeaways, f"{risk_level} risk profile")
+    elif drawdown is not None and drawdown < 15:
+        scanner_add_unique_takeaway(takeaways, "Low historical drawdown")
+    elif volatility is not None:
+        if volatility >= 45:
+            scanner_add_unique_takeaway(takeaways, "High volatility")
+        elif volatility >= 20:
+            scanner_add_unique_takeaway(takeaways, "Moderate volatility")
+
+    technical_score = scanner_number(row, "technical_score")
+    if technical_score is not None:
+        if technical_score >= 4:
+            scanner_add_unique_takeaway(takeaways, "Strong technical momentum")
+        elif technical_score >= 3:
+            scanner_add_unique_takeaway(takeaways, "Positive technical profile")
+
+    persistence_score = scanner_number(row, "persistence_score")
+    days = scanner_number(row, "days_in_top_list")
+    if persistence_score is not None and persistence_score >= 85:
+        scanner_add_unique_takeaway(takeaways, "Strong persistence")
+    elif days is not None and days >= 10:
+        scanner_add_unique_takeaway(takeaways, "Persistent research candidate")
+
+    if len(takeaways) < 3:
+        for bullet in scanner_risk_bullets(row) + scanner_persistence_bullets(row):
+            scanner_add_unique_takeaway(takeaways, bullet)
+            if len(takeaways) >= 3:
+                break
+
+    return takeaways[:3]
+
+
+def scanner_research_diagnostics(row):
+    diagnostics = []
+    component_labels = [
+        ("freshness_component", "Data freshness"),
+        ("history_component", "History coverage"),
+        ("missing_data_component", "Missing data"),
+        ("liquidity_component", "Liquidity component"),
+        ("volume_component", "Volume component"),
+        ("technical_component", "Technical component"),
+    ]
+    for column, label in component_labels:
+        value = scanner_number(row, column)
+        if value is not None:
+            diagnostics.append(f"{label}: {value:.1f}")
+
+    details = [
+        ("volatility_20d", "20d volatility", scanner_percent_label),
+        ("volatility_60d", "60d volatility", scanner_percent_label),
+        ("atr_percent", "ATR", scanner_percent_label),
+        ("max_drawdown_1y", "1Y max drawdown", scanner_percent_label),
+        ("highest_rank_seen", "Highest rank", scanner_integer_label),
+        ("average_rank", "Average rank", scanner_decimal_label),
+        ("rank_volatility", "Rank volatility", scanner_decimal_label),
+    ]
+    for column, label, formatter in details:
+        if column in row.index:
+            value = formatter(row.get(column))
+            if value != "Unavailable":
+                diagnostics.append(f"{label}: {value}")
+
+    return diagnostics
+
+
+def scanner_diagnostics_html(row):
+    diagnostics = scanner_research_diagnostics(row)
+    if not diagnostics:
+        return ""
+
+    return (
+        '<details class="scanner-diagnostics">'
+        "<summary>Research Diagnostics</summary>"
+        f"{scanner_bullet_list_html(diagnostics)}"
+        "</details>"
+    )
+
+
 def scanner_risk_profile_html(row):
     if not scanner_has_risk_profile(row):
         return ""
@@ -2484,19 +2604,13 @@ def scanner_risk_profile_html(row):
         if stability is None
         else f"{stability:.0f} / 100"
     )
-    volatility = scanner_percent_label(row.get("volatility_20d"))
-    drawdown = scanner_percent_label(row.get("max_drawdown_1y"))
-    atr_pct = scanner_percent_label(row.get("atr_percent"))
 
     return f"""
         <div class="scanner-risk-profile">
-            <div class="scanner-risk-title">Risk Profile</div>
+            <div class="scanner-risk-title">Risk</div>
             <div class="scanner-risk-grid">
-                <div><span class="scanner-fact-label">Risk</span><br><span class="scanner-risk-value">{risk}</span></div>
+                <div><span class="scanner-fact-label">Risk Level</span><br><span class="scanner-risk-value">{risk}</span></div>
                 <div><span class="scanner-fact-label">Trend Stability</span><br><span class="scanner-risk-value">{html.escape(stability_label)}</span></div>
-                <div><span class="scanner-fact-label">20d Volatility</span><br><span class="scanner-risk-value">{html.escape(volatility)}</span></div>
-                <div><span class="scanner-fact-label">1Y Max Drawdown</span><br><span class="scanner-risk-value">{html.escape(drawdown)}</span></div>
-                <div><span class="scanner-fact-label">ATR</span><br><span class="scanner-risk-value">{html.escape(atr_pct)}</span></div>
             </div>
         </div>
     """
@@ -2510,8 +2624,6 @@ def scanner_persistence_profile_html(row):
     score = scanner_number(row, "persistence_score")
     score_label = "Unavailable" if score is None else f"{score:.0f} / 100"
     days = scanner_integer_label(row.get("days_in_top_list"))
-    highest_rank = scanner_integer_label(row.get("highest_rank_seen"))
-    average_rank = scanner_decimal_label(row.get("average_rank"))
 
     return f"""
         <div class="scanner-risk-profile">
@@ -2520,8 +2632,6 @@ def scanner_persistence_profile_html(row):
                 <div><span class="scanner-fact-label">Level</span><br><span class="scanner-risk-value">{level}</span></div>
                 <div><span class="scanner-fact-label">Score</span><br><span class="scanner-risk-value">{html.escape(score_label)}</span></div>
                 <div><span class="scanner-fact-label">Days tracked</span><br><span class="scanner-risk-value">{html.escape(days)}</span></div>
-                <div><span class="scanner-fact-label">Highest rank</span><br><span class="scanner-risk-value">{html.escape(highest_rank)}</span></div>
-                <div><span class="scanner-fact-label">Average rank</span><br><span class="scanner-risk-value">{html.escape(average_rank)}</span></div>
             </div>
         </div>
     """
@@ -3521,8 +3631,14 @@ def render_opportunity_intelligence(selected):
             if technical_score is None
             else f"{technical_score:.1f}"
         )
-        bullets = scanner_why_selected(row)
-        bullet_html = scanner_bullet_list_html(bullets)
+        takeaways = scanner_key_takeaways(row)
+        takeaway_html = scanner_bullet_list_html(takeaways)
+        if takeaway_html:
+            takeaway_html = (
+                '<div class="scanner-takeaway-title">Key Takeaways</div>'
+                f"{takeaway_html}"
+            )
+        diagnostics_html = scanner_diagnostics_html(row)
         portfolio_fit_html = scanner_portfolio_fit_html(row)
         persistence_profile_html = scanner_persistence_profile_html(row)
         risk_profile_html = scanner_risk_profile_html(row)
@@ -3573,9 +3689,10 @@ def render_opportunity_intelligence(selected):
                     <div><span class="scanner-fact-label">Liquidity proxy</span><br>{html.escape(liquidity_label)}</div>
                 </div>
                 {portfolio_fit_html}
-                {persistence_profile_html}
                 {risk_profile_html}
-                {bullet_html}
+                {persistence_profile_html}
+                {takeaway_html}
+                {diagnostics_html}
             </div>
         """
 
