@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import altair as alt
+import numpy as np
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -1703,25 +1704,35 @@ if page == "Home":
     st.divider()
 
     if not paper_30.empty and len(paper_30) > 1:
-        paper_30["daily_return"] = paper_30["portfolio_value"].pct_change()
+        portfolio_values = pd.to_numeric(
+            paper_30["portfolio_value"],
+            errors="coerce",
+        )
+        performance_values = portfolio_values[
+            np.isfinite(portfolio_values) & (portfolio_values > 0)
+        ]
+        if len(performance_values) > 1:
+            daily_return = performance_values.pct_change().dropna()
 
-        best_day = paper_30["daily_return"].max()
-        worst_day = paper_30["daily_return"].min()
+            best_day = daily_return.max()
+            worst_day = daily_return.min()
 
-        rolling_peak = paper_30["portfolio_value"].cummax()
-        drawdown = (paper_30["portfolio_value"] / rolling_peak) - 1
-        max_drawdown = drawdown.min()
+            rolling_peak = performance_values.cummax()
+            drawdown = (performance_values / rolling_peak) - 1
+            max_drawdown = drawdown.min()
 
-        col1, col2, col3 = responsive_columns(3)
+            col1, col2, col3 = responsive_columns(3)
 
-        with col1:
-            metric_card("Best Day", f"{best_day:.2%}", True)
+            with col1:
+                metric_card("Best Day", f"{best_day:.2%}", True)
 
-        with col2:
-            metric_card("Worst Day", f"{worst_day:.2%}")
+            with col2:
+                metric_card("Worst Day", f"{worst_day:.2%}")
 
-        with col3:
-            metric_card("Max Drawdown", f"{max_drawdown:.2%}")
+            with col3:
+                metric_card("Max Drawdown", f"{max_drawdown:.2%}")
+        else:
+            st.info("Need at least 2 valid days of data for daily return analytics.")
 
     else:
         st.info("Need at least 2 days of data for daily return analytics.")
