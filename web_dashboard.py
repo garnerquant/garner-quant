@@ -33,6 +33,8 @@ SCANNER_REQUIRED_OUTPUTS = [
     "selected_candidates.csv",
 ]
 SCANNER_STALE_AFTER = pd.Timedelta(hours=6)
+SCANNER_DISPLAY_TIMEZONE = "Europe/London"
+SCANNER_TIMESTAMP_FORMAT = "%d/%m/%Y %H:%M %Z"
 
 try:
     from ui.auto_refresh import (
@@ -708,16 +710,77 @@ def load_scanner_csv(filename):
     return load_csv(SCANNER_OUTPUT_DIR / filename)
 
 
+def scanner_utc_timestamp(value):
+    if value is None or value == "":
+        return None
+
+    try:
+        timestamp = pd.to_datetime(value, utc=True, errors="coerce")
+    except Exception:
+        return None
+
+    if pd.isna(timestamp):
+        return None
+
+    return timestamp
+
+
+def scanner_file_modified_timestamp(filename):
+    path = SCANNER_OUTPUT_DIR / filename
+    if not path.exists():
+        return None
+
+    try:
+        return pd.to_datetime(path.stat().st_mtime, unit="s", utc=True)
+    except Exception:
+        return None
+
+
+def format_scanner_timestamp(value, fallback="Unknown"):
+    timestamp = scanner_utc_timestamp(value)
+    if timestamp is None:
+        return fallback
+
+    try:
+        return timestamp.tz_convert(SCANNER_DISPLAY_TIMEZONE).strftime(
+            SCANNER_TIMESTAMP_FORMAT
+        )
+    except Exception:
+        return fallback
+
+
 def scanner_file_modified_label(filename):
     path = SCANNER_OUTPUT_DIR / filename
     if not path.exists():
         return "Missing"
 
+    return format_scanner_timestamp(
+        scanner_file_modified_timestamp(filename),
+        "Unknown",
+    )
+
+
+def scanner_history_timestamp_value(path, frame):
+    if "scanner_run_timestamp" in frame.columns and not frame.empty:
+        value = frame["scanner_run_timestamp"].dropna()
+        if not value.empty:
+            timestamp = scanner_utc_timestamp(value.iloc[0])
+            if timestamp is not None:
+                return timestamp
+
+    stem = path.name.replace("_rankings.csv", "")
+    parsed = scanner_utc_timestamp(stem.replace("_", " ", 1))
+    if parsed is None:
+        parsed = scanner_utc_timestamp(
+            pd.to_datetime(stem, format="%Y-%m-%d_%H%M%S_%f", errors="coerce")
+        )
+    if parsed is not None:
+        return parsed
+
     try:
-        modified = pd.Timestamp.fromtimestamp(path.stat().st_mtime)
-        return modified.strftime("%Y-%m-%d %H:%M:%S")
+        return pd.to_datetime(path.stat().st_mtime, unit="s", utc=True)
     except Exception:
-        return "Unknown"
+        return None
 
 
 def scanner_output_state():
@@ -737,8 +800,8 @@ def scanner_output_state():
 
     if latest_rankings.exists():
         try:
-            modified = pd.Timestamp.fromtimestamp(latest_rankings.stat().st_mtime)
-            age = pd.Timestamp.now() - modified
+            modified = scanner_file_modified_timestamp("latest_rankings.csv")
+            age = pd.Timestamp.now(tz="UTC") - modified
             stale = bool(age > SCANNER_STALE_AFTER)
         except Exception:
             stale = True
@@ -769,7 +832,7 @@ def render_scanner_auto_refresh_status():
         if modified is not None:
             st.success(
                 "Scanner output is fresh. "
-                f"Last refreshed {modified.strftime('%Y-%m-%d %H:%M:%S')}."
+                f"Last refreshed {format_scanner_timestamp(modified)}."
             )
         else:
             st.success("Scanner output is fresh.")
@@ -827,35 +890,25 @@ def load_scanner_history():
         except Exception:
             continue
 
-        timestamp = scanner_history_timestamp(path, frame)
+        timestamp_value = scanner_history_timestamp_value(path, frame)
+        timestamp = format_scanner_timestamp(timestamp_value)
         snapshots.append(
             {
                 "path": path,
                 "timestamp": timestamp,
+                "sort_timestamp": timestamp_value,
                 "frame": frame,
             }
         )
 
-    return snapshots
+    return sorted(
+        snapshots,
+        key=lambda snapshot: snapshot["sort_timestamp"] or pd.Timestamp.min.tz_localize("UTC"),
+    )
 
 
 def scanner_history_timestamp(path, frame):
-    if "scanner_run_timestamp" in frame.columns and not frame.empty:
-        value = frame["scanner_run_timestamp"].dropna()
-        if not value.empty:
-            return str(value.iloc[0])
-
-    stem = path.name.replace("_rankings.csv", "")
-    parsed = pd.to_datetime(stem, format="%Y-%m-%d_%H%M%S_%f", errors="coerce")
-    if pd.notna(parsed):
-        return parsed.strftime("%Y-%m-%d %H:%M:%S")
-
-    try:
-        return pd.Timestamp.fromtimestamp(path.stat().st_mtime).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-    except Exception:
-        return "Unknown"
+    return format_scanner_timestamp(scanner_history_timestamp_value(path, frame))
 
 
 def scanner_selected_rows(frame):
@@ -2067,6 +2120,7 @@ def scanner_history_table(history):
         rows.append(
             {
                 "timestamp": snapshot["timestamp"],
+                "sort_timestamp": snapshot.get("sort_timestamp"),
                 "top candidate": top_candidate,
                 "number selected": len(selected),
                 "new entries": new_entries,
@@ -2086,10 +2140,8 @@ def scanner_history_table(history):
     if not rows:
         return pd.DataFrame(columns=columns)
 
-    return pd.DataFrame(rows, columns=columns).sort_values(
-        "timestamp",
-        ascending=False,
-    )
+    table = pd.DataFrame(rows).sort_values("sort_timestamp", ascending=False)
+    return table.drop(columns=["sort_timestamp"], errors="ignore")[columns]
 
 
 def render_scanner_history_intelligence(validated, selected, history):

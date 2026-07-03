@@ -307,7 +307,7 @@ def run_global_scanner(
 ):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    run_timestamp = pd.Timestamp.now()
+    run_timestamp = pd.Timestamp.now(tz="UTC")
 
     universe = load_universe(universe_dir)
     active = active_universe(universe)
