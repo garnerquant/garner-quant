@@ -429,6 +429,31 @@ def load_json_file(path):
         return {}
 
 
+def load_scanner_csv(filename):
+    return load_csv(Path("data/global_scanner") / filename)
+
+
+def scanner_file_modified_label(filename):
+    path = Path("data/global_scanner") / filename
+    if not path.exists():
+        return "Missing"
+
+    try:
+        modified = pd.Timestamp.fromtimestamp(path.stat().st_mtime)
+        return modified.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return "Unknown"
+
+
+def scanner_bool_series(frame, column):
+    if frame.empty or column not in frame.columns:
+        return pd.Series(dtype=bool)
+
+    return frame[column].astype(str).str.strip().str.lower().isin(
+        {"1", "true", "yes", "y"}
+    )
+
+
 def format_london_time(value, fallback="Unknown"):
     if not value:
         return fallback
@@ -1248,6 +1273,155 @@ def render_live_panel(live_mode):
     render_live_operational_cards()
 
 
+def render_scanner_table(frame, columns):
+    if frame.empty:
+        st.info("No scanner rows available.")
+        return
+
+    display_columns = [column for column in columns if column in frame.columns]
+    if not display_columns:
+        responsive_table(frame, hide_index=True)
+        return
+
+    responsive_table(frame[display_columns], hide_index=True)
+
+
+def render_global_scanner_page():
+    st.subheader("Global Scanner")
+    st.caption("Research Only / Not Live Trading")
+    st.info(
+        "Scanner outputs are read-only research artifacts. They are not wired "
+        "into main_v2.py, runtime execution, Portfolio Manager, or live trades."
+    )
+
+    validated = load_scanner_csv("universe_validated.csv")
+    rankings = load_scanner_csv("latest_rankings.csv")
+    selected = load_scanner_csv("selected_candidates.csv")
+
+    if validated.empty and rankings.empty and selected.empty:
+        st.warning("No scanner outputs found yet.")
+        st.code("python -m research.global_scanner", language="bash")
+        return
+
+    validated_pass = scanner_bool_series(validated, "data_quality_pass")
+    selected_flag = scanner_bool_series(rankings, "selected_for_research")
+    failed = (
+        validated.loc[~validated_pass].copy()
+        if not validated.empty and len(validated_pass) == len(validated)
+        else pd.DataFrame()
+    )
+
+    cols = responsive_columns(4)
+    with cols[0]:
+        metric_card("Universe Size", len(validated))
+    with cols[1]:
+        metric_card("Validated Tickers", int(validated_pass.sum()), True)
+    with cols[2]:
+        metric_card("Selected Candidates", len(selected), len(selected) > 0)
+    with cols[3]:
+        metric_card("Failed Tickers", len(failed), len(failed) == 0)
+
+    st.caption(
+        "Output timestamps | "
+        f"validated: {scanner_file_modified_label('universe_validated.csv')} | "
+        f"rankings: {scanner_file_modified_label('latest_rankings.csv')} | "
+        f"selected: {scanner_file_modified_label('selected_candidates.csv')}"
+    )
+
+    st.markdown("Run or refresh the scanner from a terminal:")
+    st.code("python -m research.global_scanner", language="bash")
+
+    st.divider()
+    st.subheader("Region Breakdown")
+    if "region" in validated.columns:
+        region_breakdown = (
+            validated.assign(_valid=validated_pass)
+            .groupby("region", dropna=False)
+            .agg(
+                tickers=("yahoo_ticker", "count"),
+                validated=("_valid", "sum"),
+            )
+            .reset_index()
+            .sort_values("tickers", ascending=False)
+        )
+        responsive_table(region_breakdown, hide_index=True)
+    else:
+        st.info("No region column available in scanner output.")
+
+    if "sector" in validated.columns:
+        st.subheader("Sector Breakdown")
+        sector_breakdown = (
+            validated.groupby("sector", dropna=False)
+            .size()
+            .reset_index(name="tickers")
+            .sort_values("tickers", ascending=False)
+        )
+        responsive_table(sector_breakdown, hide_index=True)
+
+    st.divider()
+    st.subheader("Top Ranked Opportunities")
+    if not rankings.empty and len(selected_flag) == len(rankings):
+        ranked_display = rankings.copy()
+        ranked_display["selected"] = selected_flag.map(
+            {True: "Selected", False: ""}
+        )
+    else:
+        ranked_display = rankings
+
+    render_scanner_table(
+        ranked_display.head(25),
+        [
+            "rank",
+            "selected",
+            "yahoo_ticker",
+            "name",
+            "region",
+            "exchange",
+            "currency",
+            "sector",
+            "latest_close",
+            "technical_score",
+            "scanner_score",
+            "avg_traded_value_60d",
+        ],
+    )
+
+    st.subheader("Selected Candidates")
+    render_scanner_table(
+        selected,
+        [
+            "rank",
+            "yahoo_ticker",
+            "name",
+            "region",
+            "exchange",
+            "currency",
+            "sector",
+            "latest_close",
+            "technical_score",
+            "scanner_score",
+        ],
+    )
+
+    st.subheader("Failed / Invalid Tickers")
+    if failed.empty:
+        st.success("No failed scanner tickers in the latest validation output.")
+    else:
+        render_scanner_table(
+            failed,
+            [
+                "yahoo_ticker",
+                "name",
+                "region",
+                "latest_close_present",
+                "valid_bar_count",
+                "missing_close_pct",
+                "stale_latest_price",
+                "volume_present",
+            ],
+        )
+
+
 def equity_curve_y_domain(equity_series, reference_value=None):
     values = pd.to_numeric(equity_series, errors="coerce").dropna()
     if values.empty:
@@ -1565,10 +1739,16 @@ render_investment_brief(
     win_rate_value,
 )
 
-page = "Home"
+page = st.sidebar.radio(
+    "Page",
+    ["Home", "Global Scanner"],
+    index=0,
+)
 
+if page == "Global Scanner":
+    render_global_scanner_page()
 
-if page == "Home":
+elif page == "Home":
     render_holdings_exposure(holdings, broker_row)
 
     st.divider()
