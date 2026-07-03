@@ -179,9 +179,9 @@ def inject_mobile_css():
             background:#0b1220;
             border:1px solid rgba(148,163,184,0.24);
             border-radius:8px;
-            padding:14px;
+            padding:16px;
             margin-bottom:14px;
-            min-height:250px;
+            min-height:310px;
         }
 
         .scanner-card-head {
@@ -215,10 +215,23 @@ def inject_mobile_css():
 
         .scanner-score {
             color:#68ff8b;
-            font-size:18px;
+            font-size:16px;
             font-weight:760;
             text-align:right;
             white-space:nowrap;
+        }
+
+        .scanner-score-label {
+            color:#94a3b8;
+            font-size:11px;
+            font-weight:500;
+        }
+
+        .scanner-summary {
+            color:#e5e7eb;
+            font-size:14px;
+            line-height:1.35;
+            margin:10px 0;
         }
 
         .scanner-badges {
@@ -236,6 +249,54 @@ def inject_mobile_css():
             padding:2px 8px;
             font-size:12px;
             line-height:1.5;
+        }
+
+        .scanner-region-us {
+            color:#dbeafe;
+            background:rgba(37,99,235,0.20);
+            border-color:rgba(96,165,250,0.34);
+        }
+
+        .scanner-region-europe {
+            color:#ddd6fe;
+            background:rgba(109,40,217,0.20);
+            border-color:rgba(167,139,250,0.34);
+        }
+
+        .scanner-region-uk {
+            color:#bae6fd;
+            background:rgba(3,105,161,0.20);
+            border-color:rgba(56,189,248,0.34);
+        }
+
+        .scanner-region-japan {
+            color:#fecaca;
+            background:rgba(185,28,28,0.18);
+            border-color:rgba(248,113,113,0.30);
+        }
+
+        .scanner-region-asia {
+            color:#fde68a;
+            background:rgba(180,83,9,0.18);
+            border-color:rgba(251,191,36,0.30);
+        }
+
+        .scanner-region-australia {
+            color:#bbf7d0;
+            background:rgba(21,128,61,0.18);
+            border-color:rgba(74,222,128,0.30);
+        }
+
+        .scanner-region-global {
+            color:#cffafe;
+            background:rgba(14,116,144,0.18);
+            border-color:rgba(34,211,238,0.30);
+        }
+
+        .scanner-region-crypto {
+            color:#fed7aa;
+            background:rgba(194,65,12,0.18);
+            border-color:rgba(251,146,60,0.30);
         }
 
         .scanner-quality-pass {
@@ -261,6 +322,36 @@ def inject_mobile_css():
 
         .scanner-fact-label {
             color:#94a3b8;
+        }
+
+        .scanner-bars {
+            display:grid;
+            gap:8px;
+            margin:12px 0 10px 0;
+        }
+
+        .scanner-bar-row {
+            display:grid;
+            grid-template-columns:92px 1fr 48px;
+            gap:8px;
+            align-items:center;
+            color:#cbd5e1;
+            font-size:12px;
+        }
+
+        .scanner-bar-track {
+            display:block;
+            height:7px;
+            border-radius:999px;
+            background:rgba(148,163,184,0.16);
+            overflow:hidden;
+        }
+
+        .scanner-bar-fill {
+            display:block;
+            height:100%;
+            border-radius:999px;
+            background:linear-gradient(90deg,#38bdf8,#68ff8b);
         }
 
         .scanner-card ul {
@@ -1452,15 +1543,100 @@ def scanner_quality_label(row):
     return "Pass" if scanner_yes(row, "data_quality_pass") else "Fail"
 
 
+def scanner_region_class(region):
+    key = str(region or "").strip().lower().replace(" ", "-")
+    aliases = {
+        "us": "us",
+        "united-states": "us",
+        "europe": "europe",
+        "uk": "uk",
+        "united-kingdom": "uk",
+        "japan": "japan",
+        "asia": "asia",
+        "australia": "australia",
+        "global": "global",
+        "crypto": "crypto",
+    }
+    return f"scanner-region-{aliases.get(key, 'global')}"
+
+
+def scanner_sector_label(sector):
+    text = str(sector or "").strip()
+    lower = text.lower()
+    icon = ""
+
+    if "technology" in lower:
+        icon = "💻 "
+    elif "financial" in lower or "bank" in lower:
+        icon = "🏦 "
+    elif "health" in lower:
+        icon = "🏥 "
+    elif "energy" in lower:
+        icon = "⚡ "
+    elif "industrial" in lower or "material" in lower:
+        icon = "🏭 "
+    elif "consumer" in lower:
+        icon = "🛍 "
+    elif "crypto" in lower:
+        icon = "🪙 "
+
+    return f"{icon}{text}" if text else "Unknown sector"
+
+
+def scanner_bar_pct(value, max_value):
+    if value is None or max_value <= 0:
+        return 0
+
+    pct = max(0.0, min(float(value) / max_value, 1.0))
+    return int(round(pct * 100))
+
+
+def scanner_research_summary(row):
+    region = scanner_display_value(row, "region", "")
+    sector = scanner_display_value(row, "sector", "")
+    technical_score = scanner_number(row, "technical_score")
+    liquidity = scanner_number(row, "avg_traded_value_60d")
+    scanner_score = scanner_number(row, "scanner_score")
+
+    strong_score = scanner_score is not None and scanner_score >= 140
+    strong_technical = technical_score is not None and technical_score >= 4
+    positive_technical = technical_score is not None and technical_score >= 3
+    liquid = liquidity is not None and liquidity > 0
+
+    if region and sector and strong_score:
+        return f"High-ranking {region} candidate in the {sector} sector."
+    if region and strong_technical:
+        return f"Leading {region} opportunity with strong technical momentum."
+    if region and positive_technical:
+        return f"Leading {region} opportunity with a positive technical profile."
+    if sector and liquid:
+        return f"Ranks well with available liquidity data in the {sector} sector."
+    if strong_score:
+        return "Ranks highly due to scanner score and clean available data."
+
+    return "Selected by the scanner from the validated research universe."
+
+
 def scanner_why_selected(row):
     bullets = []
 
     scanner_score = scanner_number(row, "scanner_score")
     if scanner_score is not None:
         if scanner_score >= 140:
-            bullets.append("Strong scanner score")
+            bullets.append("One of the highest-ranked opportunities in this scan")
         else:
             bullets.append("Ranked by scanner score")
+
+    technical_score = scanner_number(row, "technical_score")
+    if technical_score is not None:
+        if technical_score >= 4:
+            bullets.append("Strong technical momentum")
+        elif technical_score >= 3:
+            bullets.append("Positive technical profile")
+
+    liquidity = scanner_number(row, "avg_traded_value_60d")
+    if liquidity is not None and liquidity > 0:
+        bullets.append("High trading liquidity proxy available")
 
     if scanner_yes(row, "latest_close_present") and not scanner_yes(
         row,
@@ -1468,17 +1644,13 @@ def scanner_why_selected(row):
     ):
         bullets.append("Clean recent price data")
 
-    liquidity = scanner_number(row, "avg_traded_value_60d")
-    if liquidity is not None and liquidity > 0:
-        bullets.append("Liquidity proxy available from recent price and volume")
-
-    technical_score = scanner_number(row, "technical_score")
-    if technical_score is not None and technical_score >= 3:
-        bullets.append("Positive momentum / technical score")
-
     region = scanner_display_value(row, "region", "")
     if region:
-        bullets.append(f"Selected from {region} opportunity set")
+        bullets.append(f"Leading opportunity from {region}")
+
+    sector = scanner_display_value(row, "sector", "")
+    if sector:
+        bullets.append(f"Strong candidate within the {sector} sector")
 
     return bullets[:5]
 
@@ -1502,14 +1674,27 @@ def render_opportunity_intelligence(selected):
     if "rank" in cards.columns:
         cards = cards.sort_values("rank", ascending=True)
     cards = cards.head(5)
+    liquidity_max = (
+        pd.to_numeric(
+            cards.get("avg_traded_value_60d", pd.Series(dtype=float)),
+            errors="coerce",
+        )
+        .dropna()
+        .max()
+    )
+    if pd.isna(liquidity_max):
+        liquidity_max = 0
 
     columns = responsive_columns(min(3, max(1, len(cards))))
     for index, (_, row) in enumerate(cards.iterrows()):
         rank = scanner_display_value(row, "rank", "?")
         ticker = html.escape(scanner_display_value(row, "yahoo_ticker", "UNKNOWN"))
         name = html.escape(scanner_display_value(row, "name", "Unnamed candidate"))
-        region = html.escape(scanner_display_value(row, "region", "Unknown region"))
-        sector = html.escape(scanner_display_value(row, "sector", "Unknown sector"))
+        region_raw = scanner_display_value(row, "region", "Unknown region")
+        sector_raw = scanner_display_value(row, "sector", "Unknown sector")
+        region = html.escape(region_raw)
+        sector = html.escape(scanner_sector_label(sector_raw))
+        region_class = scanner_region_class(region_raw)
         quality = scanner_quality_label(row)
         quality_class = (
             "scanner-quality-pass"
@@ -1533,6 +1718,10 @@ def render_opportunity_intelligence(selected):
             f"<li>{html.escape(str(bullet))}</li>"
             for bullet in bullets
         )
+        summary = html.escape(scanner_research_summary(row))
+        scanner_pct = scanner_bar_pct(score, 150)
+        technical_pct = scanner_bar_pct(technical_score, 5)
+        liquidity_pct = scanner_bar_pct(liquidity, liquidity_max)
 
         with columns[index % len(columns)]:
             st.markdown(
@@ -1544,18 +1733,37 @@ def render_opportunity_intelligence(selected):
                             <div class="scanner-ticker">{ticker}</div>
                             <div class="scanner-name">{name}</div>
                         </div>
-                        <div class="scanner-score">{html.escape(score_label)}</div>
+                        <div class="scanner-score">
+                            <div>{html.escape(score_label)}</div>
+                            <div class="scanner-score-label">scanner score</div>
+                        </div>
                     </div>
                     <div class="scanner-badges">
-                        <span class="scanner-badge">{region}</span>
+                        <span class="scanner-badge {region_class}">{region}</span>
                         <span class="scanner-badge">{sector}</span>
                         <span class="scanner-badge {quality_class}">Data Quality: {quality}</span>
+                    </div>
+                    <div class="scanner-summary">{summary}</div>
+                    <div class="scanner-bars">
+                        <div class="scanner-bar-row">
+                            <span>Scanner</span>
+                            <span class="scanner-bar-track"><span class="scanner-bar-fill" style="width:{scanner_pct}%"></span></span>
+                            <span>{html.escape(score_label)}</span>
+                        </div>
+                        <div class="scanner-bar-row">
+                            <span>Technical</span>
+                            <span class="scanner-bar-track"><span class="scanner-bar-fill" style="width:{technical_pct}%"></span></span>
+                            <span>{html.escape(technical_label)}</span>
+                        </div>
+                        <div class="scanner-bar-row">
+                            <span>Liquidity</span>
+                            <span class="scanner-bar-track"><span class="scanner-bar-fill" style="width:{liquidity_pct}%"></span></span>
+                            <span>{html.escape(liquidity_label)}</span>
+                        </div>
                     </div>
                     <div class="scanner-facts">
                         <div><span class="scanner-fact-label">Latest close</span><br>{html.escape(close_label)}</div>
                         <div><span class="scanner-fact-label">Liquidity proxy</span><br>{html.escape(liquidity_label)}</div>
-                        <div><span class="scanner-fact-label">Technical score</span><br>{html.escape(technical_label)}</div>
-                        <div><span class="scanner-fact-label">Scanner score</span><br>{html.escape(score_label)}</div>
                     </div>
                     <ul>{bullet_html}</ul>
                 </div>
