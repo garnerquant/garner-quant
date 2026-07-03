@@ -397,6 +397,78 @@ def empty_notification_summary():
     }
 
 
+def run_remote_state_sync():
+    started_at = time_module.perf_counter()
+    results = {}
+    errors = []
+
+    try:
+        from execution.supabase_sync import (
+            sync_broker_account,
+            sync_holdings,
+            sync_30_day_tracker,
+            sync_holdings_history,
+            sync_trade_journal,
+            sync_signals,
+        )
+    except Exception as exc:
+        return {
+            "attempted": True,
+            "success": False,
+            "results": {},
+            "errors": [
+                {
+                    "step": "import",
+                    "error": str(exc),
+                }
+            ],
+            "duration_seconds": round(
+                time_module.perf_counter() - started_at,
+                2,
+            ),
+        }
+
+    sync_steps = [
+        ("broker_account", sync_broker_account),
+        ("holdings", sync_holdings),
+        ("paper_30_day_tracker", sync_30_day_tracker),
+        ("holdings_history", sync_holdings_history),
+        ("trade_journal", sync_trade_journal),
+        ("signals", sync_signals),
+    ]
+
+    for name, sync_func in sync_steps:
+        try:
+            ok = bool(sync_func())
+            results[name] = ok
+            if not ok:
+                errors.append(
+                    {
+                        "step": name,
+                        "error": "sync helper returned false",
+                    }
+                )
+        except Exception as exc:
+            results[name] = False
+            errors.append(
+                {
+                    "step": name,
+                    "error": str(exc),
+                }
+            )
+
+    return {
+        "attempted": True,
+        "success": not errors,
+        "results": results,
+        "errors": errors,
+        "duration_seconds": round(
+            time_module.perf_counter() - started_at,
+            2,
+        ),
+    }
+
+
 def build_cycle_explanation(
     markets_open,
     mode,
@@ -562,6 +634,13 @@ def run_paper_execution(now, markets_open, mode, events=None):
         "notifications_sent": 0,
         "execution_time_seconds": 0,
         "latest_paper_trade": None,
+        "remote_sync": {
+            "attempted": False,
+            "success": None,
+            "results": {},
+            "errors": [],
+            "duration_seconds": 0,
+        },
         "status": "started",
         "error": None,
     }
@@ -648,6 +727,23 @@ def run_paper_execution(now, markets_open, mode, events=None):
                 "notifications_sent": entry["notifications_sent"],
             },
         )
+        remote_sync = run_remote_state_sync()
+        entry["remote_sync"] = json_safe(remote_sync)
+        if remote_sync.get("success"):
+            append_event(
+                events,
+                "Remote Sync Completed",
+                "Supabase dashboard state synced after paper execution.",
+                details=remote_sync,
+            )
+        else:
+            append_event(
+                events,
+                "Remote Sync Warning",
+                "Paper execution completed locally, but Supabase sync failed.",
+                severity="warning",
+                details=remote_sync,
+            )
     except Exception as exc:
         entry["status"] = "error"
         entry["error"] = str(exc)
@@ -985,6 +1081,11 @@ def run_cycle(config, started_at, cycle_count):
                     execution_entry.get("notifications_sent", 0)
                     if execution_entry is not None
                     else 0
+                ),
+                "remote_sync": (
+                    execution_entry.get("remote_sync")
+                    if execution_entry is not None
+                    else None
                 ),
                 "execution_time_seconds": (
                     execution_entry.get("execution_time_seconds", 0)
