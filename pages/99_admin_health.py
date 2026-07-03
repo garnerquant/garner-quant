@@ -1506,6 +1506,18 @@ def no_trade_activity(execution_summary, runtime_status):
     return trade_count == 0
 
 
+def us_equity_markets_idle(market_context):
+    us_statuses = [
+        status
+        for status in market_context.get("statuses", [])
+        if status.code in {"US", "NYSE", "NASDAQ"}
+    ]
+    if not us_statuses:
+        return False
+
+    return all(not status.is_open for status in us_statuses)
+
+
 def data_freshness_items(runtime_status=None, configured_markets=None):
     runtime_status = runtime_status or {}
     configured_markets = configured_markets or ["LSE", "US", "TSE"]
@@ -1627,6 +1639,12 @@ def data_freshness_items(runtime_status=None, configured_markets=None):
 
     portfolio_mtime = file_mtime("paper_portfolio_v3.csv")
     missing_tickers = valuation_refresh.get("missing_tickers") or []
+    valuation_changed_files = safe_list(valuation_refresh.get("changed_files"))
+    portfolio_update_evidence = (
+        bool(execution_summary.get("portfolio_changed"))
+        or not no_trade_activity(execution_summary, runtime_status)
+        or "paper_portfolio_v3.csv" in valuation_changed_files
+    )
     if (
         valuation_refresh.get("status") == "error"
         or valuation_refresh.get("reason") == "missing prices for open holdings"
@@ -1645,10 +1663,9 @@ def data_freshness_items(runtime_status=None, configured_markets=None):
             )
         )
     elif runtime_current and valuation_refresh:
-        changed_files = safe_list(valuation_refresh.get("changed_files"))
         state = (
             HEALTH_FRESH
-            if "paper_portfolio_v3.csv" in changed_files
+            if "paper_portfolio_v3.csv" in valuation_changed_files
             else HEALTH_EXPECTED_IDLE
         )
         items.append(
@@ -1662,6 +1679,21 @@ def data_freshness_items(runtime_status=None, configured_markets=None):
                     if state == HEALTH_FRESH
                     else "Healthy - no position changes"
                 ),
+            )
+        )
+    elif (
+        runtime_current
+        and not valuation_refresh
+        and us_equity_markets_idle(market_context)
+        and not portfolio_update_evidence
+    ):
+        items.append(
+            runtime_current_item(
+                "Portfolio",
+                "paper_portfolio_v3.csv",
+                runtime_status,
+                HEALTH_BADGES[HEALTH_EXPECTED_IDLE],
+                f"Healthy - no portfolio update expected ({idle_reason})",
             )
         )
     else:
