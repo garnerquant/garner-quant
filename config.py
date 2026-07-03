@@ -20,49 +20,85 @@ ASSETS = {
     # Global ETFs
     "VWRL.L": {
         "type": "etf",
+        "asset_class": "ETF",
+        "exposure_region": "Global",
+        "exchange": "LSE",
+        "listing_currency": "GBp",
         "max_weight": 0.25
     },
 
     "IUSA.L": {
         "type": "etf",
+        "asset_class": "ETF",
+        "exposure_region": "US",
+        "exchange": "LSE",
+        "listing_currency": "GBp",
         "max_weight": 0.20
     },
 
     # Gold ETF
     "SGLN.L": {
         "type": "gold",
+        "asset_class": "Commodity",
+        "exposure_region": "Global",
+        "exchange": "LSE",
+        "listing_currency": "GBp",
         "max_weight": 0.15
     },
 
     # Stocks
     "AAPL": {
         "type": "equity",
+        "asset_class": "equity",
+        "exposure_region": "US",
+        "exchange": "NASDAQ",
+        "listing_currency": "USD",
         "max_weight": 0.10
     },
 
     "MSFT": {
         "type": "equity",
+        "asset_class": "equity",
+        "exposure_region": "US",
+        "exchange": "NASDAQ",
+        "listing_currency": "USD",
         "max_weight": 0.10
     },
 
     "NVDA": {
         "type": "equity",
+        "asset_class": "equity",
+        "exposure_region": "US",
+        "exchange": "NASDAQ",
+        "listing_currency": "USD",
         "max_weight": 0.10
     },
 
     "TSLA": {
         "type": "equity",
+        "asset_class": "equity",
+        "exposure_region": "US",
+        "exchange": "NASDAQ",
+        "listing_currency": "USD",
         "max_weight": 0.08
     },
 
     # Crypto
     "BTC-GBP": {
         "type": "crypto",
+        "asset_class": "Crypto",
+        "exposure_region": "Global",
+        "exchange": "Crypto",
+        "listing_currency": "GBP",
         "max_weight": 0.10
     },
 
     "ETH-GBP": {
         "type": "crypto",
+        "asset_class": "Crypto",
+        "exposure_region": "Global",
+        "exchange": "Crypto",
+        "listing_currency": "GBP",
         "max_weight": 0.05
     }
 
