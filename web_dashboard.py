@@ -436,6 +436,91 @@ def inject_mobile_css():
             font-weight:720;
         }
 
+        .scanner-compare-wrap {
+            overflow-x:auto;
+            margin-top:12px;
+        }
+
+        .scanner-compare-table {
+            min-width:720px;
+            border:1px solid rgba(148,163,184,0.18);
+            border-radius:8px;
+            overflow:hidden;
+            background:rgba(15,23,42,0.46);
+        }
+
+        .scanner-compare-row {
+            display:grid;
+            grid-template-columns:minmax(140px,0.85fr) repeat(var(--compare-cols), minmax(132px,1fr));
+            border-bottom:1px solid rgba(148,163,184,0.12);
+        }
+
+        .scanner-compare-row:last-child {
+            border-bottom:0;
+        }
+
+        .scanner-compare-cell {
+            padding:10px;
+            color:#cbd5e1;
+            font-size:12px;
+            border-right:1px solid rgba(148,163,184,0.10);
+        }
+
+        .scanner-compare-cell:last-child {
+            border-right:0;
+        }
+
+        .scanner-compare-head {
+            color:#f8fafc;
+            font-weight:760;
+            background:rgba(30,41,59,0.78);
+        }
+
+        .scanner-compare-label {
+            color:#94a3b8;
+            font-weight:720;
+        }
+
+        .scanner-compare-value {
+            color:#f8fafc;
+            font-weight:720;
+        }
+
+        .scanner-compare-indicator {
+            display:inline-flex;
+            align-items:center;
+            gap:4px;
+            margin-top:4px;
+            padding:2px 6px;
+            border-radius:999px;
+            font-size:11px;
+            border:1px solid rgba(148,163,184,0.20);
+        }
+
+        .scanner-compare-strong {
+            color:#bbf7d0;
+            background:rgba(22,101,52,0.20);
+            border-color:rgba(74,222,128,0.28);
+        }
+
+        .scanner-compare-high {
+            color:#bfdbfe;
+            background:rgba(37,99,235,0.16);
+            border-color:rgba(96,165,250,0.24);
+        }
+
+        .scanner-compare-low {
+            color:#fef3c7;
+            background:rgba(180,83,9,0.16);
+            border-color:rgba(251,191,36,0.24);
+        }
+
+        .scanner-compare-elevated {
+            color:#fed7aa;
+            background:rgba(194,65,12,0.18);
+            border-color:rgba(251,146,60,0.28);
+        }
+
         .scanner-bars {
             display:grid;
             gap:8px;
@@ -2057,6 +2142,394 @@ def scanner_risk_profile_html(row):
     """
 
 
+def scanner_first_available_column(frame, columns):
+    for column in columns:
+        if column in frame.columns:
+            return column
+    return None
+
+
+def scanner_compare_label(row):
+    ticker = scanner_display_value(row, "yahoo_ticker", "")
+    if not ticker:
+        ticker = scanner_display_value(row, "ticker", "")
+    if not ticker:
+        ticker = scanner_display_value(row, "symbol", "Unknown")
+
+    name = scanner_display_value(row, "name", "")
+    if name and name != ticker:
+        return f"{ticker} - {name}"
+    return ticker
+
+
+def scanner_metric_value(row, metric):
+    column = metric["column"]
+    if column not in row.index:
+        return None
+
+    if metric["kind"] == "text":
+        value = scanner_display_value(row, column, "")
+        return value or None
+
+    return scanner_number(row, column)
+
+
+def scanner_metric_display(value, metric):
+    if value is None:
+        return "Unavailable"
+
+    kind = metric["kind"]
+    if kind == "percent":
+        return f"{float(value):.1f}%"
+    if kind == "score":
+        return f"{float(value):.1f}"
+    if kind == "stability":
+        return f"{float(value):.0f} / 100"
+    if kind == "liquidity":
+        return scanner_compact_number(value)
+    return str(value)
+
+
+def scanner_risk_rank(value):
+    order = {
+        "Very Low": 1,
+        "Low": 2,
+        "Medium": 3,
+        "High": 4,
+        "Very High": 5,
+    }
+    return order.get(str(value).strip(), None)
+
+
+def scanner_compare_indicator(value, metric, values):
+    if value is None or metric.get("compare") == "none":
+        return ""
+
+    valid_values = [v for v in values if v is not None]
+    if len(valid_values) < 2:
+        return ""
+
+    compare = metric.get("compare")
+    css = "scanner-compare-high"
+    text = "&#9650; Higher"
+
+    if compare == "higher":
+        if value == max(valid_values):
+            css = "scanner-compare-strong"
+            text = "&#10003; Strong"
+        elif value == min(valid_values):
+            css = "scanner-compare-low"
+            text = "&#9660; Lower"
+    elif compare == "lower":
+        if value == min(valid_values):
+            css = "scanner-compare-strong"
+            text = "&#10003; Strong"
+        elif value == max(valid_values):
+            css = "scanner-compare-elevated"
+            text = "&#9888; Elevated"
+        else:
+            css = "scanner-compare-low"
+            text = "&#9660; Lower"
+    elif compare == "risk":
+        ranked_values = [
+            scanner_risk_rank(v)
+            for v in valid_values
+            if scanner_risk_rank(v) is not None
+        ]
+        rank = scanner_risk_rank(value)
+        if rank is None or len(ranked_values) < 2:
+            return ""
+        if rank == min(ranked_values):
+            css = "scanner-compare-strong"
+            text = "&#10003; Strong"
+        elif rank == max(ranked_values):
+            css = "scanner-compare-elevated"
+            text = "&#9888; Elevated"
+        else:
+            css = "scanner-compare-low"
+            text = "&#9660; Lower"
+
+    return f'<div class="scanner-compare-indicator {css}">{text}</div>'
+
+
+def scanner_comparison_metrics(frame):
+    confidence_column = scanner_first_available_column(
+        frame,
+        ["confidence", "confidence_score", "scanner_confidence"],
+    )
+    metrics = [
+        {
+            "label": "Opportunity Score",
+            "column": "scanner_score",
+            "kind": "score",
+            "compare": "higher",
+        },
+        {
+            "label": "Risk Level",
+            "column": "risk_level",
+            "kind": "text",
+            "compare": "risk",
+        },
+        {
+            "label": "Trend Stability",
+            "column": "trend_stability_score",
+            "kind": "stability",
+            "compare": "higher",
+        },
+        {
+            "label": "20d Volatility",
+            "column": "volatility_20d",
+            "kind": "percent",
+            "compare": "lower",
+        },
+        {
+            "label": "60d Volatility",
+            "column": "volatility_60d",
+            "kind": "percent",
+            "compare": "lower",
+        },
+        {
+            "label": "ATR %",
+            "column": "atr_percent",
+            "kind": "percent",
+            "compare": "lower",
+        },
+        {
+            "label": "1Y Max Drawdown",
+            "column": "max_drawdown_1y",
+            "kind": "percent",
+            "compare": "lower",
+        },
+        {
+            "label": "Liquidity",
+            "column": "avg_traded_value_60d",
+            "kind": "liquidity",
+            "compare": "higher",
+        },
+        {
+            "label": "Technical Score",
+            "column": "technical_score",
+            "kind": "score",
+            "compare": "higher",
+        },
+        {"label": "Region", "column": "region", "kind": "text", "compare": "none"},
+        {"label": "Country", "column": "country", "kind": "text", "compare": "none"},
+        {"label": "Sector", "column": "sector", "kind": "text", "compare": "none"},
+        {"label": "Currency", "column": "currency", "kind": "text", "compare": "none"},
+    ]
+
+    if confidence_column:
+        metrics.insert(
+            1,
+            {
+                "label": "Confidence",
+                "column": confidence_column,
+                "kind": "score",
+                "compare": "higher",
+            },
+        )
+
+    return [
+        metric
+        for metric in metrics
+        if metric["column"] in frame.columns
+    ]
+
+
+def scanner_metric_leader(frame, column, mode="max"):
+    if column not in frame.columns:
+        return None, None
+
+    values = pd.to_numeric(frame[column], errors="coerce")
+    if values.dropna().empty:
+        return None, None
+
+    idx = values.idxmax() if mode == "max" else values.idxmin()
+    return frame.loc[idx], float(values.loc[idx])
+
+
+def scanner_comparison_summary(frame):
+    observations = []
+    if frame.empty:
+        return observations
+
+    score_leader, score_value = scanner_metric_leader(frame, "scanner_score")
+    if score_leader is not None:
+        observations.append(
+            f"{scanner_compare_label(score_leader)} has the strongest overall scanner profile by score."
+        )
+
+        scores = pd.to_numeric(frame["scanner_score"], errors="coerce").dropna()
+        if len(scores) >= 2:
+            sorted_scores = scores.sort_values(ascending=False)
+            gap = sorted_scores.iloc[0] - sorted_scores.iloc[1]
+            if gap > 0:
+                leader = frame.loc[sorted_scores.index[0]]
+                runner_up = frame.loc[sorted_scores.index[1]]
+                observations.append(
+                    f"{scanner_compare_label(leader)} ranks above {scanner_compare_label(runner_up)} by {gap:.1f} scanner points."
+                )
+
+    technical_leader, _ = scanner_metric_leader(frame, "technical_score")
+    if technical_leader is not None:
+        observations.append(
+            f"{scanner_compare_label(technical_leader)} has the strongest momentum signal."
+        )
+
+    stable_leader, _ = scanner_metric_leader(frame, "trend_stability_score")
+    if stable_leader is not None:
+        observations.append(
+            f"{scanner_compare_label(stable_leader)} has the most stable trend."
+        )
+
+    drawdown_leader, _ = scanner_metric_leader(frame, "max_drawdown_1y", mode="min")
+    if drawdown_leader is not None:
+        observations.append(
+            f"{scanner_compare_label(drawdown_leader)} has the lowest historical drawdown."
+        )
+
+    liquidity_leader, _ = scanner_metric_leader(frame, "avg_traded_value_60d")
+    if liquidity_leader is not None:
+        observations.append(
+            f"{scanner_compare_label(liquidity_leader)} has the highest liquidity proxy."
+        )
+
+    for column, label, plural in [
+        ("sector", "sector", "sectors"),
+        ("currency", "currency", "currencies"),
+        ("region", "region", "regions"),
+    ]:
+        if column not in frame.columns:
+            continue
+        values = frame[column].fillna("").astype(str).str.strip()
+        values = values[values != ""]
+        if values.empty:
+            continue
+        distinct_count = values.nunique()
+        if distinct_count == 1 and len(values) > 1:
+            observations.append(
+                f"Selected assets share the same {label}: {values.iloc[0]}."
+            )
+        elif distinct_count > 1:
+            repeated = values.value_counts()
+            repeated = repeated[repeated > 1]
+            if not repeated.empty:
+                shared_value = repeated.index[0]
+                shared_rows = frame.loc[values[values == shared_value].index]
+                shared_labels = [
+                    scanner_compare_label(row)
+                    for _, row in shared_rows.iterrows()
+                ]
+                observations.append(
+                    f"{' and '.join(shared_labels)} operate in the same {label}: {shared_value}."
+                )
+            observations.append(
+                f"Selected assets span {distinct_count} different {plural}."
+            )
+
+    return observations[:12]
+
+
+def scanner_comparison_html(frame):
+    metrics = scanner_comparison_metrics(frame)
+    if not metrics:
+        return ""
+
+    header_cells = [
+        '<div class="scanner-compare-cell scanner-compare-head">Metric</div>'
+    ]
+    for _, row in frame.iterrows():
+        header_cells.append(
+            '<div class="scanner-compare-cell scanner-compare-head">'
+            f"{html.escape(scanner_compare_label(row))}"
+            "</div>"
+        )
+
+    rows = [
+        f'<div class="scanner-compare-row">{"".join(header_cells)}</div>'
+    ]
+
+    for metric in metrics:
+        values = [scanner_metric_value(row, metric) for _, row in frame.iterrows()]
+        cells = [
+            '<div class="scanner-compare-cell scanner-compare-label">'
+            f"{html.escape(metric['label'])}"
+            "</div>"
+        ]
+        for value in values:
+            display = html.escape(scanner_metric_display(value, metric))
+            indicator = scanner_compare_indicator(value, metric, values)
+            cells.append(
+                '<div class="scanner-compare-cell">'
+                f'<div class="scanner-compare-value">{display}</div>'
+                f"{indicator}"
+                "</div>"
+            )
+        rows.append(f'<div class="scanner-compare-row">{"".join(cells)}</div>')
+
+    return (
+        f'<div class="scanner-compare-wrap">'
+        f'<div class="scanner-compare-table" style="--compare-cols:{len(frame)};">'
+        f'{"".join(rows)}'
+        "</div></div>"
+    )
+
+
+def render_opportunity_comparison(selected):
+    st.subheader("Opportunity Comparison")
+    st.caption("Research-only comparison of selected scanner opportunities.")
+
+    if selected.empty:
+        st.info("No selected scanner opportunities are available to compare.")
+        return
+
+    if len(selected) < 2:
+        st.info("At least two scanner opportunities are needed for comparison.")
+        return
+
+    labels = []
+    used = set()
+    for index, row in selected.iterrows():
+        label = scanner_compare_label(row)
+        if label in used:
+            label = f"{label} ({index})"
+        used.add(label)
+        labels.append(label)
+
+    label_to_index = dict(zip(labels, selected.index))
+    default_labels = labels[: min(2, len(labels))]
+    chosen_labels = st.multiselect(
+        "Compare opportunities",
+        labels,
+        default=default_labels,
+        max_selections=4,
+        help="Select 2 to 4 research candidates for side-by-side comparison.",
+    )
+
+    if len(chosen_labels) < 2:
+        st.info("Select at least two opportunities to compare.")
+        return
+
+    comparison = selected.loc[
+        [label_to_index[label] for label in chosen_labels]
+    ].copy()
+
+    summary = scanner_comparison_summary(comparison)
+    if summary:
+        st.markdown(
+            "<ul>"
+            + "".join(f"<li>{html.escape(item)}</li>" for item in summary)
+            + "</ul>",
+            unsafe_allow_html=True,
+        )
+
+    table_html = scanner_comparison_html(comparison)
+    if table_html:
+        st.markdown(table_html, unsafe_allow_html=True)
+    else:
+        st.info("No comparable scanner fields are available in this output.")
+
+
 def scanner_change_cards(selected, history):
     if len(history) < 2 or selected.empty:
         return None
@@ -2631,6 +3104,7 @@ def render_global_scanner_page():
     render_scanner_history_intelligence(validated, selected, history)
 
     render_opportunity_intelligence(selected)
+    render_opportunity_comparison(selected)
 
     st.divider()
     st.subheader("Region Breakdown")
