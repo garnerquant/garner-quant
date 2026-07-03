@@ -194,10 +194,10 @@ def sync_30_day_tracker():
             rows.append({
                 "id": int(len(rows) + 1),
                 "date": str(row["date"]),
-                "portfolio_value": float(row["portfolio_value"]),
-                "cash": float(row["cash"]),
-                "realised_pnl": float(row["realised_pnl"]),
-                "unrealised_pnl": float(row["unrealised_pnl"]),
+                "portfolio_value": safe_float(row["portfolio_value"]),
+                "cash": safe_float(row["cash"]),
+                "realised_pnl": safe_float(row["realised_pnl"]),
+                "unrealised_pnl": safe_float(row["unrealised_pnl"]),
                 "benchmark_return": benchmark_return,
                 "alpha": alpha,
                 "updated_at": datetime.utcnow().isoformat()
