@@ -2110,12 +2110,24 @@ SCANNER_PERSISTENCE_COLUMNS = [
 ]
 
 
+PORTFOLIO_FIT_COLUMNS = [
+    "portfolio_fit",
+    "portfolio_fit_score",
+    "diversification_impact",
+    "exposure_impact",
+]
+
+
 def scanner_has_risk_profile(row):
     return all(column in row.index for column in SCANNER_RISK_COLUMNS)
 
 
 def scanner_has_persistence_profile(row):
     return all(column in row.index for column in SCANNER_PERSISTENCE_COLUMNS)
+
+
+def scanner_has_portfolio_fit(row):
+    return all(column in row.index for column in PORTFOLIO_FIT_COLUMNS)
 
 
 def scanner_percent_label(value):
@@ -2217,6 +2229,250 @@ def scanner_persistence_bullets(row):
     return bullets
 
 
+def portfolio_fit_metadata():
+    frames = []
+    for path in sorted(SCANNER_UNIVERSE_DIR.glob("*.csv")):
+        try:
+            frame = pd.read_csv(path)
+        except Exception:
+            continue
+        if "yahoo_ticker" in frame.columns:
+            frames.append(frame)
+
+    if not frames:
+        return pd.DataFrame()
+
+    metadata = pd.concat(frames, ignore_index=True)
+    metadata["yahoo_ticker"] = metadata["yahoo_ticker"].astype(str)
+    return metadata.drop_duplicates("yahoo_ticker", keep="first")
+
+
+def load_portfolio_fit_context(holdings_frame=None):
+    holdings_frame = (
+        load_csv("holdings_report.csv")
+        if holdings_frame is None
+        else holdings_frame.copy()
+    )
+    if holdings_frame.empty or "ticker" not in holdings_frame.columns:
+        return None
+
+    holdings = holdings_frame.copy()
+    holdings["ticker"] = holdings["ticker"].astype(str)
+    value_column = "market_value" if "market_value" in holdings.columns else None
+    if value_column is None:
+        return None
+
+    holdings["_market_value"] = pd.to_numeric(
+        holdings[value_column],
+        errors="coerce",
+    ).fillna(0.0)
+    holdings = holdings[holdings["_market_value"] > 0].copy()
+    if holdings.empty:
+        return None
+
+    metadata = portfolio_fit_metadata()
+    if not metadata.empty:
+        metadata_columns = [
+            column
+            for column in [
+                "yahoo_ticker",
+                "sector",
+                "country",
+                "region",
+                "currency",
+                "asset_class",
+            ]
+            if column in metadata.columns
+        ]
+        holdings = holdings.merge(
+            metadata[metadata_columns],
+            left_on="ticker",
+            right_on="yahoo_ticker",
+            how="left",
+        )
+
+    total_value = float(holdings["_market_value"].sum())
+    if total_value <= 0:
+        return None
+    holdings["_weight"] = holdings["_market_value"] / total_value
+
+    dimensions = ["sector", "country", "region", "currency", "asset_class"]
+    exposure = {}
+    for dimension in dimensions:
+        if dimension not in holdings.columns:
+            exposure[dimension] = pd.Series(dtype=float)
+            continue
+        values = holdings[dimension].fillna("").astype(str).str.strip()
+        known = holdings.loc[values != ""].copy()
+        if known.empty:
+            exposure[dimension] = pd.Series(dtype=float)
+            continue
+        exposure[dimension] = known.groupby(dimension)["_weight"].sum()
+
+    return {
+        "holdings": holdings,
+        "tickers": set(holdings["ticker"].astype(str)),
+        "exposure": exposure,
+        "total_value": total_value,
+    }
+
+
+def portfolio_fit_level(score):
+    if score >= 4.5:
+        return "Excellent"
+    if score >= 3.5:
+        return "Good"
+    if score >= 2.5:
+        return "Neutral"
+    if score >= 1.5:
+        return "Weak"
+    return "Poor"
+
+
+def portfolio_fit_stars(score):
+    rounded = max(1, min(5, int(round(score))))
+    return "★" * rounded
+
+
+def portfolio_fit_dimension_label(dimension):
+    labels = {
+        "sector": "Sector",
+        "country": "Country",
+        "region": "Region",
+        "currency": "Currency",
+        "asset_class": "Asset class",
+    }
+    return labels.get(dimension, dimension.title())
+
+
+def portfolio_fit_bullet_text(dimension, value, exposure_value):
+    if dimension == "region":
+        return f"Improves {value} exposure"
+    if dimension == "currency":
+        return f"Adds {value} diversification"
+    if dimension == "sector":
+        return f"Expands {value} exposure"
+    if dimension == "asset_class":
+        return "Broadens asset allocation"
+    if dimension == "country":
+        return f"Adds {value} country diversification"
+    return f"Adds {value} diversification"
+
+
+def portfolio_concentration_text(dimension, value):
+    if dimension == "sector":
+        return f"Increases {value} concentration"
+    if dimension == "currency":
+        return f"Adds another {value} holding"
+    if dimension == "region":
+        return f"Adds to existing {value} exposure"
+    if dimension == "country":
+        return f"Adds to existing {value} country exposure"
+    if dimension == "asset_class":
+        return f"Adds to existing {value} allocation"
+    return f"Adds to existing {value} exposure"
+
+
+def portfolio_fit_for_row(row, context):
+    if context is None:
+        return None
+
+    ticker = scanner_display_value(row, "yahoo_ticker", "")
+    score = 3.0
+    positive = []
+    cautions = []
+    overlap = ticker in context["tickers"]
+    if overlap:
+        score -= 1.2
+        cautions.append("Similar exposure to existing holdings")
+
+    same_dimension_count = 0
+    dominant_dimension_count = 0
+    dimensions = ["sector", "country", "region", "currency", "asset_class"]
+    for dimension in dimensions:
+        value = scanner_display_value(row, dimension, "")
+        if not value:
+            continue
+        exposure = context["exposure"].get(dimension, pd.Series(dtype=float))
+        exposure_value = float(exposure.get(value, 0.0)) if not exposure.empty else 0.0
+
+        if exposure_value <= 0:
+            score += 0.35
+            positive.append(portfolio_fit_bullet_text(dimension, value, exposure_value))
+            continue
+
+        same_dimension_count += 1
+        if exposure_value >= 0.35:
+            score -= 0.35
+            dominant_dimension_count += 1
+            cautions.append(portfolio_concentration_text(dimension, value))
+        elif exposure_value <= 0.15:
+            score += 0.10
+
+    score = max(1.0, min(5.0, score))
+    if overlap or dominant_dimension_count >= 3:
+        diversification_impact = "Negative"
+    elif len(positive) >= 2 and dominant_dimension_count == 0:
+        diversification_impact = "Positive"
+    else:
+        diversification_impact = "Neutral"
+
+    if overlap or dominant_dimension_count >= 3:
+        exposure_impact = "High"
+    elif same_dimension_count >= 3 or dominant_dimension_count >= 1:
+        exposure_impact = "Moderate"
+    else:
+        exposure_impact = "Low"
+
+    bullets = positive[:3] + cautions[:3]
+    if not bullets and same_dimension_count:
+        bullets.append("Similar exposure to existing holdings")
+
+    level = portfolio_fit_level(score)
+    return {
+        "portfolio_fit": f"{portfolio_fit_stars(score)} {level}",
+        "portfolio_fit_score": score,
+        "portfolio_fit_level": level,
+        "diversification_impact": diversification_impact,
+        "exposure_impact": exposure_impact,
+        "portfolio_fit_bullets": bullets,
+    }
+
+
+def apply_portfolio_fit(frame, context):
+    if context is None or frame.empty:
+        return frame
+
+    enriched = frame.copy()
+    results = [portfolio_fit_for_row(row, context) for _, row in enriched.iterrows()]
+    if not any(results):
+        return frame
+
+    for column in [
+        "portfolio_fit",
+        "portfolio_fit_score",
+        "portfolio_fit_level",
+        "diversification_impact",
+        "exposure_impact",
+        "portfolio_fit_bullets",
+    ]:
+        enriched[column] = [
+            result.get(column) if result else pd.NA
+            for result in results
+        ]
+    return enriched
+
+
+def scanner_portfolio_fit_bullets(row):
+    if "portfolio_fit_bullets" not in row.index:
+        return []
+
+    bullets = row.get("portfolio_fit_bullets")
+    if isinstance(bullets, list):
+        return bullets
+    return []
+
+
 def scanner_risk_profile_html(row):
     if not scanner_has_risk_profile(row):
         return ""
@@ -2266,6 +2522,30 @@ def scanner_persistence_profile_html(row):
                 <div><span class="scanner-fact-label">Days tracked</span><br><span class="scanner-risk-value">{html.escape(days)}</span></div>
                 <div><span class="scanner-fact-label">Highest rank</span><br><span class="scanner-risk-value">{html.escape(highest_rank)}</span></div>
                 <div><span class="scanner-fact-label">Average rank</span><br><span class="scanner-risk-value">{html.escape(average_rank)}</span></div>
+            </div>
+        </div>
+    """
+
+
+def scanner_portfolio_fit_html(row):
+    if not scanner_has_portfolio_fit(row):
+        return ""
+
+    fit = html.escape(scanner_display_value(row, "portfolio_fit", "Unavailable"))
+    diversification = html.escape(
+        scanner_display_value(row, "diversification_impact", "Unavailable")
+    )
+    exposure = html.escape(
+        scanner_display_value(row, "exposure_impact", "Unavailable")
+    )
+
+    return f"""
+        <div class="scanner-risk-profile">
+            <div class="scanner-risk-title">Portfolio Fit</div>
+            <div class="scanner-risk-grid">
+                <div><span class="scanner-fact-label">Fit</span><br><span class="scanner-risk-value">{fit}</span></div>
+                <div><span class="scanner-fact-label">Diversification Impact</span><br><span class="scanner-risk-value">{diversification}</span></div>
+                <div><span class="scanner-fact-label">Exposure Impact</span><br><span class="scanner-risk-value">{exposure}</span></div>
             </div>
         </div>
     """
@@ -2422,6 +2702,24 @@ def scanner_comparison_metrics(frame):
             "column": "scanner_score",
             "kind": "score",
             "compare": "higher",
+        },
+        {
+            "label": "Portfolio Fit",
+            "column": "portfolio_fit",
+            "kind": "text",
+            "compare": "none",
+        },
+        {
+            "label": "Diversification Impact",
+            "column": "diversification_impact",
+            "kind": "text",
+            "compare": "none",
+        },
+        {
+            "label": "Exposure Impact",
+            "column": "exposure_impact",
+            "kind": "text",
+            "compare": "none",
         },
         {
             "label": "Persistence Level",
@@ -3125,6 +3423,7 @@ def scanner_why_selected(row):
             else:
                 bullets.append("Caution: recent volume data is weak")
 
+        bullets.extend(scanner_portfolio_fit_bullets(row))
         bullets.extend(scanner_persistence_bullets(row))
         bullets.extend(scanner_risk_bullets(row))
         return bullets
@@ -3161,6 +3460,7 @@ def scanner_why_selected(row):
     if sector:
         bullets.append(f"Strong candidate within the {sector} sector")
 
+    bullets.extend(scanner_portfolio_fit_bullets(row))
     bullets.extend(scanner_persistence_bullets(row))
     bullets.extend(scanner_risk_bullets(row))
     return bullets[:5]
@@ -3223,6 +3523,7 @@ def render_opportunity_intelligence(selected):
         )
         bullets = scanner_why_selected(row)
         bullet_html = scanner_bullet_list_html(bullets)
+        portfolio_fit_html = scanner_portfolio_fit_html(row)
         persistence_profile_html = scanner_persistence_profile_html(row)
         risk_profile_html = scanner_risk_profile_html(row)
         summary = html.escape(scanner_research_summary(row))
@@ -3271,6 +3572,7 @@ def render_opportunity_intelligence(selected):
                     <div><span class="scanner-fact-label">Latest close</span><br>{html.escape(close_label)}</div>
                     <div><span class="scanner-fact-label">Liquidity proxy</span><br>{html.escape(liquidity_label)}</div>
                 </div>
+                {portfolio_fit_html}
                 {persistence_profile_html}
                 {risk_profile_html}
                 {bullet_html}
@@ -3289,6 +3591,8 @@ def render_global_scanner_page():
     rankings = load_scanner_csv("latest_rankings.csv")
     selected = load_scanner_csv("selected_candidates.csv")
     history = load_scanner_history()
+    portfolio_fit_context = load_portfolio_fit_context()
+    selected_for_display = apply_portfolio_fit(selected, portfolio_fit_context)
 
     if validated.empty and rankings.empty and selected.empty:
         st.warning("No scanner outputs found yet.")
@@ -3330,8 +3634,8 @@ def render_global_scanner_page():
 
     st.divider()
     st.subheader("Research Analysis")
-    render_opportunity_intelligence(selected)
-    render_opportunity_comparison(selected)
+    render_opportunity_intelligence(selected_for_display)
+    render_opportunity_comparison(selected_for_display)
 
     st.divider()
     st.subheader("Region Breakdown")
