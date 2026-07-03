@@ -568,6 +568,35 @@ def inject_mobile_css():
             margin-bottom:4px;
         }
 
+        .scanner-bullet-list {
+            display:grid;
+            gap:4px;
+            margin-top:8px;
+            color:#d1d5db;
+            font-size:13px;
+        }
+
+        .scanner-bullet-item {
+            display:grid;
+            grid-template-columns:12px 1fr;
+            gap:6px;
+            line-height:1.35;
+            min-width:0;
+        }
+
+        .scanner-bullet-item::before {
+            content:"";
+            width:5px;
+            height:5px;
+            border-radius:999px;
+            background:#94a3b8;
+            margin-top:7px;
+        }
+
+        .scanner-bullet-text {
+            overflow-wrap:anywhere;
+        }
+
         .signal-badge {
             display:inline-flex;
             align-items:center;
@@ -2235,6 +2264,19 @@ def scanner_persistence_profile_html(row):
     """
 
 
+def scanner_bullet_list_html(bullets):
+    if not bullets:
+        return ""
+
+    items = "".join(
+        '<div class="scanner-bullet-item">'
+        f'<span class="scanner-bullet-text">{html.escape(str(bullet))}</span>'
+        "</div>"
+        for bullet in bullets
+    )
+    return f'<div class="scanner-bullet-list">{items}</div>'
+
+
 def scanner_first_available_column(frame, columns):
     for column in columns:
         if column in frame.columns:
@@ -3140,10 +3182,7 @@ def render_opportunity_intelligence(selected):
             else f"{technical_score:.1f}"
         )
         bullets = scanner_why_selected(row)
-        bullet_html = "".join(
-            f"<li>{html.escape(str(bullet))}</li>"
-            for bullet in bullets
-        )
+        bullet_html = scanner_bullet_list_html(bullets)
         persistence_profile_html = scanner_persistence_profile_html(row)
         risk_profile_html = scanner_risk_profile_html(row)
         summary = html.escape(scanner_research_summary(row))
@@ -3196,7 +3235,7 @@ def render_opportunity_intelligence(selected):
                     </div>
                     {persistence_profile_html}
                     {risk_profile_html}
-                    <ul>{bullet_html}</ul>
+                    {bullet_html}
                 </div>
                 """,
                 unsafe_allow_html=True,
