@@ -298,14 +298,31 @@ def runtime_banner_state(runtime_status, heartbeat_ok):
     return "offline", "Runtime Offline", "Background runtime is not running."
 
 
-def market_countdown(market):
+def market_session_schedule(market):
     session = MARKET_SESSIONS.get(market)
     if not session:
-        return "Unknown", "Unavailable"
+        return None, None, None, "Schedule unavailable"
+
+    if session.get("always_open"):
+        return session, None, None, "Always open"
+
+    timezone = session.get("timezone")
+    open_time = session.get("open")
+    close_time = session.get("close")
+    if not timezone or open_time is None or close_time is None:
+        return session, None, None, "Schedule unavailable"
+
+    return session, open_time, close_time, None
+
+
+def market_countdown(market):
+    session, open_time, close_time, unavailable_reason = market_session_schedule(market)
+    if unavailable_reason == "Always open":
+        return "Open", "Always open"
+    if unavailable_reason:
+        return "Unknown", unavailable_reason
 
     local_now = pd.Timestamp.now(tz=session["timezone"])
-    open_time = session["open"]
-    close_time = session["close"]
 
     open_dt = local_now.normalize().replace(
         hour=open_time.hour,
@@ -339,13 +356,13 @@ def market_countdown(market):
 
 
 def seconds_until_market_open(market):
-    session = MARKET_SESSIONS.get(market)
-    if not session:
+    session, open_time, close_time, unavailable_reason = market_session_schedule(market)
+    if unavailable_reason == "Always open":
+        return 0
+    if unavailable_reason:
         return None
 
     local_now = pd.Timestamp.now(tz=session["timezone"])
-    open_time = session["open"]
-    close_time = session["close"]
     open_dt = local_now.normalize().replace(
         hour=open_time.hour,
         minute=open_time.minute,
@@ -403,13 +420,13 @@ def next_market_details(markets):
 
 
 def market_session_time(market):
-    session = MARKET_SESSIONS.get(market)
-    if not session:
-        return "Session unavailable"
+    session, open_time, close_time, unavailable_reason = market_session_schedule(market)
+    if unavailable_reason:
+        return unavailable_reason
 
     return (
-        f"{session['open'].strftime('%H:%M')} - "
-        f"{session['close'].strftime('%H:%M')} "
+        f"{open_time.strftime('%H:%M')} - "
+        f"{close_time.strftime('%H:%M')} "
         f"{session['timezone']}"
     )
 
@@ -776,10 +793,18 @@ def market_is_open(market):
 
 
 def market_badge(label, market):
+    status_label = market_countdown(market)[0]
+    if status_label == "Open":
+        status = "OPEN"
+    elif status_label == "Unknown":
+        status = "UNAVAILABLE"
+    else:
+        status = "CLOSED"
+
     return {
         "label": label,
-        "status": "OPEN" if market_is_open(market) else "CLOSED",
-        "healthy": market_is_open(market),
+        "status": status,
+        "healthy": status_label == "Open",
     }
 
 
