@@ -3190,56 +3190,55 @@ def render_opportunity_intelligence(selected):
         technical_pct = scanner_bar_pct(technical_score, 5)
         liquidity_pct = scanner_bar_pct(liquidity, liquidity_max)
 
-        with columns[index % len(columns)]:
-            st.markdown(
-                f"""
-                <div class="scanner-card">
-                    <div class="scanner-card-head">
-                        <div>
-                            <div class="scanner-rank">Rank {html.escape(str(rank))}</div>
-                            <div class="scanner-ticker">{ticker}</div>
-                            <div class="scanner-name">{name}</div>
-                            <span class="scanner-move {movement_class}">{html.escape(movement_label)}</span>
-                        </div>
-                        <div class="scanner-score">
-                            <div>{html.escape(score_label)}</div>
-                            <div class="scanner-score-label">scanner score</div>
-                        </div>
+        card_html = f"""
+            <div class="scanner-card">
+                <div class="scanner-card-head">
+                    <div>
+                        <div class="scanner-rank">Rank {html.escape(str(rank))}</div>
+                        <div class="scanner-ticker">{ticker}</div>
+                        <div class="scanner-name">{name}</div>
+                        <span class="scanner-move {movement_class}">{html.escape(movement_label)}</span>
                     </div>
-                    <div class="scanner-badges">
-                        <span class="scanner-badge {region_class}">{region}</span>
-                        <span class="scanner-badge">{sector}</span>
-                        <span class="scanner-badge {quality_class}">Data Quality: {quality}</span>
+                    <div class="scanner-score">
+                        <div>{html.escape(score_label)}</div>
+                        <div class="scanner-score-label">scanner score</div>
                     </div>
-                    <div class="scanner-summary">{summary}</div>
-                    <div class="scanner-bars">
-                        <div class="scanner-bar-row">
-                            <span>Scanner</span>
-                            <span class="scanner-bar-track"><span class="scanner-bar-fill" style="width:{scanner_pct}%"></span></span>
-                            <span>{html.escape(score_label)}</span>
-                        </div>
-                        <div class="scanner-bar-row">
-                            <span>Technical</span>
-                            <span class="scanner-bar-track"><span class="scanner-bar-fill" style="width:{technical_pct}%"></span></span>
-                            <span>{html.escape(technical_label)}</span>
-                        </div>
-                        <div class="scanner-bar-row">
-                            <span>Liquidity</span>
-                            <span class="scanner-bar-track"><span class="scanner-bar-fill" style="width:{liquidity_pct}%"></span></span>
-                            <span>{html.escape(liquidity_label)}</span>
-                        </div>
-                    </div>
-                    <div class="scanner-facts">
-                        <div><span class="scanner-fact-label">Latest close</span><br>{html.escape(close_label)}</div>
-                        <div><span class="scanner-fact-label">Liquidity proxy</span><br>{html.escape(liquidity_label)}</div>
-                    </div>
-                    {persistence_profile_html}
-                    {risk_profile_html}
-                    {bullet_html}
                 </div>
-                """,
-                unsafe_allow_html=True,
-            )
+                <div class="scanner-badges">
+                    <span class="scanner-badge {region_class}">{region}</span>
+                    <span class="scanner-badge">{sector}</span>
+                    <span class="scanner-badge {quality_class}">Data Quality: {quality}</span>
+                </div>
+                <div class="scanner-summary">{summary}</div>
+                <div class="scanner-bars">
+                    <div class="scanner-bar-row">
+                        <span>Scanner</span>
+                        <span class="scanner-bar-track"><span class="scanner-bar-fill" style="width:{scanner_pct}%"></span></span>
+                        <span>{html.escape(score_label)}</span>
+                    </div>
+                    <div class="scanner-bar-row">
+                        <span>Technical</span>
+                        <span class="scanner-bar-track"><span class="scanner-bar-fill" style="width:{technical_pct}%"></span></span>
+                        <span>{html.escape(technical_label)}</span>
+                    </div>
+                    <div class="scanner-bar-row">
+                        <span>Liquidity</span>
+                        <span class="scanner-bar-track"><span class="scanner-bar-fill" style="width:{liquidity_pct}%"></span></span>
+                        <span>{html.escape(liquidity_label)}</span>
+                    </div>
+                </div>
+                <div class="scanner-facts">
+                    <div><span class="scanner-fact-label">Latest close</span><br>{html.escape(close_label)}</div>
+                    <div><span class="scanner-fact-label">Liquidity proxy</span><br>{html.escape(liquidity_label)}</div>
+                </div>
+                {persistence_profile_html}
+                {risk_profile_html}
+                {bullet_html}
+            </div>
+        """
+
+        with columns[index % len(columns)]:
+            st.html(card_html)
 
 
 def render_global_scanner_page():
