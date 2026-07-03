@@ -37,6 +37,11 @@ from ui.runtime_status import (
     runtime_freshness,
     runtime_state,
 )
+from ui.market_status import (
+    market_status,
+    market_statuses,
+    next_market_event_label,
+)
 
 
 FILES = [
@@ -316,119 +321,33 @@ def market_session_schedule(market):
 
 
 def market_countdown(market):
-    session, open_time, close_time, unavailable_reason = market_session_schedule(market)
-    if unavailable_reason == "Always open":
-        return "Open", "Always open"
-    if unavailable_reason:
-        return "Unknown", unavailable_reason
-
-    local_now = pd.Timestamp.now(tz=session["timezone"])
-
-    open_dt = local_now.normalize().replace(
-        hour=open_time.hour,
-        minute=open_time.minute,
-        second=0,
-        microsecond=0,
-    )
-    close_dt = local_now.normalize().replace(
-        hour=close_time.hour,
-        minute=close_time.minute,
-        second=0,
-        microsecond=0,
-    )
-
-    is_weekday = local_now.weekday() < 5
-    is_open = is_weekday and open_dt <= local_now <= close_dt
-
-    if is_open:
-        seconds = (close_dt - local_now).total_seconds()
-        return "Open", f"Closes in {format_runtime_duration(seconds)}"
-
-    next_open = open_dt
-    if not is_weekday or local_now >= open_dt:
-        next_open = next_open + pd.Timedelta(days=1)
-
-    while next_open.weekday() >= 5:
-        next_open = next_open + pd.Timedelta(days=1)
-
-    seconds = (next_open - local_now).total_seconds()
-    return "Closed", f"Opens in {format_runtime_duration(seconds)}"
+    status = market_status(market, MARKET_SESSIONS)
+    return status.display_state, status.detail
 
 
 def seconds_until_market_open(market):
-    session, open_time, close_time, unavailable_reason = market_session_schedule(market)
-    if unavailable_reason == "Always open":
-        return 0
-    if unavailable_reason:
-        return None
-
-    local_now = pd.Timestamp.now(tz=session["timezone"])
-    open_dt = local_now.normalize().replace(
-        hour=open_time.hour,
-        minute=open_time.minute,
-        second=0,
-        microsecond=0,
-    )
-    close_dt = local_now.normalize().replace(
-        hour=close_time.hour,
-        minute=close_time.minute,
-        second=0,
-        microsecond=0,
-    )
-
-    if local_now.weekday() < 5 and open_dt <= local_now <= close_dt:
-        return 0
-
-    next_open = open_dt
-    if local_now.weekday() >= 5 or local_now >= open_dt:
-        next_open = next_open + pd.Timedelta(days=1)
-
-    while next_open.weekday() >= 5:
-        next_open = next_open + pd.Timedelta(days=1)
-
-    return max(0, int((next_open - local_now).total_seconds()))
+    return market_status(market, MARKET_SESSIONS).seconds_until_next_open
 
 
 def next_market_to_open(markets):
-    candidates = []
-    for market in markets:
-        seconds = seconds_until_market_open(market)
-        if seconds is not None and seconds > 0:
-            candidates.append((seconds, market))
-
-    if not candidates:
-        return "None"
-
-    seconds, market = min(candidates)
-    name = MARKET_DISPLAY.get(market, (market, market))[0]
-    return f"{name}: Opens in {format_runtime_duration(seconds)}"
+    return next_market_event_label(markets, MARKET_SESSIONS)
 
 
 def next_market_details(markets):
-    candidates = []
-    for market in markets:
-        seconds = seconds_until_market_open(market)
-        if seconds is not None and seconds > 0:
-            candidates.append((seconds, market))
-
+    candidates = [
+        status
+        for status in market_statuses(markets, MARKET_SESSIONS)
+        if not status.is_open and status.seconds_until_next_open is not None
+    ]
     if not candidates:
         return "None", None
 
-    seconds, market = min(candidates)
-    name = MARKET_DISPLAY.get(market, (market, market))[0]
-    return name, seconds
+    status = min(candidates, key=lambda item: item.seconds_until_next_open)
+    return status.label, status.seconds_until_next_open
 
 
 def market_session_time(market):
-    session, open_time, close_time, unavailable_reason = market_session_schedule(market)
-    if unavailable_reason:
-        return unavailable_reason
-
-    return (
-        f"{open_time.strftime('%H:%M')} - "
-        f"{close_time.strftime('%H:%M')} "
-        f"{session['timezone']}"
-    )
+    return market_status(market, MARKET_SESSIONS).session_label
 
 
 def next_cycle_value(runtime_status):
@@ -789,22 +708,17 @@ def next_scan_label(runtime_status):
 
 
 def market_is_open(market):
-    return market_countdown(market)[0] == "Open"
+    return market_status(market, MARKET_SESSIONS).is_open
 
 
 def market_badge(label, market):
-    status_label = market_countdown(market)[0]
-    if status_label == "Open":
-        status = "OPEN"
-    elif status_label == "Unknown":
-        status = "UNAVAILABLE"
-    else:
-        status = "CLOSED"
+    current = market_status(market, MARKET_SESSIONS)
 
     return {
         "label": label,
-        "status": status,
-        "healthy": status_label == "Open",
+        "status": current.display_state.upper(),
+        "healthy": current.is_open,
+        "icon": current.icon,
     }
 
 
@@ -823,16 +737,14 @@ def expand_market_names(markets):
 
 
 def render_market_banner(configured_markets):
-    markets = [
-        market_badge("LSE", "LSE"),
-        market_badge("NYSE", "US"),
-        market_badge("NASDAQ", "US"),
-        market_badge("Tokyo", "TSE"),
-    ]
-    cols = responsive_columns(4)
+    markets = market_statuses(configured_markets, MARKET_SESSIONS)
+    cols = responsive_columns(min(4, max(1, len(markets))))
     for index, market in enumerate(markets):
-        icon = "🟢" if market["healthy"] else "🔴"
-        cols[index].metric(market["label"], f"{icon} {market['status']}")
+        cols[index % len(cols)].metric(
+            market.label,
+            f"{market.icon} {market.display_state.upper()}",
+            market.detail,
+        )
 
     st.caption(f"Next Market: {next_market_to_open(configured_markets)}")
 
@@ -1337,6 +1249,13 @@ def render_hero_status(runtime_status, runtime_config, heartbeat_ok, markets_ope
     raw_stage = state["stage"]
     live_label = state["banner"]
     markets = " • ".join(expand_market_names(markets_open)) if markets_open else "No markets open"
+    configured = safe_list(runtime_config.get("markets")) or [
+        "LSE",
+        "US",
+        "TSE",
+        "CRYPTO",
+    ]
+    markets = open_market_display_label(configured)
     mode = (
         runtime_status.get("mode")
         or runtime_config.get("mode")
@@ -1772,15 +1691,40 @@ def macro_calendar_rows(intelligence, limit=8):
 
 
 def market_groups():
-    markets = [
-        ("LSE", "LSE"),
-        ("NYSE", "US"),
-        ("NASDAQ", "US"),
-        ("Tokyo", "TSE"),
+    statuses = market_statuses(configured_markets, MARKET_SESSIONS)
+    open_items = [
+        status.label
+        for status in statuses
+        if status.is_open and status.state != "24/7"
     ]
-    open_items = [label for label, market in markets if market_is_open(market)]
-    closed_items = [label for label, market in markets if not market_is_open(market)]
+    closed_items = [
+        status.label
+        for status in statuses
+        if not status.is_open
+    ]
     return open_items, closed_items
+
+
+def market_status_lines(markets):
+    rows = []
+    for status in market_statuses(markets, MARKET_SESSIONS):
+        rows.append(f"{status.icon} {status.label} — {status.display_state}")
+    return rows
+
+
+def open_market_display_label(markets):
+    open_statuses = [
+        status
+        for status in market_statuses(markets, MARKET_SESSIONS)
+        if status.is_open
+    ]
+    if not open_statuses:
+        return "No markets currently open"
+
+    return ", ".join(
+        f"{status.label} {status.display_state.upper()}"
+        for status in open_statuses
+    )
 
 
 def load_transaction_log_file():
@@ -2643,9 +2587,7 @@ mode_label = (
     or "monitor_only"
 ).replace("_", " ").title()
 active_market_label = (
-    f"{', '.join(expand_market_names(active_markets))} OPEN"
-    if active_markets
-    else "Markets Closed"
+    open_market_display_label(configured_markets)
 )
 runtime_live = runtime_state(runtime_status)["running"]
 trace_decisions = safe_list(decision_trace.get("decisions"))
@@ -2675,20 +2617,9 @@ st.caption(data_freshness_summary(freshness_items))
 st.markdown("**Live Pipeline**")
 render_pipeline(current_mission_stage)
 
-open_market_names, closed_market_names = market_groups()
-market_panel_cols = responsive_columns(2)
-with market_panel_cols[0]:
-    st.markdown("**Markets Currently Open**")
-    if open_market_names:
-        st.success("  ".join(f"🟢 {name}" for name in open_market_names))
-    else:
-        st.info("No configured markets are currently open.")
-with market_panel_cols[1]:
-    st.markdown("**Closed**")
-    if closed_market_names:
-        st.warning("  ".join(f"🔴 {name}" for name in closed_market_names))
-    else:
-        st.success("All configured markets are open.")
+st.markdown("**Market Status**")
+for line in market_status_lines(configured_markets):
+    st.write(line)
 st.caption(f"Next Market Event: {next_market_to_open(configured_markets)}")
 
 st.markdown("**Market Intelligence**")
@@ -3081,21 +3012,25 @@ st.info(
 )
 
 st.markdown("**Global Market Status**")
-market_cols = responsive_columns(3)
-for index, market in enumerate(["LSE", "US", "TSE"]):
-    label, full_name = MARKET_DISPLAY.get(market, (market, market))
-    status_label, countdown = market_countdown(market)
-    market_cols[index].markdown(f"### {label}")
-    market_cols[index].metric("Status", status_label, countdown)
-    market_cols[index].caption(f"{full_name} | {market_session_time(market)}")
+market_status_rows = market_statuses(configured_markets, MARKET_SESSIONS)
+market_cols = responsive_columns(min(4, max(1, len(market_status_rows))))
+for index, status in enumerate(market_status_rows):
+    column = market_cols[index % len(market_cols)]
+    column.markdown(f"### {status.label}")
+    column.metric(
+        "Status",
+        f"{status.icon} {status.display_state}",
+        status.detail,
+    )
+    column.caption(f"{status.full_name} | {status.session_label}")
 
 market_summary_cols = responsive_columns(3)
 market_summary_cols[0].metric(
     "Current active market(s)",
-    ", ".join(active_markets) if active_markets else "No markets currently open",
+    open_market_display_label(configured_markets),
 )
 market_summary_cols[1].metric(
-    "Next market to open",
+    "Next Market Event",
     next_market_to_open(configured_markets),
 )
 market_summary_cols[2].metric(
