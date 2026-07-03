@@ -2273,8 +2273,25 @@ def scanner_metric_display(value, metric):
     if kind == "stability":
         return f"{float(value):.0f} / 100"
     if kind == "liquidity":
-        return scanner_compact_number(value)
+        return f"{scanner_compact_number(value)} - {scanner_liquidity_label(value)}"
     return str(value)
+
+
+def scanner_liquidity_label(value):
+    try:
+        numeric = float(value)
+    except Exception:
+        return "Unavailable"
+
+    if pd.isna(numeric) or numeric <= 0:
+        return "Unavailable"
+    if numeric >= 1_000_000_000:
+        return "Excellent"
+    if numeric >= 100_000_000:
+        return "Good"
+    if numeric >= 10_000_000:
+        return "Moderate"
+    return "Limited"
 
 
 def scanner_risk_rank(value):
@@ -2447,68 +2464,99 @@ def scanner_metric_leader(frame, column, mode="max"):
     return frame.loc[idx], float(values.loc[idx])
 
 
+def scanner_distinct_values(frame, column):
+    if column not in frame.columns:
+        return pd.Series(dtype=str)
+
+    values = frame[column].fillna("").astype(str).str.strip()
+    return values[values != ""]
+
+
 def scanner_comparison_summary(frame):
     observations = []
     if frame.empty:
         return observations
 
-    score_leader, score_value = scanner_metric_leader(frame, "scanner_score")
+    score_leader, _ = scanner_metric_leader(frame, "scanner_score")
     if score_leader is not None:
-        observations.append(
-            f"{scanner_compare_label(score_leader)} has the strongest overall scanner profile by score."
-        )
-
         scores = pd.to_numeric(frame["scanner_score"], errors="coerce").dropna()
         if len(scores) >= 2:
             sorted_scores = scores.sort_values(ascending=False)
             gap = sorted_scores.iloc[0] - sorted_scores.iloc[1]
+            leader = frame.loc[sorted_scores.index[0]]
+            runner_up = frame.loc[sorted_scores.index[1]]
             if gap > 0:
-                leader = frame.loc[sorted_scores.index[0]]
-                runner_up = frame.loc[sorted_scores.index[1]]
                 observations.append(
-                    f"{scanner_compare_label(leader)} ranks above {scanner_compare_label(runner_up)} by {gap:.1f} scanner points."
+                    f"{scanner_compare_label(leader)} leads the comparison by scanner score, ahead of {scanner_compare_label(runner_up)} by {gap:.1f} points."
                 )
+            else:
+                observations.append(
+                    f"{scanner_compare_label(leader)} and {scanner_compare_label(runner_up)} are closely matched on scanner score."
+                )
+        else:
+            observations.append(
+                f"{scanner_compare_label(score_leader)} has the strongest scanner score in this comparison."
+            )
 
     technical_leader, _ = scanner_metric_leader(frame, "technical_score")
-    if technical_leader is not None:
-        observations.append(
-            f"{scanner_compare_label(technical_leader)} has the strongest momentum signal."
-        )
-
     stable_leader, _ = scanner_metric_leader(frame, "trend_stability_score")
+    drawdown_leader, _ = scanner_metric_leader(frame, "max_drawdown_1y", mode="min")
+    volatility_leader, _ = scanner_metric_leader(frame, "volatility_60d", mode="min")
+    risk_candidates = []
     if stable_leader is not None:
+        risk_candidates.append(
+            f"{scanner_compare_label(stable_leader)} has the steadier trend"
+        )
+    if drawdown_leader is not None:
+        risk_candidates.append(
+            f"{scanner_compare_label(drawdown_leader)} shows the lowest drawdown"
+        )
+    if volatility_leader is not None:
+        risk_candidates.append(
+            f"{scanner_compare_label(volatility_leader)} has the lower 60d volatility"
+        )
+    if risk_candidates:
         observations.append(
-            f"{scanner_compare_label(stable_leader)} has the most stable trend."
+            "Risk and stability balance: " + "; ".join(risk_candidates[:3]) + "."
         )
 
-    drawdown_leader, _ = scanner_metric_leader(frame, "max_drawdown_1y", mode="min")
-    if drawdown_leader is not None:
+    persistence_leader, _ = scanner_metric_leader(frame, "persistence_score")
+    if persistence_leader is not None:
         observations.append(
-            f"{scanner_compare_label(drawdown_leader)} has the lowest historical drawdown."
+            f"{scanner_compare_label(persistence_leader)} has the strongest persistence profile across recent scanner history."
         )
 
     liquidity_leader, _ = scanner_metric_leader(frame, "avg_traded_value_60d")
-    if liquidity_leader is not None:
+    if liquidity_leader is not None or technical_leader is not None:
+        parts = []
+        if technical_leader is not None:
+            parts.append(
+                f"{scanner_compare_label(technical_leader)} has the strongest momentum signal"
+            )
+        if liquidity_leader is not None:
+            liquidity = scanner_metric_display(
+                scanner_number(liquidity_leader, "avg_traded_value_60d"),
+                {"kind": "liquidity"},
+            )
+            parts.append(
+                f"{scanner_compare_label(liquidity_leader)} has the highest liquidity proxy ({liquidity})"
+            )
         observations.append(
-            f"{scanner_compare_label(liquidity_leader)} has the highest liquidity proxy."
+            "Momentum and liquidity: " + "; ".join(parts) + "."
         )
 
+    exposure_notes = []
     for column, label, plural in [
         ("sector", "sector", "sectors"),
         ("currency", "currency", "currencies"),
         ("region", "region", "regions"),
     ]:
-        if column not in frame.columns:
-            continue
-        values = frame[column].fillna("").astype(str).str.strip()
-        values = values[values != ""]
+        values = scanner_distinct_values(frame, column)
         if values.empty:
             continue
         distinct_count = values.nunique()
         if distinct_count == 1 and len(values) > 1:
-            observations.append(
-                f"Selected assets share the same {label}: {values.iloc[0]}."
-            )
+            exposure_notes.append(f"same {label} ({values.iloc[0]})")
         elif distinct_count > 1:
             repeated = values.value_counts()
             repeated = repeated[repeated > 1]
@@ -2519,14 +2567,17 @@ def scanner_comparison_summary(frame):
                     scanner_compare_label(row)
                     for _, row in shared_rows.iterrows()
                 ]
-                observations.append(
-                    f"{' and '.join(shared_labels)} operate in the same {label}: {shared_value}."
+                exposure_notes.append(
+                    f"{' and '.join(shared_labels)} share {label} exposure ({shared_value})"
                 )
-            observations.append(
-                f"Selected assets span {distinct_count} different {plural}."
-            )
+            exposure_notes.append(f"{distinct_count} {plural}")
 
-    return observations[:12]
+    if exposure_notes:
+        observations.append(
+            "Exposure mix: " + "; ".join(exposure_notes[:4]) + "."
+        )
+
+    return observations[:5]
 
 
 def scanner_comparison_html(frame):
@@ -2615,6 +2666,7 @@ def render_opportunity_comparison(selected):
 
     summary = scanner_comparison_summary(comparison)
     if summary:
+        st.markdown("**Research Summary**")
         st.markdown(
             "<ul>"
             + "".join(f"<li>{html.escape(item)}</li>" for item in summary)
