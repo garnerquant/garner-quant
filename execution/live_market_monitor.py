@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import yfinance as yf
 
+from execution.atomic_io import atomic_write_json
 from execution.portfolio_manager import load_portfolio
 
 
@@ -26,6 +27,10 @@ REQUIRED_POSITION_FIELDS = [
     "stop_loss",
     "take_profit",
 ]
+
+
+class MonitorJsonStateError(RuntimeError):
+    pass
 
 
 def _timestamp():
@@ -487,36 +492,29 @@ def run_live_market_monitor(save_snapshot=True):
 
 
 def save_monitor_snapshot(snapshot, path=SNAPSHOT_FILE):
+    atomic_write_json(snapshot, path)
+
+
+def load_json_state(path, default):
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(snapshot, indent=2),
-        encoding="utf-8",
-    )
+
+    if not path.exists():
+        return default
+
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise MonitorJsonStateError(
+            f"Monitor JSON state is corrupt or unreadable: {path}"
+        ) from exc
 
 
 def load_monitor_snapshot(path=SNAPSHOT_FILE):
-    path = Path(path)
-
-    if not path.exists():
-        return None
-
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
+    return load_json_state(path, None)
 
 
 def load_monitor_runtime(path=RUNTIME_FILE):
-    path = Path(path)
-
-    if not path.exists():
-        return {}
-
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return load_json_state(path, {})
 
 
 def save_monitor_runtime(runtime, path=RUNTIME_FILE):
@@ -528,10 +526,7 @@ def save_monitor_runtime(runtime, path=RUNTIME_FILE):
         if key in clean_runtime:
             clean_runtime[key] = _runtime_timestamp(clean_runtime[key])
 
-    path.write_text(
-        json.dumps(clean_runtime, indent=2),
-        encoding="utf-8",
-    )
+    atomic_write_json(clean_runtime, path)
 
 
 if __name__ == "__main__":

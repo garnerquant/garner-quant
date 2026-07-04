@@ -19,6 +19,7 @@ from execution.live_market_monitor import (  # noqa: E402
 from config import ASSETS  # noqa: E402
 from notifications.alert_notifier import notify_alerts  # noqa: E402
 from runtime.startup_validation import validate_runtime_startup  # noqa: E402
+from execution.atomic_io import atomic_write_json  # noqa: E402
 
 
 CONFIG_FILE = ROOT_DIR / "runtime" / "live_runtime_config.json"
@@ -59,6 +60,10 @@ MARKET_SESSIONS = {
 }
 
 
+class RuntimeJsonStateError(RuntimeError):
+    pass
+
+
 def utc_now():
     return datetime.now(ZoneInfo("UTC"))
 
@@ -88,9 +93,20 @@ def load_config(path=CONFIG_FILE):
 
 
 def save_json(data, path):
+    atomic_write_json(data, path)
+
+
+def load_json_state(path, default):
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    if not path.exists():
+        return default
+
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeJsonStateError(
+            f"Runtime JSON state is corrupt or unreadable: {path}"
+        ) from exc
 
 
 def json_safe(value):
@@ -128,30 +144,17 @@ def append_event(events, event_type, message, severity="info", details=None, now
 
 
 def load_status(path=STATUS_FILE):
-    path = Path(path)
-
-    if not path.exists():
-        return {}
-
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return load_json_state(path, {})
 
 
 def load_execution_log(path=EXECUTION_LOG_FILE):
-    path = Path(path)
-
-    if not path.exists():
-        return {
+    log = load_json_state(
+        path,
+        {
             "last_execution_at": None,
             "executions": [],
-        }
-
-    try:
-        log = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        log = {}
+        },
+    )
 
     log.setdefault("last_execution_at", None)
     log.setdefault("executions", [])
@@ -163,17 +166,7 @@ def save_execution_log(log, path=EXECUTION_LOG_FILE):
 
 
 def load_operations_log(path=OPERATIONS_LOG_FILE):
-    path = Path(path)
-
-    if not path.exists():
-        return {
-            "cycles": [],
-        }
-
-    try:
-        log = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        log = {}
+    log = load_json_state(path, {"cycles": []})
 
     log.setdefault("cycles", [])
     return log
@@ -189,8 +182,8 @@ def append_operations_log(entry):
         log = load_operations_log()
         log.setdefault("cycles", []).append(entry)
         save_operations_log(log)
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"Warning: runtime operations log append failed: {exc}")
 
 
 def get_recent_cycles(limit=20):

@@ -8,7 +8,7 @@ from config import (
 )
 from execution.broker_account import load_account, update_account
 from execution.accounting import broker_values_from_ledger_and_holdings
-from execution.atomic_io import atomic_write_csv_frames
+from execution.atomic_io import atomic_write_csv_frames, atomic_write_json
 from execution.trade_ledger import (
     LEDGER_FILE,
     build_trade_event,
@@ -385,9 +385,10 @@ def save_decision_trace(generated_at, run_id, mode, signals_count, trades_record
         "decisions": decisions,
     }
     payload.update(decision_trace_summary(decisions))
-    DECISION_TRACE_FILE.write_text(
-        json.dumps(payload, indent=2, default=str),
-        encoding="utf-8",
+    atomic_write_json(
+        payload,
+        DECISION_TRACE_FILE,
+        json_kwargs={"indent": 2, "default": str},
     )
     return payload
 

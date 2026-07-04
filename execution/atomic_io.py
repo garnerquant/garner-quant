@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -130,3 +131,59 @@ def atomic_write_csv_frames(
                 target.temp_path.unlink()
             if target.backup_path.exists():
                 target.backup_path.unlink()
+
+
+def atomic_write_json(
+    data,
+    path,
+    *,
+    failure_hook=None,
+    json_kwargs=None,
+):
+    json_kwargs = (
+        {"indent": 2}
+        if json_kwargs is None
+        else dict(json_kwargs)
+    )
+    target = _target_for(path, uuid4().hex)
+    replaced = False
+    backed_up = False
+
+    try:
+        target.final_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(data, **json_kwargs)
+        target.temp_path.write_text(payload, encoding="utf-8")
+        json.loads(target.temp_path.read_text(encoding="utf-8"))
+
+        if failure_hook:
+            failure_hook("after_temp_write", target)
+
+        if target.final_path.exists():
+            target.final_path.replace(target.backup_path)
+            backed_up = True
+
+        target.temp_path.replace(target.final_path)
+        replaced = True
+
+        if failure_hook:
+            failure_hook("after_replace", target)
+
+        if target.backup_path.exists():
+            target.backup_path.unlink()
+
+        return target.final_path
+
+    except Exception as exc:
+        if replaced and target.final_path.exists():
+            target.final_path.unlink()
+        if backed_up and target.backup_path.exists():
+            target.backup_path.replace(target.final_path)
+        raise AtomicWriteError(
+            f"Atomic JSON write failed and was rolled back: {exc}"
+        ) from exc
+
+    finally:
+        if target.temp_path.exists():
+            target.temp_path.unlink()
+        if target.backup_path.exists():
+            target.backup_path.unlink()
