@@ -29,6 +29,12 @@ def read_csv(path):
         return pd.DataFrame()
 
 
+def clean_text(value):
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
 def normalise_date(value):
     parsed = pd.to_datetime(value, errors="coerce")
     if pd.isna(parsed):
@@ -96,6 +102,79 @@ def compare_counts(left, left_label, right, right_label):
     return merged[merged[left_label] != merged[right_label]]
 
 
+def exact_duplicate_extra_rows(journal):
+    if journal.empty:
+        return pd.DataFrame()
+
+    legacy_columns = [
+        column
+        for column in [
+            "date",
+            "time",
+            "action",
+            "ticker",
+            "price",
+            "shares",
+            "value",
+            "pnl",
+            "pnl_percent",
+            "reason",
+        ]
+        if column in journal.columns
+    ]
+    if not legacy_columns:
+        return pd.DataFrame()
+
+    duplicate_rows = journal[journal.duplicated(subset=legacy_columns, keep="first")].copy()
+    if duplicate_rows.empty:
+        return duplicate_rows
+    duplicate_rows["legacy_row_number"] = duplicate_rows.index + 2
+    return duplicate_rows
+
+
+def quarantined_duplicate_rows(quarantine):
+    if quarantine.empty:
+        return set()
+    required_columns = {"source_file", "legacy_row_number", "reason"}
+    if not required_columns.issubset(quarantine.columns):
+        return set()
+
+    rows = quarantine[
+        quarantine["source_file"].astype(str).str.strip().eq("trade_journal_v3.csv")
+        & quarantine["reason"].astype(str).str.contains("exact_duplicate_journal_row", na=False)
+    ]
+    return {
+        int(row_number)
+        for row_number in pd.to_numeric(rows["legacy_row_number"], errors="coerce").dropna()
+    }
+
+
+def ledgered_legacy_rows(ledger):
+    if ledger.empty:
+        return set()
+    if "legacy_source_file" in ledger.columns and "legacy_row_number" in ledger.columns:
+        rows = ledger[
+            ledger["legacy_source_file"].astype(str).str.strip().eq("trade_journal_v3.csv")
+        ]
+        return {
+            int(row_number)
+            for row_number in pd.to_numeric(rows["legacy_row_number"], errors="coerce").dropna()
+        }
+    if "legacy_trade_id" not in ledger.columns:
+        return set()
+
+    row_numbers = set()
+    prefix = "trade_journal_v3.csv:"
+    for legacy_trade_id in ledger["legacy_trade_id"].dropna():
+        text = clean_text(legacy_trade_id)
+        if not text.startswith(prefix):
+            continue
+        row_number = pd.to_numeric(text.removeprefix(prefix), errors="coerce")
+        if not pd.isna(row_number):
+            row_numbers.add(int(row_number))
+    return row_numbers
+
+
 def missing_left_rows(left, left_label, right, right_label):
     left_counts = grouped_counts(left, left_label)
     right_counts = grouped_counts(right, right_label)
@@ -116,6 +195,7 @@ def main():
     portfolio = read_csv("paper_portfolio_v3.csv")
     holdings = read_csv("holdings_report.csv")
     audit_file = read_csv("trade_audit_trail.csv")
+    quarantine = read_csv("data/legacy_trade_migration_quarantine.csv")
 
     print("Trade ledger validation")
     print(f"ledger_path={ledger_path}")
@@ -173,13 +253,22 @@ def main():
             journal_key,
             "journal",
         )
+        ledger_vs_legacy_sources = missing_left_rows(
+            ledger_key,
+            "ledger",
+            pd.concat([journal_key, transaction_key], ignore_index=True),
+            "legacy_sources",
+        )
         check(
-            ledger_vs_journal.empty,
+            ledger_vs_legacy_sources.empty,
             "HIGH",
-            "all ledger rows are present in trade_journal_v3.csv",
+            "all ledger rows are present in legacy journal or transaction log",
             issues,
         )
-        if not ledger_vs_journal.empty:
+        if not ledger_vs_legacy_sources.empty:
+            print(ledger_vs_legacy_sources.to_string(index=False))
+        if not ledger_vs_journal.empty and ledger_vs_legacy_sources.empty:
+            print("INFO: ledger rows missing from legacy journal but present in transaction log")
             print(ledger_vs_journal.to_string(index=False))
 
         ledger_vs_transactions = missing_left_rows(
@@ -189,12 +278,13 @@ def main():
             "transactions",
         )
         check(
-            ledger_vs_transactions.empty,
+            ledger_vs_legacy_sources.empty,
             "HIGH",
-            "all ledger rows are present in trade_transactions_v1.csv",
+            "all ledger rows are present in trade_transactions_v1.csv or legacy journal",
             issues,
         )
-        if not ledger_vs_transactions.empty:
+        if not ledger_vs_transactions.empty and ledger_vs_legacy_sources.empty:
+            print("INFO: ledger rows missing from transaction log but present in legacy journal")
             print(ledger_vs_transactions.to_string(index=False))
 
     check(
@@ -204,13 +294,44 @@ def main():
         issues,
     )
     if not journal.empty:
-        duplicate_legacy = journal.duplicated().sum()
+        duplicate_rows = exact_duplicate_extra_rows(journal)
+        duplicate_row_numbers = set(
+            duplicate_rows["legacy_row_number"].astype(int)
+            if not duplicate_rows.empty
+            else []
+        )
+        quarantined_rows = quarantined_duplicate_rows(quarantine)
+        ledgered_rows = ledgered_legacy_rows(ledger)
+        unsafe_duplicate_rows = duplicate_row_numbers - quarantined_rows
+        ledgered_duplicate_rows = duplicate_row_numbers & ledgered_rows
         check(
-            duplicate_legacy == 0,
+            not unsafe_duplicate_rows and not ledgered_duplicate_rows,
             "MEDIUM",
-            "legacy trade journal has no exact duplicate rows",
+            "legacy trade journal exact duplicate rows are quarantined and excluded from ledger",
             issues,
         )
+        if duplicate_row_numbers:
+            print(
+                "INFO: exact legacy duplicate extra rows="
+                + ",".join(str(row) for row in sorted(duplicate_row_numbers))
+            )
+            print(
+                "INFO: quarantined duplicate rows="
+                + ",".join(str(row) for row in sorted(duplicate_row_numbers & quarantined_rows))
+            )
+            print(
+                "INFO: ledgered duplicate rows="
+                + (
+                    ",".join(str(row) for row in sorted(ledgered_duplicate_rows))
+                    if ledgered_duplicate_rows
+                    else "none"
+                )
+            )
+            if unsafe_duplicate_rows:
+                print(
+                    "INFO: unquarantined duplicate rows="
+                    + ",".join(str(row) for row in sorted(unsafe_duplicate_rows))
+                )
         if {"price", "shares", "value"}.issubset(journal.columns):
             calc_value = numeric_series(journal, "price") * numeric_series(journal, "shares")
             diff = (calc_value - numeric_series(journal, "value")).abs().max()
