@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 import pandas as pd
 
+from execution.atomic_io import atomic_write_json
 from news.news_config import (
     NEWS_FEEDS,
     NEWS_MAX_ITEMS,
@@ -21,6 +22,10 @@ from news.news_config import (
 
 NEWS_EVENTS_FILE = Path("data/news_events.json")
 SIGNAL_REPORT_FILE = Path("signal_report_v2.csv")
+
+
+class NewsEventsStateError(RuntimeError):
+    pass
 
 
 def utc_timestamp(value=None):
@@ -43,8 +48,10 @@ def load_news_events(path=NEWS_EVENTS_FILE):
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        data = {}
+    except Exception as exc:
+        raise NewsEventsStateError(
+            f"News events JSON state is corrupt or unreadable: {path}"
+        ) from exc
 
     data.setdefault("generated_at", None)
     data.setdefault("monitor_enabled", NEWS_MONITOR_ENABLED)
@@ -54,10 +61,8 @@ def load_news_events(path=NEWS_EVENTS_FILE):
     return data
 
 
-def save_news_events(data, path=NEWS_EVENTS_FILE):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+def save_news_events(data, path=NEWS_EVENTS_FILE, failure_hook=None):
+    atomic_write_json(data, path, failure_hook=failure_hook)
     return data
 
 

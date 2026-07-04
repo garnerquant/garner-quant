@@ -9,11 +9,17 @@ import sys
 
 import requests
 
+from execution.atomic_io import atomic_write_json
+
 
 STATE_FILE = Path("data/notification_state.json")
 DEFAULT_COOLDOWN_MINUTES = 30
 
 PAPER_ACTION = "Would exit now if live execution was enabled."
+
+
+class NotificationStateError(RuntimeError):
+    pass
 
 
 def _now():
@@ -137,8 +143,10 @@ def load_notification_state(path=STATE_FILE):
 
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        state = {}
+    except Exception as exc:
+        raise NotificationStateError(
+            f"Notification JSON state is corrupt or unreadable: {path}"
+        ) from exc
 
     defaults = _default_state()
     for key, value in defaults.items():
@@ -147,10 +155,8 @@ def load_notification_state(path=STATE_FILE):
     return state
 
 
-def save_notification_state(state, path=STATE_FILE):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+def save_notification_state(state, path=STATE_FILE, failure_hook=None):
+    atomic_write_json(state, path, failure_hook=failure_hook)
 
 
 def alert_dedup_key(alert):

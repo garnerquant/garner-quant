@@ -4,8 +4,14 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from execution.atomic_io import atomic_write_json
+
 
 STORE_PATH = Path("data/market_intelligence.json")
+
+
+class MarketIntelligenceStoreError(RuntimeError):
+    pass
 
 
 def utc_timestamp(value=None):
@@ -48,8 +54,10 @@ def load_store(path=STORE_PATH):
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        data = {}
+    except Exception as exc:
+        raise MarketIntelligenceStoreError(
+            f"Market intelligence JSON store is corrupt or unreadable: {path}"
+        ) from exc
 
     base = empty_store()
     base.update(data if isinstance(data, dict) else {})
@@ -80,13 +88,10 @@ def dedupe_stories(stories, max_items=100):
     return deduped
 
 
-def save_store(data, path=STORE_PATH):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+def save_store(data, path=STORE_PATH, failure_hook=None):
     data = dict(data)
     data["stories"] = dedupe_stories(data.get("stories", []), data.get("max_items", 100))
     data["stories_count"] = len(data["stories"])
     data["generated_at"] = data.get("generated_at") or utc_timestamp()
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    atomic_write_json(data, path, failure_hook=failure_hook)
     return data
-
