@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 from uuid import uuid4
 
+from runtime.locks import acquire_runtime_write_lock
+
 
 ATOMIC_ARTIFACT_PATTERNS = (
     ".*.atomic-*.tmp",
@@ -113,7 +115,15 @@ def validate_atomic_final(path, final_path=None):
     )
 
 
-def recover_atomic_artifacts(root_dir="."):
+def recover_atomic_artifacts(root_dir=".", lock_path=None):
+    with acquire_runtime_write_lock(
+        path=lock_path or Path("data") / "execution.lock",
+        context="atomic_recovery",
+    ):
+        return _recover_atomic_artifacts_unlocked(root_dir)
+
+
+def _recover_atomic_artifacts_unlocked(root_dir="."):
     grouped = {}
     for artifact in atomic_artifacts(root_dir):
         key = (artifact.final_path.resolve(), artifact.transaction_id)
@@ -196,6 +206,26 @@ def atomic_write_csv_frames(
     failure_hook=None,
     default_to_csv_kwargs=None,
     to_csv_kwargs_by_path=None,
+    lock_path=None,
+):
+    with acquire_runtime_write_lock(
+        path=lock_path or Path("data") / "execution.lock",
+        context="atomic_csv_write",
+    ):
+        return _atomic_write_csv_frames_unlocked(
+            frames_by_path,
+            failure_hook=failure_hook,
+            default_to_csv_kwargs=default_to_csv_kwargs,
+            to_csv_kwargs_by_path=to_csv_kwargs_by_path,
+        )
+
+
+def _atomic_write_csv_frames_unlocked(
+    frames_by_path,
+    *,
+    failure_hook=None,
+    default_to_csv_kwargs=None,
+    to_csv_kwargs_by_path=None,
 ):
     if not frames_by_path:
         return []
@@ -269,6 +299,26 @@ def atomic_write_csv_frames(
 
 
 def atomic_write_json(
+    data,
+    path,
+    *,
+    failure_hook=None,
+    json_kwargs=None,
+    lock_path=None,
+):
+    with acquire_runtime_write_lock(
+        path=lock_path or Path("data") / "execution.lock",
+        context="atomic_json_write",
+    ):
+        return _atomic_write_json_unlocked(
+            data,
+            path,
+            failure_hook=failure_hook,
+            json_kwargs=json_kwargs,
+        )
+
+
+def _atomic_write_json_unlocked(
     data,
     path,
     *,

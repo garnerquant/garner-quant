@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from config import ASSETS
+from execution.atomic_io import atomic_write_csv_frames, atomic_write_json
 from execution.trade_audit import clean_ledger_events
 from execution.trade_ledger import LEDGER_COLUMNS, build_trade_event, load_trade_ledger
 
@@ -432,8 +433,6 @@ def write_outputs(
     changed_events: int,
     apply: bool,
 ):
-    REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    actions.to_csv(ACTIONS_FILE, index=False)
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "applied": apply,
@@ -458,7 +457,8 @@ def write_outputs(
         "journal_file": str(JOURNAL_FILE.relative_to(ROOT)),
         "actions_file": str(ACTIONS_FILE.relative_to(ROOT)),
     }
-    REPORT_FILE.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    atomic_write_csv_frames({ACTIONS_FILE: actions})
+    atomic_write_json(report, REPORT_FILE)
     return report
 
 
@@ -492,7 +492,7 @@ def main():
     if args.apply and not actions.empty:
         updated, changed_events = apply_actions(ledger, actions)
         updated = updated.reindex(columns=LEDGER_COLUMNS)
-        updated.to_csv(LEDGER_FILE, index=False)
+        atomic_write_csv_frames({LEDGER_FILE: updated})
 
     report = write_outputs(
         actions=actions,

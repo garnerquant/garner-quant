@@ -98,7 +98,7 @@ def load_portfolio():
 
 
 def save_portfolio(portfolio):
-    portfolio.to_csv(PORTFOLIO_FILE, index=False)
+    atomic_write_csv_frames({Path(PORTFOLIO_FILE): portfolio[PORTFOLIO_COLUMNS]})
 
 
 def load_trade_journal():
@@ -115,7 +115,7 @@ def load_trade_journal():
 
 
 def save_trade_journal(journal):
-    journal.to_csv(TRADE_JOURNAL_FILE, index=False)
+    atomic_write_csv_frames({Path(TRADE_JOURNAL_FILE): journal[TRADE_JOURNAL_COLUMNS]})
 
 
 def load_transaction_log():
@@ -132,7 +132,7 @@ def load_transaction_log():
 
 
 def save_transaction_log(log):
-    log.to_csv(TRANSACTION_LOG_FILE, index=False)
+    atomic_write_csv_frames({Path(TRANSACTION_LOG_FILE): log[TRANSACTION_LOG_COLUMNS]})
 
 
 def load_trade_snapshots():
@@ -149,7 +149,7 @@ def load_trade_snapshots():
 
 
 def save_trade_snapshots(snapshots):
-    snapshots.to_csv(TRADE_SNAPSHOTS_FILE, index=False)
+    atomic_write_csv_frames({Path(TRADE_SNAPSHOTS_FILE): snapshots[TRADE_SNAPSHOT_COLUMNS]})
 
 
 def commit_trade_state(

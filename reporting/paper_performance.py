@@ -2,6 +2,8 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
+from execution.atomic_io import atomic_write_csv_frames
+
 try:
     from config import STARTING_CASH
 except Exception:
@@ -80,7 +82,7 @@ def update_30_day_tracker(broker, benchmark_stats=None):
     tracker["date"] = pd.to_datetime(tracker["date"])
     tracker = tracker.sort_values("date")
 
-    tracker.to_csv(TRACKER_FILE, index=False)
+    atomic_write_csv_frames({Path(TRACKER_FILE): tracker})
 
     return tracker
 

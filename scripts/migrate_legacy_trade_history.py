@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from config import ASSETS
+from execution.atomic_io import atomic_write_csv_frames, atomic_write_json
 from execution.trade_ledger import (
     LEDGER_FILE,
     append_trade_events,
@@ -443,13 +444,13 @@ def analyse_legacy_history():
 
 
 def write_reports(valid_events, quarantine, report):
-    (ROOT / QUARANTINE_FILE).parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(quarantine).to_csv(ROOT / QUARANTINE_FILE, index=False)
-    pd.DataFrame(valid_events).to_csv(ROOT / BACKFILLED_FILE, index=False)
-    (ROOT / REPORT_FILE).write_text(
-        json.dumps(report, indent=2),
-        encoding="utf-8",
+    atomic_write_csv_frames(
+        {
+            ROOT / QUARANTINE_FILE: pd.DataFrame(quarantine),
+            ROOT / BACKFILLED_FILE: pd.DataFrame(valid_events),
+        }
     )
+    atomic_write_json(report, ROOT / REPORT_FILE)
 
 
 def apply_backfill(valid_events):

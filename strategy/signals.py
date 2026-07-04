@@ -2,6 +2,7 @@ import pandas as pd
 
 from config import ASSETS
 from data.fundamentals import fundamental_pass, get_fundamental_score
+from execution.atomic_io import atomic_write_csv_frames
 from indicators.technical import technical_score
 
 
@@ -39,9 +40,6 @@ def build_signals(prices, volumes=None):
         columns=["ticker", "fundamental_score"]
     )
 
-    fundamental_report.to_csv(
-        "fundamental_scores.csv",
-        index=False
-    )
+    atomic_write_csv_frames({"fundamental_scores.csv": fundamental_report})
 
     return signals

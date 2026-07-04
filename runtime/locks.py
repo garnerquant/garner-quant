@@ -4,10 +4,15 @@ from pathlib import Path
 import json
 import os
 import sys
+import time
 
 
 DEFAULT_EXECUTION_LOCK = Path("data") / "execution.lock"
 DEFAULT_STALE_SECONDS = 6 * 60 * 60
+
+
+class RuntimeWriteLockError(RuntimeError):
+    pass
 
 
 def utc_now():
@@ -125,6 +130,30 @@ class ExecutionLock(AbstractContextManager):
             self._released = True
 
 
+class RuntimeWriteLock(AbstractContextManager):
+    def __init__(self, lock=None, acquired=False, reason=None, existing=None):
+        self.lock = lock
+        self.acquired = bool(acquired)
+        self.reason = reason
+        self.existing = existing or {}
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.release()
+        return False
+
+    def release(self):
+        if self.lock is not None:
+            self.lock.release()
+
+
+def current_process_owns_lock(path=DEFAULT_EXECUTION_LOCK):
+    metadata = read_lock(path)
+    try:
+        return int(metadata.get("pid", -1)) == os.getpid()
+    except (TypeError, ValueError):
+        return False
+
+
 def acquire_execution_lock(
     path=DEFAULT_EXECUTION_LOCK,
     context=None,
@@ -171,3 +200,38 @@ def acquire_execution_lock(
                 reason="another execution is already running",
                 existing=existing,
             )
+
+
+def acquire_runtime_write_lock(
+    path=DEFAULT_EXECUTION_LOCK,
+    context=None,
+    stale_seconds=DEFAULT_STALE_SECONDS,
+    wait=False,
+    timeout_seconds=0,
+    poll_seconds=0.1,
+):
+    path = Path(path)
+    started = time.monotonic()
+
+    while True:
+        if current_process_owns_lock(path):
+            return RuntimeWriteLock(acquired=True)
+
+        lock = acquire_execution_lock(
+            path=path,
+            context=context or "runtime_write",
+            stale_seconds=stale_seconds,
+        )
+        if lock.acquired:
+            return RuntimeWriteLock(lock=lock, acquired=True)
+
+        if not wait or (
+            timeout_seconds is not None
+            and timeout_seconds > 0
+            and time.monotonic() - started >= timeout_seconds
+        ):
+            raise RuntimeWriteLockError(
+                "runtime write lock is already held by another execution"
+            )
+
+        time.sleep(max(0.01, float(poll_seconds)))

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from execution.atomic_io import atomic_write_csv_frames
+
 
 LEDGER_FILE = "trade_ledger_v1.csv"
 
@@ -283,5 +285,5 @@ def prepare_trade_ledger_append(events, path=LEDGER_FILE):
 
 def append_trade_events(events, path=LEDGER_FILE):
     updated = prepare_trade_ledger_append(events, path=path)
-    updated.to_csv(path, index=False)
+    atomic_write_csv_frames({Path(path): updated})
     return updated

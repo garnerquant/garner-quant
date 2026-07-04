@@ -17,6 +17,7 @@ from execution.accounting import (
     reconcile_broker_account_file,
     numeric,
 )
+from execution.atomic_io import atomic_write_json
 
 
 LEDGER_FILE = ROOT / "trade_ledger_v1.csv"
@@ -84,7 +85,6 @@ def changed_fields(before, target):
 
 
 def write_report(*, applied, before, target, changes):
-    REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "applied": bool(applied),
@@ -98,7 +98,7 @@ def write_report(*, applied, before, target, changes):
         "orphan_sell_count": target["orphan_sell_count"],
         "changed_fields": changes,
     }
-    REPORT_FILE.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    atomic_write_json(report, REPORT_FILE)
     return report
 
 

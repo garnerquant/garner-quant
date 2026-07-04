@@ -1,6 +1,8 @@
 from pathlib import Path
 import pandas as pd
 
+from execution.atomic_io import atomic_write_csv_frames
+
 ACCOUNT_FILE = "broker_account.csv"
 
 
@@ -58,13 +60,7 @@ def load_account():
 
     }])
 
-    account.to_csv(
-
-        ACCOUNT_FILE,
-
-        index=False
-
-    )
+    atomic_write_csv_frames({Path(ACCOUNT_FILE): account})
 
     return account
 
@@ -75,13 +71,7 @@ def save_account(
 
 ):
 
-    account.to_csv(
-
-        ACCOUNT_FILE,
-
-        index=False
-
-    )
+    atomic_write_csv_frames({Path(ACCOUNT_FILE): account})
 
 
 def update_account(
