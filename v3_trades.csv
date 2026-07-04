@@ -1,2 +1,1 @@
-trade_id,date,time,timestamp,ticker,action,price,exit_price,reason,position_value,value,shares,pnl,pnl_percent,holding_period,justification
-IUSA.L_2026-06-30 00:00:00_SELL,2026-07-04,11:43:03,2026-07-04 11:43:03,IUSA.L,SELL,5595.25,5595.25,CONFIRMED SIGNAL EXIT,1993.054009528474,1993.054009528474,0.3562046395654303,-6.945990471525891,-0.0034729952357629434,4 days,"['Exit condition triggered', 'Trade recorded in journal', 'Portfolio updated']"
+
