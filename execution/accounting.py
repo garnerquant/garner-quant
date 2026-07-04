@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from config import STARTING_CASH
+from execution.atomic_io import atomic_write_csv_frames
 from execution.trade_audit import clean_ledger_events
 from execution.trade_ledger import load_trade_ledger
 
@@ -324,6 +325,30 @@ def broker_differences(before, target, tolerance=0.01):
     return differences
 
 
+def validate_broker_frame(frame):
+    if frame is None or frame.empty:
+        raise ValueError("Broker reconciliation built an empty broker frame.")
+    if len(frame) != 1:
+        raise ValueError("Broker reconciliation broker frame must have exactly one row.")
+
+    missing = [column for column in BROKER_COLUMNS if column not in frame.columns]
+    if missing:
+        raise ValueError(
+            "Broker reconciliation frame missing columns: " + ", ".join(missing)
+        )
+
+    row = broker_row(frame)
+    if abs(row["cash"] - row["buying_power"]) > 0.01:
+        raise ValueError("Broker buying_power must match cash.")
+    if abs(row["portfolio_value"] - (row["cash"] + row["positions_value"])) > 0.01:
+        raise ValueError("Broker portfolio_value must equal cash plus positions_value.")
+
+
+def commit_broker_account_frame(frame, broker_path, failure_hook=None):
+    validate_broker_frame(frame)
+    atomic_write_csv_frames({Path(broker_path): frame}, failure_hook=failure_hook)
+
+
 def reconcile_broker_account_file(base_dir=".", tolerance=0.01):
     base_path = Path(base_dir)
     broker_path = base_path / "broker_account.csv"
@@ -337,7 +362,7 @@ def reconcile_broker_account_file(base_dir=".", tolerance=0.01):
     differences = broker_differences(before, target, tolerance=tolerance)
 
     if differences:
-        broker_frame(target).to_csv(broker_path, index=False)
+        commit_broker_account_frame(broker_frame(target), broker_path)
 
     return {
         "changed": bool(differences),
