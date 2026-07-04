@@ -19,6 +19,7 @@ from execution.portfolio_manager import update_portfolio, portfolio_summary
 from reporting.trade_analytics import print_trade_analytics
 from execution.broker_account import broker_summary
 from execution.supabase_sync import sync_broker_account, sync_holdings, sync_30_day_tracker, sync_holdings_history, sync_trade_journal, sync_signals
+from execution.atomic_io import atomic_write_csv_frames
 from execution.trade_audit import ledger_open_positions
 from execution.trade_ledger import load_trade_ledger
 from execution.trade_reports import write_authoritative_trade_reports
@@ -132,14 +133,25 @@ def _run_main_unlocked(show_charts=True, send_telegram=True, sync_remote=True):
     )
 
     print("Saving CSV files...")
-    prices.to_csv("prices_v2.csv")
-    signals.to_csv("signals_v2.csv")
-    weights.to_csv("weights_v2.csv")
-    risk_levels.to_csv("risk_levels_v2.csv")
-    portfolio.to_csv("portfolio_v2.csv")
-    paper_portfolio.to_csv("paper_portfolio_v3.csv", index=False)
-    trade_journal.to_csv("trade_journal_v3.csv", index=False)
-    v3_trades.to_csv("v3_trades.csv", index=False)
+    atomic_write_csv_frames(
+        {
+            "prices_v2.csv": prices,
+            "signals_v2.csv": signals,
+            "weights_v2.csv": weights,
+            "risk_levels_v2.csv": risk_levels,
+            "portfolio_v2.csv": portfolio,
+            "paper_portfolio_v3.csv": paper_portfolio,
+            "trade_journal_v3.csv": trade_journal,
+            "v3_trades.csv": v3_trades,
+        },
+        to_csv_kwargs_by_path={
+            "prices_v2.csv": {"index": True},
+            "signals_v2.csv": {"index": True},
+            "weights_v2.csv": {"index": True},
+            "risk_levels_v2.csv": {"index": True},
+            "portfolio_v2.csv": {"index": True},
+        },
+    )
     ledger = load_trade_ledger()
     audit_trail, trade_stats = write_authoritative_trade_reports(
         legacy_journal=trade_journal,
@@ -147,7 +159,7 @@ def _run_main_unlocked(show_charts=True, send_telegram=True, sync_remote=True):
         analytics_path="trade_analytics_v3.csv",
     )
     print("Saved trade_audit_trail.csv")
-    holdings_report.to_csv("holdings_report.csv", index=False)
+    atomic_write_csv_frames({"holdings_report.csv": holdings_report})
     record_event("Saved Reports", "Saved portfolio, signal, audit, and holding files.")
 
     fundamental_scores = pd.read_csv("fundamental_scores.csv")
@@ -176,10 +188,7 @@ def _run_main_unlocked(show_charts=True, send_telegram=True, sync_remote=True):
     print_signal_report(signal_rows)
     print_holdings_report(holdings_report)
 
-    pd.DataFrame(signal_rows).to_csv(
-        "signal_report_v2.csv",
-        index=False
-    )
+    atomic_write_csv_frames({"signal_report_v2.csv": pd.DataFrame(signal_rows)})
 
     broker = broker_summary()
     tracker = update_30_day_tracker(broker, benchmark_stats)

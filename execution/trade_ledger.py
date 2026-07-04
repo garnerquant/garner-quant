@@ -261,7 +261,7 @@ def _duplicate_reasons(existing, events):
     return reasons
 
 
-def append_trade_events(events, path=LEDGER_FILE):
+def prepare_trade_ledger_append(events, path=LEDGER_FILE):
     normalised_events = [normalise_trade_event(event) for event in events]
     if not normalised_events:
         return load_trade_ledger(path)
@@ -278,5 +278,10 @@ def append_trade_events(events, path=LEDGER_FILE):
         [existing, pd.DataFrame(normalised_events, columns=LEDGER_COLUMNS)],
         ignore_index=True,
     )
+    return updated[LEDGER_COLUMNS]
+
+
+def append_trade_events(events, path=LEDGER_FILE):
+    updated = prepare_trade_ledger_append(events, path=path)
     updated.to_csv(path, index=False)
     return updated

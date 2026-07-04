@@ -8,7 +8,12 @@ from config import (
 )
 from execution.broker_account import load_account, update_account
 from execution.accounting import broker_values_from_ledger_and_holdings
-from execution.trade_ledger import append_trade_events, build_trade_event
+from execution.atomic_io import atomic_write_csv_frames
+from execution.trade_ledger import (
+    LEDGER_FILE,
+    build_trade_event,
+    prepare_trade_ledger_append,
+)
 from datetime import datetime
 import json
 
@@ -28,6 +33,46 @@ PORTFOLIO_COLUMNS = [
     "take_profit",
     "signal_exit_count",
     "last_signal_exit_check",
+]
+
+TRADE_JOURNAL_COLUMNS = [
+    "date",
+    "time",
+    "action",
+    "ticker",
+    "price",
+    "shares",
+    "value",
+    "pnl",
+    "pnl_percent",
+    "reason",
+]
+
+TRANSACTION_LOG_COLUMNS = [
+    "date",
+    "action",
+    "ticker",
+    "price",
+    "shares",
+    "value",
+    "reason",
+]
+
+TRADE_SNAPSHOT_COLUMNS = [
+    "trade_id",
+    "event",
+    "ticker",
+    "timestamp",
+    "price",
+    "shares",
+    "position_value",
+    "cash",
+    "portfolio_value",
+    "portfolio_weight",
+    "signal",
+    "reason",
+    "stop_loss",
+    "take_profit",
 ]
 
 
@@ -57,29 +102,16 @@ def save_portfolio(portfolio):
 
 
 def load_trade_journal():
-    columns = [
-        "date",
-        "time",
-        "action",
-        "ticker",
-        "price",
-        "shares",
-        "value",
-        "pnl",
-        "pnl_percent",
-        "reason",
-    ]
-
     if Path(TRADE_JOURNAL_FILE).exists():
         journal = pd.read_csv(TRADE_JOURNAL_FILE)
 
-        for col in columns:
+        for col in TRADE_JOURNAL_COLUMNS:
             if col not in journal.columns:
                 journal[col] = ""
 
-        return journal[columns]
+        return journal[TRADE_JOURNAL_COLUMNS]
 
-    return pd.DataFrame(columns=columns)
+    return pd.DataFrame(columns=TRADE_JOURNAL_COLUMNS)
 
 
 def save_trade_journal(journal):
@@ -87,26 +119,16 @@ def save_trade_journal(journal):
 
 
 def load_transaction_log():
-    columns = [
-        "date",
-        "action",
-        "ticker",
-        "price",
-        "shares",
-        "value",
-        "reason",
-    ]
-
     if Path(TRANSACTION_LOG_FILE).exists():
         log = pd.read_csv(TRANSACTION_LOG_FILE)
 
-        for col in columns:
+        for col in TRANSACTION_LOG_COLUMNS:
             if col not in log.columns:
                 log[col] = ""
 
-        return log[columns]
+        return log[TRANSACTION_LOG_COLUMNS]
 
-    return pd.DataFrame(columns=columns)
+    return pd.DataFrame(columns=TRANSACTION_LOG_COLUMNS)
 
 
 def save_transaction_log(log):
@@ -114,37 +136,38 @@ def save_transaction_log(log):
 
 
 def load_trade_snapshots():
-    columns = [
-        "trade_id",
-        "event",
-        "ticker",
-        "timestamp",
-        "price",
-        "shares",
-        "position_value",
-        "cash",
-        "portfolio_value",
-        "portfolio_weight",
-        "signal",
-        "reason",
-        "stop_loss",
-        "take_profit",
-    ]
-
     if Path(TRADE_SNAPSHOTS_FILE).exists():
         snapshots = pd.read_csv(TRADE_SNAPSHOTS_FILE)
 
-        for col in columns:
+        for col in TRADE_SNAPSHOT_COLUMNS:
             if col not in snapshots.columns:
                 snapshots[col] = ""
 
-        return snapshots[columns]
+        return snapshots[TRADE_SNAPSHOT_COLUMNS]
 
-    return pd.DataFrame(columns=columns)
+    return pd.DataFrame(columns=TRADE_SNAPSHOT_COLUMNS)
 
 
 def save_trade_snapshots(snapshots):
     snapshots.to_csv(TRADE_SNAPSHOTS_FILE, index=False)
+
+
+def commit_trade_state(
+    *,
+    ledger_events,
+    portfolio,
+    journal,
+    transaction_log,
+    snapshots,
+):
+    frames_by_path = {
+        Path(LEDGER_FILE): prepare_trade_ledger_append(ledger_events),
+        Path(PORTFOLIO_FILE): portfolio[PORTFOLIO_COLUMNS],
+        Path(TRADE_JOURNAL_FILE): journal[TRADE_JOURNAL_COLUMNS],
+        Path(TRANSACTION_LOG_FILE): transaction_log[TRANSACTION_LOG_COLUMNS],
+        Path(TRADE_SNAPSHOTS_FILE): snapshots[TRADE_SNAPSHOT_COLUMNS],
+    }
+    return atomic_write_csv_frames(frames_by_path)
 
 
 def holding_period_label(entry_date, exit_date):
@@ -797,11 +820,13 @@ def update_portfolio(signals, prices, weights, risk_levels):
                     }
                 )
 
-    append_trade_events(ledger_events)
-    save_portfolio(portfolio)
-    save_trade_journal(journal)
-    save_transaction_log(transaction_log)
-    save_trade_snapshots(snapshots)
+    commit_trade_state(
+        ledger_events=ledger_events,
+        portfolio=portfolio,
+        journal=journal,
+        transaction_log=transaction_log,
+        snapshots=snapshots,
+    )
 
     trades_df = pd.DataFrame(trades)
     notification_summary = {

@@ -8,6 +8,7 @@ from execution.trade_audit import (
     build_authoritative_trade_audit,
     ledger_open_positions,
 )
+from execution.atomic_io import atomic_write_csv_frames
 from execution.trade_ledger import load_trade_ledger
 from reporting.trade_analytics import analyse_authoritative_trades
 
@@ -129,6 +130,10 @@ def write_authoritative_trade_reports(
     )
     Path(audit_path).parent.mkdir(parents=True, exist_ok=True)
     Path(analytics_path).parent.mkdir(parents=True, exist_ok=True)
-    audit.to_csv(audit_path, index=False)
-    pd.DataFrame([analytics]).to_csv(analytics_path, index=False)
+    atomic_write_csv_frames(
+        {
+            audit_path: audit,
+            analytics_path: pd.DataFrame([analytics]),
+        }
+    )
     return audit, analytics
