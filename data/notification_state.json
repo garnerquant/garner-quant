@@ -3,7 +3,7 @@
     "TEST|TEST_NOTIFICATION|1782854685.829937": "2026-06-30T21:24:45",
     "TEST|TEST_NOTIFICATION|100.000000": "2026-06-30T21:31:13"
   },
-  "last_notification_sent": "2026-07-03T13:23:44",
+  "last_notification_sent": "2026-07-04T11:43:03",
   "sent_log": [
     {
       "timestamp": "2026-06-30T21:24:45",
@@ -116,6 +116,14 @@
       "ticker": "ETH-GBP",
       "trade_key": "trade_id:ETH-GBP_2026-07-03_BUY",
       "delivery": "channel"
+    },
+    {
+      "timestamp": "2026-07-04T11:43:03",
+      "type": "trade_event",
+      "action": "SELL",
+      "ticker": "IUSA.L",
+      "trade_key": "trade_id:IUSA.L_2026-06-30 00:00:00_SELL",
+      "delivery": "channel"
     }
   ],
   "last_summary": {
@@ -139,17 +147,18 @@
     "trade_id:VWRL.L_2026-06-30 00:00:00_SELL": "2026-07-03T00:48:33",
     "trade_id:TSLA_2026-07-03_BUY": "2026-07-03T00:48:34",
     "trade_id:SGLN.L_2026-07-03_BUY": "2026-07-03T13:23:44",
-    "trade_id:ETH-GBP_2026-07-03_BUY": "2026-07-03T13:23:44"
+    "trade_id:ETH-GBP_2026-07-03_BUY": "2026-07-03T13:23:44",
+    "trade_id:IUSA.L_2026-06-30 00:00:00_SELL": "2026-07-04T11:43:03"
   },
   "last_monitor_alert_sent": "2026-06-30T21:31:13",
-  "last_trade_notification_sent": "2026-07-03T13:23:44",
+  "last_trade_notification_sent": "2026-07-04T11:43:03",
   "last_notification_error": null,
   "last_trade_summary": {
-    "sent": 2,
+    "sent": 1,
     "skipped": 0,
     "errors": [],
-    "last_notification_sent": "2026-07-03T13:23:44",
-    "notifications_sent_today": 4,
+    "last_notification_sent": "2026-07-04T11:43:03",
+    "notifications_sent_today": 1,
     "skipped_due_to_cooldown": 0,
     "skipped_due_to_deduplication": 0
   }

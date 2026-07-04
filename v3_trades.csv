@@ -1,3 +1,2 @@
-trade_id,date,time,timestamp,ticker,action,price,entry_price,reason,position_value,value,shares,stop_loss,take_profit,justification
-SGLN.L_2026-07-03_BUY,2026-07-03,13:23:43,2026-07-03 13:23:43,SGLN.L,BUY,6061.30810546875,6061.30810546875,SIGNAL ENTRY,1500.0,1500.0,0.24747133356356546,5840.810477120535,6392.054547991072,"['Signal passed', 'Weight assigned', 'Risk level available', 'Position added to paper portfolio']"
-ETH-GBP_2026-07-03_BUY,2026-07-03,13:23:43,2026-07-03 13:23:43,ETH-GBP,BUY,1302.5400390625,1302.5400390625,SIGNAL ENTRY,500.0,500.0,0.3838653592252517,1190.6432582310267,1470.3852103097097,"['Signal passed', 'Weight assigned', 'Risk level available', 'Position added to paper portfolio']"
+trade_id,date,time,timestamp,ticker,action,price,exit_price,reason,position_value,value,shares,pnl,pnl_percent,holding_period,justification
+IUSA.L_2026-06-30 00:00:00_SELL,2026-07-04,11:43:03,2026-07-04 11:43:03,IUSA.L,SELL,5595.25,5595.25,CONFIRMED SIGNAL EXIT,1993.054009528474,1993.054009528474,0.3562046395654303,-6.945990471525891,-0.0034729952357629434,4 days,"['Exit condition triggered', 'Trade recorded in journal', 'Portfolio updated']"
