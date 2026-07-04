@@ -5,6 +5,7 @@ import os
 import pandas as pd
 
 from execution.accounting import broker_frame, broker_values_from_ledger_and_holdings
+from execution.atomic_io import atomic_write_csv_frames
 
 
 PORTFOLIO_FILE = "paper_portfolio_v3.csv"
@@ -75,14 +76,11 @@ def _close_enough(left, right, tolerance=1e-9):
     return abs(_numeric(left) - _numeric(right)) <= tolerance
 
 
-def _write_if_changed(path, frame):
+def _frame_changed(path, frame):
     path = Path(path)
     existing = _read_csv(path)
     if not existing.empty or path.exists():
-        if _frames_equal(existing, frame):
-            return False
-
-    frame.to_csv(path, index=False)
+        return not _frames_equal(existing, frame)
     return True
 
 
@@ -256,11 +254,11 @@ def _build_broker(cash, positions_value, realised_pnl, unrealised_pnl):
     )
 
 
-def _refresh_portfolio_report(base_dir, portfolio_value):
+def _build_portfolio_report_refresh(base_dir, portfolio_value):
     path = _path(base_dir, PORTFOLIO_REPORT_FILE)
     report = _read_csv(path)
     if report.empty or "equity" not in report.columns:
-        return False
+        return None, False
 
     report = report.copy()
     previous_equity = (
@@ -293,10 +291,10 @@ def _refresh_portfolio_report(base_dir, portfolio_value):
             else 0.0
         )
 
-    return _write_if_changed(path, report)
+    return report, _frame_changed(path, report)
 
 
-def _refresh_tracker(base_dir, broker, timestamp):
+def _build_tracker_refresh(base_dir, broker, timestamp):
     path = _path(base_dir, TRACKER_FILE)
     tracker = _read_csv(path)
     latest = tracker.iloc[-1].to_dict() if not tracker.empty else {}
@@ -312,7 +310,7 @@ def _refresh_tracker(base_dir, broker, timestamp):
         for column in value_columns
     )
     if not changed and path.exists():
-        return False
+        return tracker, False
 
     row = {
         "date": timestamp,
@@ -324,8 +322,94 @@ def _refresh_tracker(base_dir, broker, timestamp):
         "alpha": _numeric(latest.get("alpha")),
     }
     tracker = pd.concat([tracker, pd.DataFrame([row])], ignore_index=True)
-    tracker.to_csv(path, index=False)
-    return True
+    return tracker, True
+
+
+def _validate_refresh_frames(frames):
+    portfolio = frames.get(PORTFOLIO_FILE)
+    holdings = frames.get(HOLDINGS_FILE)
+    broker = frames.get(BROKER_FILE)
+
+    if portfolio is None or holdings is None or broker is None:
+        raise ValueError("Mark-to-market refresh missing core output frames.")
+
+    if broker.empty:
+        raise ValueError("Mark-to-market refresh built an empty broker frame.")
+
+    portfolio_tickers = {
+        str(ticker).strip().upper()
+        for ticker in portfolio.get("ticker", pd.Series(dtype=str)).dropna()
+        if str(ticker).strip()
+    }
+    holdings_tickers = {
+        str(ticker).strip().upper()
+        for ticker in holdings.get("ticker", pd.Series(dtype=str)).dropna()
+        if str(ticker).strip()
+    }
+    if portfolio_tickers != holdings_tickers:
+        raise ValueError(
+            "Mark-to-market refresh portfolio/holdings tickers do not match."
+        )
+
+    required_broker_columns = {
+        "cash",
+        "buying_power",
+        "positions_value",
+        "portfolio_value",
+        "realised_pnl",
+        "unrealised_pnl",
+    }
+    if not required_broker_columns.issubset(broker.columns):
+        missing = sorted(required_broker_columns - set(broker.columns))
+        raise ValueError(
+            "Mark-to-market broker frame missing columns: " + ", ".join(missing)
+        )
+
+    broker_row = broker.iloc[0]
+    holdings_value = float(
+        pd.to_numeric(
+            holdings.get("market_value", pd.Series(dtype=float)),
+            errors="coerce",
+        )
+        .fillna(0.0)
+        .sum()
+    )
+    broker_positions_value = _numeric(broker_row.get("positions_value"))
+    broker_cash = _numeric(broker_row.get("cash"))
+    broker_portfolio_value = _numeric(broker_row.get("portfolio_value"))
+
+    if abs(broker_positions_value - holdings_value) > 0.01:
+        raise ValueError(
+            "Mark-to-market broker positions value does not match holdings."
+        )
+    if abs(broker_portfolio_value - (broker_cash + holdings_value)) > 0.01:
+        raise ValueError(
+            "Mark-to-market broker portfolio value does not equal cash plus holdings."
+        )
+
+
+def _commit_refresh_frames(
+    frames,
+    base_dir=".",
+    failure_hook=None,
+    output_paths=None,
+):
+    _validate_refresh_frames(frames)
+    output_paths = output_paths or {}
+    changed_frames = {}
+    changed_files = []
+    for file_name, frame in frames.items():
+        if frame is None:
+            continue
+        output_path = Path(output_paths.get(file_name, _path(base_dir, file_name)))
+        if _frame_changed(output_path, frame):
+            changed_frames[output_path] = frame
+            changed_files.append(file_name)
+    if not changed_frames:
+        return []
+
+    atomic_write_csv_frames(changed_frames, failure_hook=failure_hook)
+    return changed_files
 
 
 def _sync_changed_files(changed_files):
@@ -426,21 +510,17 @@ def mark_to_market_refresh(monitor_result=None, sync_remote=True, base_dir="."):
     )
     broker = broker_frame(broker_values)
 
-    changed_files = []
-    write_plan = [
-        (PORTFOLIO_FILE, valued_portfolio),
-        (HOLDINGS_FILE, holdings),
-        (BROKER_FILE, broker),
-    ]
-    for file_name, frame in write_plan:
-        if _write_if_changed(_path(base_dir, file_name), frame):
-            changed_files.append(file_name)
-
     portfolio_value = float(broker.loc[0, "portfolio_value"])
-    if _refresh_portfolio_report(base_dir, portfolio_value):
-        changed_files.append(PORTFOLIO_REPORT_FILE)
-    if _refresh_tracker(base_dir, broker.loc[0], timestamp):
-        changed_files.append(TRACKER_FILE)
+    portfolio_report, _ = _build_portfolio_report_refresh(base_dir, portfolio_value)
+    tracker, _ = _build_tracker_refresh(base_dir, broker.loc[0], timestamp)
+    refresh_frames = {
+        PORTFOLIO_FILE: valued_portfolio,
+        HOLDINGS_FILE: holdings,
+        BROKER_FILE: broker,
+        PORTFOLIO_REPORT_FILE: portfolio_report,
+        TRACKER_FILE: tracker,
+    }
+    changed_files = _commit_refresh_frames(refresh_frames, base_dir=base_dir)
 
     sync_errors = _sync_changed_files(changed_files) if sync_remote else []
 
