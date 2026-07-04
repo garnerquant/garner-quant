@@ -11,7 +11,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from execution.atomic_io import assert_no_atomic_artifacts
+from execution.atomic_io import recover_atomic_artifacts
 
 
 MANIFEST_FILE = ROOT_DIR / "runtime" / "generated_runtime_files.txt"
@@ -130,7 +130,7 @@ def validate_runtime_generated_files(root_dir=ROOT_DIR, manifest_path=MANIFEST_F
 
 
 def validate_runtime_startup(root_dir=ROOT_DIR, manifest_path=MANIFEST_FILE):
-    assert_no_atomic_artifacts(root_dir)
+    recover_atomic_artifacts(root_dir)
     result = validate_runtime_generated_files(root_dir, manifest_path)
     if not result.ok:
         details = "\n".join(f"- {error}" for error in result.errors)

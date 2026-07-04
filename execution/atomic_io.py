@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import csv
 import json
 from pathlib import Path
+import re
 from uuid import uuid4
 
 
@@ -16,11 +18,28 @@ class AtomicWriteError(RuntimeError):
     pass
 
 
+class AtomicRecoveryError(AtomicWriteError):
+    pass
+
+
 @dataclass(frozen=True)
 class AtomicCsvTarget:
     final_path: Path
     temp_path: Path
     backup_path: Path
+
+
+@dataclass(frozen=True)
+class AtomicArtifact:
+    path: Path
+    final_path: Path
+    transaction_id: str
+    kind: str
+
+
+ATOMIC_ARTIFACT_RE = re.compile(
+    r"^\.(?P<name>.+)\.atomic-(?P<transaction_id>[0-9a-f]+)\.(?P<kind>tmp|bak)$"
+)
 
 
 def atomic_artifact_paths(root_dir="."):
@@ -34,12 +53,128 @@ def atomic_artifact_paths(root_dir="."):
             yield from directory.glob(pattern)
 
 
+def parse_atomic_artifact(path):
+    path = Path(path)
+    match = ATOMIC_ARTIFACT_RE.match(path.name)
+    if not match:
+        return None
+    return AtomicArtifact(
+        path=path,
+        final_path=path.with_name(match.group("name")),
+        transaction_id=match.group("transaction_id"),
+        kind=match.group("kind"),
+    )
+
+
+def atomic_artifacts(root_dir="."):
+    for path in atomic_artifact_paths(root_dir):
+        artifact = parse_atomic_artifact(path)
+        if artifact is not None:
+            yield artifact
+
+
 def assert_no_atomic_artifacts(root_dir="."):
     artifacts = sorted(str(path) for path in atomic_artifact_paths(root_dir))
     if artifacts:
         raise AtomicWriteError(
             "Unfinished atomic write artifacts found: " + ", ".join(artifacts)
         )
+
+
+def validate_atomic_final(path, final_path=None):
+    path = Path(path)
+    validation_path = Path(final_path) if final_path is not None else path
+    if not path.exists():
+        raise AtomicRecoveryError(f"Atomic recovery expected final file: {path}")
+
+    suffix = validation_path.suffix.lower()
+    if suffix == ".json":
+        json.loads(path.read_text(encoding="utf-8"))
+        return
+    if suffix == ".csv":
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.reader(handle)
+            header = next(reader, None)
+            if header is None:
+                return
+            expected_columns = len(header)
+            for row_number, row in enumerate(reader, start=2):
+                if not row or all(not cell.strip() for cell in row):
+                    continue
+                if len(row) != expected_columns:
+                    raise AtomicRecoveryError(
+                        f"{path} row {row_number} has {len(row)} columns; "
+                        f"expected {expected_columns}"
+                    )
+        return
+
+    raise AtomicRecoveryError(
+        f"Atomic recovery cannot validate unsupported file type: {validation_path}"
+    )
+
+
+def recover_atomic_artifacts(root_dir="."):
+    grouped = {}
+    for artifact in atomic_artifacts(root_dir):
+        key = (artifact.final_path.resolve(), artifact.transaction_id)
+        grouped.setdefault(key, []).append(artifact)
+
+    actions = []
+    errors = []
+
+    for (_final_resolved, transaction_id), artifacts_for_target in grouped.items():
+        final_path = artifacts_for_target[0].final_path
+        temp_paths = [a.path for a in artifacts_for_target if a.kind == "tmp"]
+        backup_paths = [a.path for a in artifacts_for_target if a.kind == "bak"]
+
+        if len(temp_paths) > 1 or len(backup_paths) > 1:
+            errors.append(
+                f"{final_path}: ambiguous duplicate atomic artifacts for "
+                f"transaction {transaction_id}"
+            )
+            continue
+
+        temp_path = temp_paths[0] if temp_paths else None
+        backup_path = backup_paths[0] if backup_paths else None
+        final_exists = final_path.exists()
+
+        try:
+            if backup_path is not None and not final_exists:
+                validate_atomic_final(backup_path, final_path=final_path)
+                if temp_path is not None and temp_path.exists():
+                    temp_path.unlink()
+                    actions.append(f"removed temp for {final_path}")
+                backup_path.replace(final_path)
+                actions.append(f"restored backup for {final_path}")
+                continue
+
+            if final_exists:
+                validate_atomic_final(final_path)
+                if temp_path is not None and temp_path.exists():
+                    temp_path.unlink()
+                    actions.append(f"removed temp for {final_path}")
+                if backup_path is not None and backup_path.exists():
+                    backup_path.unlink()
+                    actions.append(f"removed backup for {final_path}")
+                continue
+
+            if temp_path is not None and backup_path is None:
+                errors.append(
+                    f"{final_path}: temp artifact exists but final and backup are missing"
+                )
+                continue
+
+            errors.append(f"{final_path}: unsupported atomic artifact state")
+        except Exception as exc:
+            errors.append(f"{final_path}: recovery failed ({exc})")
+
+    if errors:
+        raise AtomicRecoveryError(
+            "Atomic recovery failed; operator intervention required: "
+            + "; ".join(errors)
+        )
+
+    return actions
 
 
 def _target_for(path, transaction_id):
