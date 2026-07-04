@@ -4,7 +4,7 @@ import os
 
 import pandas as pd
 
-from config import STARTING_CASH
+from execution.accounting import broker_frame, broker_values_from_ledger_and_holdings
 
 
 PORTFOLIO_FILE = "paper_portfolio_v3.csv"
@@ -127,13 +127,6 @@ def _load_monitor_snapshot(base_dir):
         return None
 
 
-def _realised_pnl(base_dir):
-    journal = _read_csv(_path(base_dir, TRADE_JOURNAL_FILE))
-    if journal.empty or "pnl" not in journal.columns:
-        return 0.0
-    return float(pd.to_numeric(journal["pnl"], errors="coerce").fillna(0).sum())
-
-
 def _existing_holding_rows(base_dir):
     holdings = _read_csv(_path(base_dir, HOLDINGS_FILE))
     if holdings.empty or "ticker" not in holdings.columns:
@@ -254,6 +247,7 @@ def _build_broker(cash, positions_value, realised_pnl, unrealised_pnl):
             {
                 "cash": float(cash),
                 "buying_power": float(cash),
+                "positions_value": float(positions_value),
                 "portfolio_value": float(portfolio_value),
                 "realised_pnl": float(realised_pnl),
                 "unrealised_pnl": float(unrealised_pnl),
@@ -425,13 +419,12 @@ def mark_to_market_refresh(monitor_result=None, sync_remote=True, base_dir="."):
         timestamp,
         existing_holdings=_existing_holding_rows(base_dir),
     )
-    realised_pnl = _realised_pnl(base_dir)
-    original_position_value = pd.to_numeric(
-        portfolio.get("position_value", pd.Series(dtype=float)),
-        errors="coerce",
-    ).fillna(0).sum()
-    cash = STARTING_CASH - float(original_position_value) + realised_pnl
-    broker = _build_broker(cash, positions_value, realised_pnl, unrealised_pnl)
+    broker_values = broker_values_from_ledger_and_holdings(
+        holdings=holdings,
+        portfolio=portfolio,
+        base_dir=base_dir,
+    )
+    broker = broker_frame(broker_values)
 
     changed_files = []
     write_plan = [

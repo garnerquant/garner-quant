@@ -1,11 +1,14 @@
 import pandas as pd
 from pathlib import Path
 from config import (
+    ASSETS,
     MIN_HOLD_DAYS_FOR_SIGNAL_EXIT,
     SELL_CONFIRMATION_RUNS,
     STARTING_CASH,
 )
 from execution.broker_account import load_account, update_account
+from execution.accounting import broker_values_from_ledger_and_holdings
+from execution.trade_ledger import append_trade_events, build_trade_event
 from datetime import datetime
 import json
 
@@ -366,11 +369,17 @@ def save_decision_trace(generated_at, run_id, mode, signals_count, trades_record
     return payload
 
 
+def trade_currency(ticker):
+    asset_config = ASSETS.get(str(ticker), {})
+    return str(asset_config.get("listing_currency") or "UNKNOWN")
+
+
 def update_portfolio(signals, prices, weights, risk_levels):
     portfolio = load_portfolio()
     journal = load_trade_journal()
     transaction_log = load_transaction_log()
     snapshots = load_trade_snapshots()
+    ledger_events = []
 
     latest_date = signals.index[-1]
     trade_date = date_string(latest_date)
@@ -500,6 +509,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
             timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
 
             value = current_price * position["shares"]
+            trade_id = f"{ticker}_{position['entry_date']}_SELL"
 
             journal.loc[len(journal)] = [
                 trade_date,
@@ -547,10 +557,28 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 take_profit,
             ]
 
-            trade_id = f"{ticker}_{position['entry_date']}_SELL"
+            ledger_event = build_trade_event(
+                timestamp=timestamp,
+                trade_date=trade_date,
+                trade_time=trade_time,
+                ticker=ticker,
+                action="SELL",
+                shares=position["shares"],
+                price=current_price,
+                value=value,
+                currency=trade_currency(ticker),
+                reason=sell_reason,
+                legacy_trade_id=trade_id,
+                run_id=run_id,
+                position_id=f"{ticker}_{position['entry_date']}",
+                pnl=pnl,
+                pnl_percent=pnl_percent,
+            )
+            ledger_events.append(ledger_event)
 
             trades.append(
                 {
+                    "event_id": ledger_event["event_id"],
                     "trade_id": trade_id,
                     "date": trade_date,
                     "time": trade_time,
@@ -588,6 +616,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 decisions[ticker]["details"].update(
                     {
                         "trade_id": trade_id,
+                        "event_id": ledger_event["event_id"],
                         "price": json_safe(current_price),
                         "shares": json_safe(position["shares"]),
                         "position_value": json_safe(value),
@@ -663,6 +692,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
             now = datetime.now()
             trade_time = now.strftime("%H:%M:%S")
             timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+            trade_id = f"{ticker}_{trade_date}_BUY"
 
             transaction_log.loc[len(transaction_log)] = [
                 trade_date,
@@ -704,12 +734,27 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 take_profits[ticker],
             ]
 
-            trade_id = f"{ticker}_{trade_date}_BUY"
-
             cash -= position_value
+            ledger_event = build_trade_event(
+                timestamp=timestamp,
+                trade_date=trade_date,
+                trade_time=trade_time,
+                ticker=ticker,
+                action="BUY",
+                shares=shares,
+                price=price,
+                value=position_value,
+                currency=trade_currency(ticker),
+                reason="SIGNAL ENTRY",
+                legacy_trade_id=trade_id,
+                run_id=run_id,
+                position_id=f"{ticker}_{trade_date}",
+            )
+            ledger_events.append(ledger_event)
 
             trades.append(
                 {
+                    "event_id": ledger_event["event_id"],
                     "trade_id": trade_id,
                     "date": trade_date,
                     "time": trade_time,
@@ -744,6 +789,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 decisions[ticker]["details"].update(
                     {
                         "trade_id": trade_id,
+                        "event_id": ledger_event["event_id"],
                         "price": json_safe(price),
                         "shares": json_safe(shares),
                         "position_value": json_safe(position_value),
@@ -751,6 +797,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
                     }
                 )
 
+    append_trade_events(ledger_events)
     save_portfolio(portfolio)
     save_trade_journal(journal)
     save_transaction_log(transaction_log)
@@ -831,23 +878,32 @@ def portfolio_summary(portfolio, prices):
             }
         )
 
+    holdings_for_accounting = pd.DataFrame(
+        [
+            {
+                "ticker": row["ticker"],
+                "market_value": row["current_value"],
+            }
+            for row in rows
+        ]
+    )
     journal = load_trade_journal()
-
-    realised_pnl = 0
-
-    if len(journal) > 0:
-        realised_pnl = journal["pnl"].sum()
-
-    cash = STARTING_CASH - portfolio["position_value"].sum() + realised_pnl
-
-    total_value = cash + total_position_value
+    broker_values = broker_values_from_ledger_and_holdings(
+        holdings=holdings_for_accounting,
+        portfolio=portfolio,
+        journal=journal,
+    )
+    cash = broker_values["cash"]
+    realised_pnl = broker_values["realised_pnl"]
+    total_value = broker_values["portfolio_value"]
+    unrealised_pnl = broker_values["unrealised_pnl"]
 
     account = load_account()
 
     update_account(
         account,
         cash,
-        total_position_value,
+        broker_values["positions_value"],
         realised_pnl,
         unrealised_pnl,
     )
@@ -855,7 +911,7 @@ def portfolio_summary(portfolio, prices):
     return {
         "date": latest_date,
         "cash": cash,
-        "positions_value": total_position_value,
+        "positions_value": broker_values["positions_value"],
         "total_value": total_value,
         "unrealised_pnl": unrealised_pnl,
         "positions": rows,

@@ -923,6 +923,33 @@ def run_cycle(config, started_at, cycle_count):
             monitor_result=monitor_result,
             sync_remote=True,
         )
+        try:
+            from execution.accounting import reconcile_broker_account_file
+
+            broker_guard = reconcile_broker_account_file()
+            valuation_refresh["broker_account_guard"] = broker_guard
+            if broker_guard.get("changed"):
+                from execution.supabase_sync import sync_broker_account
+
+                sync_broker_account()
+                append_event(
+                    events,
+                    "Broker Accounting Reconciled",
+                    "Broker account corrected from authoritative ledger accounting.",
+                    details=broker_guard,
+                )
+        except Exception as guard_exc:
+            valuation_refresh["broker_account_guard"] = {
+                "status": "error",
+                "error": str(guard_exc),
+            }
+            append_event(
+                events,
+                "Broker Accounting Guard Warning",
+                "Broker accounting guard failed after valuation refresh.",
+                severity="warning",
+                details={"error": str(guard_exc)},
+            )
         append_event(
             events,
             "Portfolio Valuation Refreshed",

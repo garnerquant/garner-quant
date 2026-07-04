@@ -1,2 +1,2 @@
-total_trades,win_rate,profit_factor,average_winner,average_loser,best_trade,worst_trade,realised_pnl
-46,0.13043478260869565,0.1259607593462636,5.665819623926414,-6.920127840218493,13.813171682053792,-40.53352530240198,-235.89006802496283
+total_trades,win_rate,profit_factor,average_winner,average_loser,best_trade,worst_trade,realised_pnl,closed_trades,open_positions,source
+6,0.0,0.0,0,-19.32166666666667,-4.8,-35.24,-115.93,6,5,trade_ledger_v1.csv

@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from dashboard.data_loader import load_csv
-from execution.trade_audit import build_trade_audit_trail
 from ui.auth import require_dashboard_login
 from ui.responsive import apply_responsive_styles, responsive_table
 
@@ -21,7 +20,7 @@ require_dashboard_login()
 apply_responsive_styles()
 
 st.title("🔍 Trade Audit")
-st.caption("Completed BUY -> SELL pairs derived from the current trade journal")
+st.caption("Completed BUY -> SELL pairs derived from the authoritative trade audit")
 
 
 def load_supabase_trade_journal():
@@ -38,10 +37,15 @@ def load_supabase_trade_journal():
 
 
 def load_trade_audit():
-    journal = load_supabase_trade_journal()
+    local_audit = load_csv("trade_audit_trail.csv")
+    if not local_audit.empty:
+        return local_audit
 
+    journal = load_supabase_trade_journal()
     if not journal.empty:
-        return build_trade_audit_trail(journal)
+        from execution.trade_audit import build_authoritative_trade_audit
+
+        return build_authoritative_trade_audit(journal)
 
     return pd.DataFrame()
 

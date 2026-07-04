@@ -13,7 +13,7 @@ from supabase import create_client
 
 from dashboard.data_loader import load_csv
 from dashboard.metrics import unrealised_pnl_from_holdings
-from execution.trade_audit import build_trade_audit_trail
+from execution.trade_audit import build_authoritative_trade_audit
 from reporting.paper_performance import challenge_initial_capital
 from ui.auth import require_dashboard_login
 from ui.responsive import (
@@ -4092,8 +4092,12 @@ def load_supabase_table(table_name, fallback_csv=None, order_col=None):
 
 
 def load_trade_audit(journal):
+    local_audit = load_csv("trade_audit_trail.csv")
+    if not local_audit.empty:
+        return local_audit
+
     if journal is not None and not journal.empty:
-        return build_trade_audit_trail(journal)
+        return build_authoritative_trade_audit(journal)
 
     return pd.DataFrame()
 

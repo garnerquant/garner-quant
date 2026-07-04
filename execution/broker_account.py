@@ -18,6 +18,8 @@ def load_account():
 
             "buying_power",
 
+            "positions_value",
+
             "portfolio_value",
 
             "realised_pnl",
@@ -25,6 +27,10 @@ def load_account():
             "unrealised_pnl"
 
         ]:
+
+            if col not in account.columns:
+
+                account[col] = 0.0
 
             account[col] = (
 
@@ -41,6 +47,8 @@ def load_account():
         "cash": 10000.0,
 
         "buying_power": 10000.0,
+
+        "positions_value": 0.0,
 
         "portfolio_value": 10000.0,
 
@@ -104,6 +112,12 @@ def update_account(
 
     account.loc[0, "buying_power"] = float(cash)
 
+    account.loc[0, "positions_value"] = float(
+
+        positions_value
+
+    )
+
     account.loc[0, "portfolio_value"] = float(
 
         portfolio_value
@@ -160,6 +174,20 @@ def broker_summary():
                 0,
 
                 "buying_power"
+
+            ]
+
+        ),
+
+        "positions_value":
+
+        float(
+
+            account.loc[
+
+                0,
+
+                "positions_value"
 
             ]
 

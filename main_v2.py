@@ -16,10 +16,12 @@ from reporting.telegram_alerts import send_message
 from reporting.telegram_formatter import build_telegram_message
 
 from execution.portfolio_manager import update_portfolio, portfolio_summary
-from reporting.trade_analytics import analyse_trade_journal, print_trade_analytics
+from reporting.trade_analytics import print_trade_analytics
 from execution.broker_account import broker_summary
 from execution.supabase_sync import sync_broker_account, sync_holdings, sync_30_day_tracker, sync_holdings_history, sync_trade_journal, sync_signals
-from execution.trade_audit import build_trade_audit_trail
+from execution.trade_audit import ledger_open_positions
+from execution.trade_ledger import load_trade_ledger
+from execution.trade_reports import write_authoritative_trade_reports
 from reporting.holdings_report import create_holdings_report, print_holdings_report
 from reporting.paper_performance import (
     update_30_day_tracker,
@@ -138,8 +140,12 @@ def _run_main_unlocked(show_charts=True, send_telegram=True, sync_remote=True):
     paper_portfolio.to_csv("paper_portfolio_v3.csv", index=False)
     trade_journal.to_csv("trade_journal_v3.csv", index=False)
     v3_trades.to_csv("v3_trades.csv", index=False)
-    audit_trail = build_trade_audit_trail(trade_journal)
-    audit_trail.to_csv("trade_audit_trail.csv", index=False)
+    ledger = load_trade_ledger()
+    audit_trail, trade_stats = write_authoritative_trade_reports(
+        legacy_journal=trade_journal,
+        audit_path="trade_audit_trail.csv",
+        analytics_path="trade_analytics_v3.csv",
+    )
     print("Saved trade_audit_trail.csv")
     holdings_report.to_csv("holdings_report.csv", index=False)
     record_event("Saved Reports", "Saved portfolio, signal, audit, and holding files.")
@@ -163,13 +169,8 @@ def _run_main_unlocked(show_charts=True, send_telegram=True, sync_remote=True):
     }
 
     print_performance(report)
-    trade_stats = analyse_trade_journal(trade_journal)
+    open_positions = len(ledger_open_positions(ledger))
     print_trade_analytics(trade_stats)
-
-    pd.DataFrame([trade_stats]).to_csv(
-        "trade_analytics_v3.csv",
-        index=False
-    )
 
     signal_rows = create_signal_report(signals, weights)
     print_signal_report(signal_rows)
