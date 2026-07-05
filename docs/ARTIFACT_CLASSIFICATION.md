@@ -29,3 +29,6 @@ Some generated runtime files are already tracked from earlier history. This pass
 not untrack or delete them. They should be removed from the index only in an explicit
 data-migration commit after confirming how production bootstrap should seed initial
 state.
+
+See `docs/RUNTIME_BOOTSTRAP_AND_INDEX.md` for the tracked-generated inventory,
+bootstrap behavior, and recommended manual untrack command.
