@@ -122,6 +122,7 @@ def run_experiment(
     report_dir=DEFAULT_REPORT_DIR,
     timestamp=None,
     experiment_id=None,
+    decision_fn=None,
 ):
     timestamp = utc_timestamp(timestamp)
     context = ExperimentContext(base_path=Path(base_path), metadata=metadata or {})
@@ -148,6 +149,11 @@ def run_experiment(
         "candidate": strategy_payload(candidate),
     }
     experiment_id = experiment_id or reproducible_experiment_id(identity_payload)
+    decision = (
+        decision_fn(baseline_metrics, candidate_metrics, comparison)
+        if decision_fn is not None
+        else decide(comparison)
+    )
     result = {
         "experiment_id": experiment_id,
         "date": timestamp,
@@ -166,7 +172,7 @@ def run_experiment(
             "metadata": candidate_data.metadata or {},
         },
         "comparison": comparison,
-        "decision": decide(comparison),
+        "decision": decision,
     }
     reports = write_experiment_reports(result, report_dir=report_dir)
     result["reports"] = reports
