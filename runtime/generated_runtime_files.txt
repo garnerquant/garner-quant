@@ -24,6 +24,8 @@ data/live_monitor_runtime.json
 data/live_monitor_snapshot.json
 data/live_runtime_execution_log.json
 data/live_runtime_status.json
+data/global_scanner/
+data/legacy_sandbox/
 data/legacy_trade_migration_backfilled.csv
 data/legacy_trade_migration_quarantine.csv
 data/legacy_trade_migration_report.json
@@ -39,3 +41,7 @@ data/broker_account_reconciliation_report.json
 
 data/runtime/
 runtime_data/
+logs/
+
+research/experiments/
+research/report_exports/

@@ -1,5 +1,6 @@
 venv/
 __pycache__/
+**/__pycache__/
 
 *.png
 *.pyc
@@ -14,10 +15,16 @@ __pycache__/
 old_files/
 .streamlit/secrets.toml
 .env
+.tmp/
 
 # Runtime-generated files
 data/runtime_decision_trace.json
+data/accounting_reconciliation_report.json
+data/broker_account_reconciliation_report.json
+data/ledger_open_lot_reconciliation_report.json
+data/legacy_trade_migration_report.json
 broker_account.csv
+fundamental_scores.csv
 holdings_report.csv
 paper_30_day_tracker.csv
 paper_portfolio_v3.csv
@@ -37,6 +44,9 @@ data/live_monitor_runtime.json
 data/live_monitor_snapshot.json
 data/live_runtime_execution_log.json
 data/live_runtime_status.json
+data/global_scanner/
+data/legacy_sandbox/
+data/legacy_sandbox*/
 data/market_intelligence.json
 data/news_events.json
 data/notification_state.json
@@ -47,3 +57,4 @@ logs/
 
 # Research Lab generated experiment registry
 research/experiments/
+research/report_exports/
