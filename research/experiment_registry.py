@@ -4,11 +4,13 @@ from uuid import uuid4
 import json
 import math
 import subprocess
+import hashlib
 
 import pandas as pd
 
 
 DEFAULT_EXPERIMENTS_FILE = Path("research") / "experiments" / "experiments.jsonl"
+DEFAULT_FRAMEWORK_REGISTRY = Path("experiments") / "registry.json"
 
 
 def _utc_timestamp():
@@ -29,6 +31,10 @@ def _git_commit_hash():
 
     commit_hash = result.stdout.strip()
     return commit_hash or None
+
+
+def git_commit_hash():
+    return _git_commit_hash()
 
 
 def _json_safe(value):
@@ -55,6 +61,58 @@ def _json_safe(value):
         return value
     except TypeError:
         return str(value)
+
+
+def canonical_json(value):
+    return json.dumps(_json_safe(value), sort_keys=True, separators=(",", ":"))
+
+
+def reproducible_experiment_id(payload):
+    digest = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+    return f"exp_{digest[:16]}"
+
+
+def load_registry(path=DEFAULT_FRAMEWORK_REGISTRY):
+    path = Path(path)
+    if not path.exists():
+        return {"version": 1, "experiments": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"version": 1, "experiments": []}
+    if not isinstance(data, dict):
+        return {"version": 1, "experiments": []}
+    data.setdefault("version", 1)
+    experiments = data.get("experiments")
+    data["experiments"] = experiments if isinstance(experiments, list) else []
+    return data
+
+
+def save_registry(registry, path=DEFAULT_FRAMEWORK_REGISTRY):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": int(registry.get("version", 1)),
+        "experiments": _json_safe(registry.get("experiments", [])),
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return payload
+
+
+def append_registry_entry(entry, path=DEFAULT_FRAMEWORK_REGISTRY):
+    registry = load_registry(path)
+    experiment_id = str(entry.get("experiment_id", "")).strip()
+    if not experiment_id:
+        raise ValueError("Experiment registry entry requires experiment_id")
+    existing_ids = {
+        str(item.get("experiment_id"))
+        for item in registry["experiments"]
+        if isinstance(item, dict)
+    }
+    if experiment_id in existing_ids:
+        raise ValueError(f"Duplicate experiment id refused: {experiment_id}")
+    registry["experiments"].append(_json_safe(dict(entry)))
+    return save_registry(registry, path)
 
 
 def create_experiment(

@@ -1,0 +1,24 @@
+{
+  "experiments": [
+    {
+      "date": "2026-07-05T00:30:01+00:00",
+      "decision": "NEEDS MORE TESTING",
+      "description": "Baseline strategy compared against itself.",
+      "experiment_id": "exp_33c437959f5e0d42",
+      "git_commit": "34fe207f3f050aaf3e10efae23fe2967e9f7d417",
+      "parameters": {
+        "built_in": "baseline_self_check"
+      },
+      "report_location": {
+        "json": "research\\report_exports\\exp_33c437959f5e0d42.json",
+        "markdown": "research\\report_exports\\exp_33c437959f5e0d42.md"
+      },
+      "result": {
+        "decision": "NEEDS MORE TESTING",
+        "improved_metrics": [],
+        "regressed_metrics": []
+      }
+    }
+  ],
+  "version": 1
+}
