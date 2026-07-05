@@ -1,18 +1,30 @@
-import pandas as pd
-import matplotlib.pyplot as plt
+import argparse
+import sys
 
-from config import ASSETS
-from data import download_market_data, get_price_field
-from strategy import build_signals, build_weights
-from backtest import run_backtest
-from performance import calculate_performance, print_performance
-from dashboard import show_dashboard
-from signal_report import create_signal_report, print_signal_report
-from risk import build_risk_levels
-from telegram_alerts import send_message
+from execution.legacy_isolation import (
+    LegacyExecutionError,
+    legacy_refusal_message,
+    legacy_sandbox,
+    require_legacy_sandbox,
+)
 
 
-def main():
+if __name__ == "__main__" and "--legacy-sandbox" not in sys.argv[1:]:
+    raise SystemExit(legacy_refusal_message("main.py"))
+
+def run_legacy_pipeline():
+    import pandas as pd
+
+    from backtest import run_backtest
+    from config import ASSETS
+    from dashboard import show_dashboard
+    from data import download_market_data, get_price_field
+    from performance import calculate_performance, print_performance
+    from risk import build_risk_levels
+    from signal_report import create_signal_report, print_signal_report
+    from strategy import build_signals, build_weights
+    from telegram_alerts import send_message
+
     tickers = list(ASSETS.keys())
 
     print("Downloading market data...")
@@ -74,5 +86,24 @@ def main():
     show_dashboard(portfolio, weights, report)
 
 
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Deprecated legacy finance bot pipeline."
+    )
+    parser.add_argument(
+        "--legacy-sandbox",
+        action="store_true",
+        help="Run the deprecated pipeline with all relative outputs isolated under data/legacy_sandbox.",
+    )
+    args = parser.parse_args(argv)
+
+    require_legacy_sandbox(args.legacy_sandbox, "main.py")
+    with legacy_sandbox("main.py"):
+        return run_legacy_pipeline()
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except LegacyExecutionError as exc:
+        raise SystemExit(str(exc))
