@@ -5,6 +5,10 @@ from pathlib import Path
 
 from execution.atomic_io import atomic_write_json
 from research.experiment_metrics import METRIC_KEYS
+from research.research_result_schema import (
+    canonical_from_experiment_result,
+    write_canonical_result,
+)
 
 
 DEFAULT_REPORT_DIR = Path("research") / "report_exports"
@@ -93,10 +97,15 @@ def write_experiment_reports(result, report_dir=DEFAULT_REPORT_DIR):
 
     markdown_path.write_text(build_markdown_report(result), encoding="utf-8")
     atomic_write_json(result, json_path)
+    canonical_path = write_canonical_result(
+        canonical_from_experiment_result(result),
+        base_dir=report_dir / "canonical_results",
+    )
 
     return {
         "markdown": str(markdown_path),
         "json": str(json_path),
+        "canonical": canonical_path,
     }
 
 

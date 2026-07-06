@@ -8,6 +8,8 @@ from research.research_lab_v2 import (  # noqa: E402
     build_metric_delta_table,
     build_research_lab_v2_model,
 )
+from research.research_result_adapters import load_research_results  # noqa: E402
+from research.research_result_schema import REQUIRED_FIELDS, validate_research_result  # noqa: E402
 
 
 def assert_true(condition, message):
@@ -16,6 +18,15 @@ def assert_true(condition, message):
 
 
 def main():
+    canonical_results = load_research_results(ROOT)
+    assert_true(canonical_results, "canonical adapter layer produced no results")
+    for result in canonical_results:
+        validate_research_result(result)
+        assert_true(
+            REQUIRED_FIELDS.issubset(result.keys()),
+            f"canonical fields missing for {result.get('id')}",
+        )
+
     model = build_research_lab_v2_model(ROOT)
     experiments = model["experiments"]
     summary = model["summary"]
@@ -30,10 +41,12 @@ def main():
         titles = {item.get("title") for item in experiments}
         sources = {item.get("source") for item in experiments}
         atr_rows = [
-            item for item in experiments if "atr_leaderboard" in str(item.get("source"))
+            item for item in experiments if "atr" in str(item.get("experiment_type"))
         ]
         campaign_rows = [
-            item for item in experiments if item.get("source") == "campaign_001_report"
+            item
+            for item in experiments
+            if item.get("experiment_type") == "campaign_001_exit_optimisation"
         ]
 
         assert_true(
@@ -53,7 +66,7 @@ def main():
             "Campaign 001 variants were not loaded from campaign report exports",
         )
         assert_true(
-            "campaign_001_report" in sources,
+            any("campaign_001" in str(source) for source in sources),
             "Campaign 001 source marker missing",
         )
         assert_true(

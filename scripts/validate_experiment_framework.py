@@ -13,6 +13,7 @@ from research.experiment_metrics import METRIC_KEYS  # noqa: E402
 from research.experiment_registry import load_registry  # noqa: E402
 from research.experiment_runner import run_baseline_self_experiment  # noqa: E402
 from research.experiment_report import load_json_report  # noqa: E402
+from research.research_result_schema import load_canonical_result  # noqa: E402
 
 
 SCRATCH = ROOT / "data" / "experiment_framework_validation"
@@ -58,16 +59,19 @@ def metrics_identical(first, second):
 def reports_exist_and_parse(result):
     markdown = ROOT / result["reports"]["markdown"]
     json_path = ROOT / result["reports"]["json"]
-    if not markdown.exists() or not json_path.exists():
+    canonical_path = ROOT / result["reports"].get("canonical", "")
+    if not markdown.exists() or not json_path.exists() or not canonical_path.exists():
         return False
     text = markdown.read_text(encoding="utf-8")
     data = load_json_report(json_path)
+    canonical = load_canonical_result(canonical_path)
     return (
         "## Summary" in text
         and "## Baseline Metrics" in text
         and "## Candidate Metrics" in text
         and "## Recommendation" in text
         and data["experiment_id"] == result["experiment_id"]
+        and canonical["id"] == result["experiment_id"]
     )
 
 
