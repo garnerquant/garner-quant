@@ -16,6 +16,9 @@ class StopCalled(Exception):
 
 
 class FakeSidebar:
+    def __init__(self, app):
+        self.app = app
+
     def __enter__(self):
         return self
 
@@ -26,7 +29,7 @@ class FakeSidebar:
         pass
 
     def button(self, *_args, **_kwargs):
-        return False
+        return self.app.logout_clicked
 
 
 class FakeForm:
@@ -43,20 +46,35 @@ class FakeSecrets(dict):
 
 
 class FakeStreamlit:
-    def __init__(self):
+    def __init__(self, *, password_input="", submit=False, logout_clicked=False, cookies=None):
         self.session_state = {}
         self.secrets = FakeSecrets()
-        self.sidebar = FakeSidebar()
+        self.sidebar = FakeSidebar(self)
         self.errors = []
         self.warnings = []
         self.forms = []
         self.markdown_calls = []
+        self.successes = []
+        self.password_input = password_input
+        self.submit = submit
+        self.logout_clicked = logout_clicked
+        self.context = type(
+            "FakeContext",
+            (),
+            {
+                "cookies": cookies or {},
+                "url": "https://dashboard.example.com",
+            },
+        )()
 
     def error(self, message):
         self.errors.append(str(message))
 
     def warning(self, message):
         self.warnings.append(str(message))
+
+    def success(self, message):
+        self.successes.append(str(message))
 
     def stop(self):
         raise StopCalled()
@@ -69,10 +87,10 @@ class FakeStreamlit:
         return FakeForm()
 
     def text_input(self, *_args, **_kwargs):
-        return ""
+        return self.password_input
 
     def form_submit_button(self, *_args, **_kwargs):
-        return False
+        return self.submit
 
     def rerun(self):
         raise StopCalled()
@@ -81,13 +99,15 @@ class FakeStreamlit:
         pass
 
     def button(self, *_args, **_kwargs):
-        return False
+        return self.logout_clicked
 
 
 def clear_auth_env():
     for key in (
         "DASHBOARD_PASSWORD",
         "GARNER_QUANT_DASHBOARD_PASSWORD",
+        "DASHBOARD_AUTH_SECRET",
+        "DASHBOARD_SESSION_DAYS",
         "DASHBOARD_ALLOW_LOCAL_NO_PASSWORD",
         "GARNER_QUANT_SHOW_AUTH_DEV_WARNING",
         "GARNER_QUANT_ENV",
@@ -123,7 +143,17 @@ def assert_stops(func):
 
 def validate_auth_behaviour(issues):
     original_st = auth.st
+    original_components = auth.components
+    cookie_writes = []
+
+    class FakeComponents:
+        @staticmethod
+        def html(markup, **_kwargs):
+            cookie_writes.append(str(markup))
+
     try:
+        auth.components = FakeComponents()
+
         fake = FakeStreamlit()
         auth.st = fake
         clear_auth_env()
@@ -144,6 +174,92 @@ def validate_auth_behaviour(issues):
             issues,
         )
 
+        fake = FakeStreamlit(password_input="wrong", submit=True)
+        auth.st = fake
+        clear_auth_env()
+        os.environ["DASHBOARD_PASSWORD"] = "secret"
+        stopped = assert_stops(auth.require_dashboard_login)
+        check(stopped, "wrong password remains on login screen", issues)
+        check(
+            not fake.session_state.get(auth.AUTH_SESSION_KEY),
+            "wrong password does not authenticate session",
+            issues,
+        )
+
+        fake = FakeStreamlit(password_input="secret", submit=True)
+        auth.st = fake
+        clear_auth_env()
+        os.environ["DASHBOARD_PASSWORD"] = "secret"
+        os.environ["DASHBOARD_AUTH_SECRET"] = "test-auth-secret"
+        os.environ["DASHBOARD_SESSION_DAYS"] = "7"
+        stopped = assert_stops(auth.require_dashboard_login)
+        token = fake.session_state.get(auth.AUTH_PENDING_TOKEN_KEY)
+        check(stopped, "correct password triggers authenticated rerun", issues)
+        check(
+            fake.session_state.get(auth.AUTH_SESSION_KEY) is True,
+            "correct password authenticates session",
+            issues,
+        )
+        check(bool(token), "correct password creates persistent signed token", issues)
+        check(
+            token and auth.validate_auth_token(token, "secret"),
+            "created token validates",
+            issues,
+        )
+
+        fake = FakeStreamlit(cookies={auth.AUTH_TOKEN_COOKIE: token})
+        auth.st = fake
+        cookie_writes.clear()
+        clear_auth_env()
+        os.environ["DASHBOARD_PASSWORD"] = "secret"
+        os.environ["DASHBOARD_AUTH_SECRET"] = "test-auth-secret"
+        allowed = auth.require_dashboard_login()
+        check(allowed is True, "new app run remains authenticated with valid cookie", issues)
+        check(
+            fake.session_state.get(auth.AUTH_SESSION_KEY) is True,
+            "valid cookie restores authenticated session",
+            issues,
+        )
+
+        expired = auth.build_auth_token("secret", now=100, session_days=1)
+        fake = FakeStreamlit(cookies={auth.AUTH_TOKEN_COOKIE: expired})
+        auth.st = fake
+        clear_auth_env()
+        os.environ["DASHBOARD_PASSWORD"] = "secret"
+        os.environ["DASHBOARD_AUTH_SECRET"] = "test-auth-secret"
+        stopped = assert_stops(lambda: auth.require_dashboard_login())
+        check(stopped, "expired token is rejected", issues)
+        check("gq_dashboard_login" in fake.forms, "expired token shows login form", issues)
+
+        fake = FakeStreamlit(cookies={auth.AUTH_TOKEN_COOKIE: "invalid.token"})
+        auth.st = fake
+        clear_auth_env()
+        os.environ["DASHBOARD_PASSWORD"] = "secret"
+        os.environ["DASHBOARD_AUTH_SECRET"] = "test-auth-secret"
+        stopped = assert_stops(lambda: auth.require_dashboard_login())
+        check(stopped, "invalid token is rejected", issues)
+        check("gq_dashboard_login" in fake.forms, "invalid token shows login form", issues)
+
+        fake = FakeStreamlit(logout_clicked=True)
+        fake.session_state[auth.AUTH_SESSION_KEY] = True
+        fake.session_state[auth.AUTH_FINGERPRINT_KEY] = auth._password_fingerprint("secret")
+        auth.st = fake
+        cookie_writes.clear()
+        clear_auth_env()
+        os.environ["DASHBOARD_PASSWORD"] = "secret"
+        stopped = assert_stops(lambda: auth.require_dashboard_login())
+        check(stopped, "logout stops before dashboard content", issues)
+        check(
+            not fake.session_state.get(auth.AUTH_SESSION_KEY),
+            "logout clears authenticated session",
+            issues,
+        )
+        check(
+            any(f"{auth.AUTH_TOKEN_COOKIE}=;" in item for item in cookie_writes),
+            "logout emits cookie clear script",
+            issues,
+        )
+
         fake = FakeStreamlit()
         auth.st = fake
         clear_auth_env()
@@ -152,6 +268,7 @@ def validate_auth_behaviour(issues):
         check(allowed is True, "explicit local no-password mode is allowed", issues)
     finally:
         auth.st = original_st
+        auth.components = original_components
         clear_auth_env()
 
 
