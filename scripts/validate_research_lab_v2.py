@@ -27,6 +27,48 @@ def main():
 
     if experiments:
         assert_true(not leaderboard.empty, "leaderboard missing despite experiments")
+        titles = {item.get("title") for item in experiments}
+        sources = {item.get("source") for item in experiments}
+        atr_rows = [
+            item for item in experiments if "atr_leaderboard" in str(item.get("source"))
+        ]
+        campaign_rows = [
+            item for item in experiments if item.get("source") == "campaign_001_report"
+        ]
+
+        assert_true(
+            len(experiments) > 1,
+            "Research Lab v2 only loaded one experiment; expected real candidates",
+        )
+        assert_true(
+            "Baseline self-check" not in titles or len(experiments) == 1,
+            "baseline self-check was not de-prioritised",
+        )
+        assert_true(
+            atr_rows,
+            "ATR leaderboard candidates were not loaded from research/report_exports/atr_exit_leaderboard.csv",
+        )
+        assert_true(
+            campaign_rows,
+            "Campaign 001 variants were not loaded from campaign report exports",
+        )
+        assert_true(
+            "campaign_001_report" in sources,
+            "Campaign 001 source marker missing",
+        )
+        assert_true(
+            any("ATR trailing stop" in str(title) for title in titles),
+            "human-readable ATR titles missing",
+        )
+        assert_true(
+            {"Current binary exit", "Time exit 10 days", "Fixed stop loss 3%"}.issubset(titles),
+            "human-readable Campaign 001 variant titles missing",
+        )
+        assert_true(
+            any("trade count" in str(item.get("reason", "")).lower() for item in campaign_rows),
+            "missing Campaign 001 trade count explanation was not surfaced",
+        )
+
         required = {
             "Score",
             "Experiment",

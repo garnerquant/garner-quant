@@ -12,6 +12,10 @@ from research.experiment_registry import load_registry
 
 REPORT_EXPORTS_DIR = Path("research") / "report_exports"
 ATR_LEADERBOARD = REPORT_EXPORTS_DIR / "atr_exit_leaderboard.csv"
+CAMPAIGN_REPORT_DIRS = (
+    Path("research") / "experiments" / "campaign_reports",
+    REPORT_EXPORTS_DIR / "campaign_reports",
+)
 
 
 def safe_float(value, default=0.0):
@@ -49,6 +53,16 @@ def read_csv(path):
         return pd.DataFrame()
 
 
+def read_text(path):
+    path = Path(path)
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+
 def format_percent(value):
     return f"{safe_float(value) * 100:.2f}%"
 
@@ -78,11 +92,11 @@ def experiment_title(experiment):
         method = params.get("atr_method", "ATR")
         return f"ATR trailing stop p{period} x{multiplier} ({method})"
 
-    if "baseline compared against itself" in description.lower():
-        return "Baseline self-check"
-
     if experiment.get("name"):
         return str(experiment["name"])
+
+    if "baseline compared against itself" in description.lower():
+        return "Baseline self-check"
 
     return description or str(experiment.get("experiment_id") or "Untitled experiment")
 
@@ -244,6 +258,7 @@ def normalize_report_result(result):
         "decision": str(decision).upper(),
         "reports": result.get("reports") or result.get("report_location") or {},
         "source": "report_json",
+        "is_real_candidate": bool(candidate_metrics) and baseline.get("name") != candidate.get("name"),
         **scoring,
         "promotion_recommendation": recommendation,
         "reason": reason,
@@ -252,6 +267,260 @@ def normalize_report_result(result):
     experiment["parameter_set"] = parameter_summary(experiment["parameters"])
     experiment["plain_conclusion"] = plain_english_conclusion(experiment)
     return experiment
+
+
+def missing_detail_reason(source_file, fields):
+    return (
+        "Detailed metrics are incomplete because "
+        f"{source_file} does not provide: {', '.join(fields)}."
+    )
+
+
+def normalize_atr_leaderboard_row(row):
+    params = {
+        "atr_period": row.get("atr_period"),
+        "atr_multiplier": row.get("atr_multiplier"),
+        "atr_method": row.get("atr_method", "wilder"),
+    }
+    baseline = {
+        "cagr": safe_float(row.get("cagr")) - safe_float(row.get("cagr_delta")),
+        "sharpe": safe_float(row.get("sharpe")) - safe_float(row.get("sharpe_delta")),
+        "max_drawdown": safe_float(row.get("max_drawdown"))
+        - safe_float(row.get("max_drawdown_delta")),
+        "profit_factor": safe_float(row.get("profit_factor"))
+        - safe_float(row.get("profit_factor_delta")),
+        "number_of_trades": None,
+    }
+    candidate = {
+        "cagr": safe_float(row.get("cagr")),
+        "sharpe": safe_float(row.get("sharpe")),
+        "max_drawdown": safe_float(row.get("max_drawdown")),
+        "profit_factor": safe_float(row.get("profit_factor")),
+        "number_of_trades": safe_int(row.get("number_of_trades")),
+    }
+    comparison = {
+        "improved_metrics": [
+            key
+            for key in ["cagr", "sharpe", "max_drawdown", "profit_factor"]
+            if safe_float(candidate.get(key)) > safe_float(baseline.get(key))
+        ],
+        "regressed_metrics": [
+            key
+            for key in ["cagr", "sharpe", "max_drawdown", "profit_factor"]
+            if safe_float(candidate.get(key)) < safe_float(baseline.get(key))
+        ],
+    }
+    decision = str(row.get("decision") or "NEEDS MORE TESTING").upper()
+    scoring = score_experiment(baseline, candidate, comparison)
+    recommendation = promotion_recommendation(decision, scoring)
+    reason = recommendation_reason(scoring, recommendation)
+    experiment = {
+        "experiment_id": row.get("experiment_id")
+        or f"atr_exit_p{params['atr_period']}_m{params['atr_multiplier']}",
+        "date": row.get("date") or "",
+        "description": "ATR trailing stop exit wrapper versus current baseline.",
+        "hypothesis": (
+            "Test whether an ATR trailing stop improves risk-adjusted exits "
+            "versus the current baseline exit behaviour."
+        ),
+        "parameters": params,
+        "baseline_strategy": "baseline_current_behaviour",
+        "candidate_strategy": (
+            f"atr_exit_p{params['atr_period']}_m{params['atr_multiplier']}_"
+            f"{params['atr_method']}"
+        ),
+        "baseline_metrics": baseline,
+        "candidate_metrics": candidate,
+        "comparison": comparison,
+        "decision": decision,
+        "reports": {
+            "markdown": row.get("markdown_report"),
+            "json": row.get("json_report"),
+            "leaderboard": str(ATR_LEADERBOARD),
+        },
+        "source": "atr_leaderboard",
+        "is_real_candidate": True,
+        **scoring,
+        "promotion_recommendation": recommendation,
+        "reason": reason,
+    }
+    if baseline["number_of_trades"] is None:
+        experiment["penalties"] = list(experiment["penalties"]) + [
+            missing_detail_reason(
+                str(ATR_LEADERBOARD),
+                ["baseline number_of_trades"],
+            )
+        ]
+    experiment["title"] = experiment_title(experiment)
+    experiment["parameter_set"] = parameter_summary(experiment["parameters"])
+    experiment["plain_conclusion"] = plain_english_conclusion(experiment)
+    return experiment
+
+
+def load_atr_leaderboard_experiments(base_path):
+    frame = read_csv(base_path / ATR_LEADERBOARD)
+    if frame.empty:
+        return []
+    return [normalize_atr_leaderboard_row(row.to_dict()) for _, row in frame.iterrows()]
+
+
+def campaign_variant_key(name):
+    return (
+        str(name)
+        .lower()
+        .replace("%", "pct")
+        .replace(" ", "_")
+        .replace("-", "_")
+    )
+
+
+def parse_campaign_report(text):
+    variants = []
+    best = {}
+    in_results = False
+    walk_forward = set()
+    in_walk_forward = False
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("- Best "):
+            key, value = line[2:].split(":", 1)
+            best[key.strip()] = value.strip().split("(", 1)[0].strip()
+            continue
+        if line == "## Real Simulated Results":
+            in_results = True
+            in_walk_forward = False
+            continue
+        if line == "## Walk-Forward Candidates":
+            in_results = False
+            in_walk_forward = True
+            continue
+        if line.startswith("## "):
+            in_results = False
+            in_walk_forward = False
+        if in_walk_forward and line.startswith("- "):
+            walk_forward.add(line[2:].strip())
+        if not in_results or not line.startswith("- ") or ": Sharpe=" not in line:
+            continue
+
+        name, metrics_text = line[2:].split(":", 1)
+        metrics = {}
+        for part in metrics_text.split(","):
+            if "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            metrics[key.strip()] = value.strip().replace("%", "")
+        variants.append(
+            {
+                "name": name.strip(),
+                "metrics": {
+                    "sharpe": safe_float(metrics.get("Sharpe")),
+                    "cagr": safe_float(metrics.get("CAGR")) / 100,
+                    "max_drawdown": safe_float(metrics.get("Drawdown")) / 100,
+                    "profit_factor": safe_float(metrics.get("Profit Factor")),
+                    "number_of_trades": 0,
+                },
+                "walk_forward": name.strip() in walk_forward,
+                "best": best,
+            }
+        )
+    return variants
+
+
+def latest_campaign_report(base_path):
+    candidates = []
+    for directory in CAMPAIGN_REPORT_DIRS:
+        full_dir = base_path / directory
+        if full_dir.exists():
+            candidates.extend(full_dir.glob("campaign_001*.md"))
+    if not candidates:
+        return None
+    latest = [path for path in candidates if path.name.endswith("_latest.md")]
+    if latest:
+        return sorted(latest, key=lambda path: path.stat().st_mtime, reverse=True)[0]
+    return sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True)[0]
+
+
+def campaign_decision(name, scoring, walk_forward):
+    if name == "Current binary exit":
+        return "KEEP"
+    if walk_forward and scoring["score"] > -10:
+        return "NEEDS MORE TESTING"
+    if scoring["score"] > 0:
+        return "NEEDS MORE TESTING"
+    return "REJECT"
+
+
+def normalize_campaign_variant(variant, baseline, report_path):
+    candidate = variant["metrics"]
+    comparison = {
+        "improved_metrics": [
+            key
+            for key in ["cagr", "sharpe", "max_drawdown", "profit_factor"]
+            if safe_float(candidate.get(key)) > safe_float(baseline.get(key))
+        ],
+        "regressed_metrics": [
+            key
+            for key in ["cagr", "sharpe", "max_drawdown", "profit_factor"]
+            if safe_float(candidate.get(key)) < safe_float(baseline.get(key))
+        ],
+    }
+    scoring = score_experiment(baseline, candidate, comparison)
+    decision = campaign_decision(variant["name"], scoring, variant.get("walk_forward"))
+    recommendation = promotion_recommendation(decision, scoring)
+    reason = recommendation_reason(scoring, recommendation)
+    if candidate.get("number_of_trades", 0) == 0:
+        scoring["penalties"] = list(scoring["penalties"]) + [
+            missing_detail_reason(str(report_path), ["trade count"])
+        ]
+        recommendation = "Needs more testing" if decision == "KEEP" else "Reject"
+        reason = recommendation_reason(scoring, recommendation)
+
+    experiment = {
+        "experiment_id": f"campaign_001_{campaign_variant_key(variant['name'])}",
+        "date": pd.Timestamp.fromtimestamp(report_path.stat().st_mtime).isoformat(),
+        "description": "Campaign 001 exit optimisation variant.",
+        "hypothesis": (
+            "Test whether this exit variant improves the current binary exit "
+            "without adding unacceptable risk."
+        ),
+        "parameters": {"campaign": "campaign_001_exit_optimisation"},
+        "baseline_strategy": "Current binary exit",
+        "candidate_strategy": variant["name"],
+        "baseline_metrics": baseline,
+        "candidate_metrics": candidate,
+        "comparison": comparison,
+        "decision": decision,
+        "reports": {"markdown": str(report_path)},
+        "source": "campaign_001_report",
+        "is_real_candidate": True,
+        **scoring,
+        "promotion_recommendation": recommendation,
+        "reason": reason,
+        "name": variant["name"],
+    }
+    experiment["title"] = experiment_title(experiment)
+    experiment["parameter_set"] = "Campaign 001 exit optimisation"
+    experiment["plain_conclusion"] = plain_english_conclusion(experiment)
+    return experiment
+
+
+def load_campaign_experiments(base_path):
+    report_path = latest_campaign_report(base_path)
+    if report_path is None:
+        return []
+    variants = parse_campaign_report(read_text(report_path))
+    if not variants:
+        return []
+    baseline_variant = next(
+        (item for item in variants if item["name"] == "Current binary exit"),
+        variants[0],
+    )
+    baseline = baseline_variant["metrics"]
+    return [
+        normalize_campaign_variant(variant, baseline, report_path)
+        for variant in variants
+    ]
 
 
 def normalize_registry_entry(entry, base_path):
@@ -276,6 +545,7 @@ def normalize_registry_entry(entry, base_path):
         "decision": str(decision).upper(),
         "reports": entry.get("report_location") or {},
         "source": "framework_registry",
+        "is_real_candidate": False,
         "score": -8.0,
         "cagr_delta": 0.0,
         "sharpe_delta": 0.0,
@@ -313,6 +583,7 @@ def normalize_legacy_experiment(entry):
         "decision": str(entry.get("status", "NEEDS MORE TESTING")).upper(),
         "reports": {},
         "source": "legacy_jsonl",
+        "is_real_candidate": "validation dry run" not in str(entry.get("name", "")).lower(),
         "score": -5.0,
         "cagr_delta": 0.0,
         "sharpe_delta": 0.0,
@@ -346,6 +617,21 @@ def load_research_experiments(base_path="."):
         normalized = normalize_report_result(result)
         experiments[normalized["experiment_id"]] = normalized
 
+    for normalized in load_atr_leaderboard_experiments(base_path):
+        experiment_id = normalized.get("experiment_id")
+        if experiment_id and experiment_id not in experiments:
+            experiments[experiment_id] = normalized
+        elif experiment_id:
+            experiments[experiment_id]["source"] = (
+                experiments[experiment_id].get("source", "") + "+atr_leaderboard"
+            )
+            experiments[experiment_id]["is_real_candidate"] = True
+
+    for normalized in load_campaign_experiments(base_path):
+        experiment_id = normalized.get("experiment_id")
+        if experiment_id:
+            experiments[experiment_id] = normalized
+
     for entry in load_legacy_experiments(base_path / "research" / "experiments" / "experiments.jsonl"):
         if isinstance(entry, dict):
             normalized = normalize_legacy_experiment(entry)
@@ -353,8 +639,18 @@ def load_research_experiments(base_path="."):
             if experiment_id and experiment_id not in experiments:
                 experiments[experiment_id] = normalized
 
+    values = list(experiments.values())
+    real_candidates = [item for item in values if item.get("is_real_candidate")]
+    if real_candidates:
+        values = [
+            item
+            for item in values
+            if item.get("is_real_candidate")
+            or "baseline self" not in str(item.get("title", "")).lower()
+        ]
+
     return sorted(
-        experiments.values(),
+        values,
         key=lambda item: str(item.get("date") or ""),
         reverse=True,
     )
@@ -370,8 +666,10 @@ def build_research_summary(experiments):
         for item in experiments
         if item.get("promotion_recommendation") == "Needs more testing"
     ]
-    latest = experiments[0] if experiments else None
-    best = max(experiments, key=lambda item: safe_float(item.get("score")), default=None)
+    real_candidates = [item for item in experiments if item.get("is_real_candidate")]
+    summary_pool = real_candidates or experiments
+    latest = summary_pool[0] if summary_pool else None
+    best = max(summary_pool, key=lambda item: safe_float(item.get("score")), default=None)
     latest_recommendation = (
         latest.get("promotion_recommendation") if latest else "No experiments available"
     )
