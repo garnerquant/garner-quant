@@ -68,4 +68,4 @@ jobs:
           echo "Service status:"
           sudo systemctl status "$DASHBOARD_SERVICE" --no-pager
           sudo systemctl status "$RUNTIME_SERVICE" --no-pager
-REMOTE_DEPLOY
+          REMOTE_DEPLOY
