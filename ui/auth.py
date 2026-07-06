@@ -4,14 +4,50 @@ import os
 
 import streamlit as st
 
+try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None
+
 
 AUTH_SESSION_KEY = "gq_dashboard_authenticated"
 AUTH_FINGERPRINT_KEY = "gq_dashboard_auth_fingerprint"
 DEV_WARNING_ENV_VAR = "GARNER_QUANT_SHOW_AUTH_DEV_WARNING"
+LOCAL_AUTH_BYPASS_ENV_VAR = "DASHBOARD_ALLOW_LOCAL_NO_PASSWORD"
 PASSWORD_ENV_VARS = (
-    "GARNER_QUANT_DASHBOARD_PASSWORD",
     "DASHBOARD_PASSWORD",
+    "GARNER_QUANT_DASHBOARD_PASSWORD",
 )
+PRODUCTION_ENV_VARS = (
+    "AWS_EXECUTION_ENV",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "EB_ENVIRONMENT_NAME",
+    "ECS_CONTAINER_METADATA_URI",
+    "ECS_CONTAINER_METADATA_URI_V4",
+)
+ENVIRONMENT_ENV_VARS = (
+    "GARNER_QUANT_ENV",
+    "DASHBOARD_ENV",
+    "APP_ENV",
+    "ENVIRONMENT",
+    "ENV",
+)
+PRODUCTION_ENV_VALUES = {"prod", "production", "aws"}
+
+
+def _truthy_env(name):
+    value = os.getenv(name, "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _load_env_file():
+    if load_dotenv is None:
+        return
+    try:
+        load_dotenv()
+    except Exception:
+        pass
 
 
 def _secret_value(key):
@@ -22,6 +58,8 @@ def _secret_value(key):
 
 
 def dashboard_password():
+    _load_env_file()
+
     dashboard_config = _secret_value("dashboard")
     if hasattr(dashboard_config, "get"):
         password = dashboard_config.get("password")
@@ -38,6 +76,22 @@ def dashboard_password():
             return password
 
     return None
+
+
+def is_production_dashboard():
+    _load_env_file()
+
+    for env_var in ENVIRONMENT_ENV_VARS:
+        value = os.getenv(env_var, "").strip().lower()
+        if value in PRODUCTION_ENV_VALUES:
+            return True
+
+    return any(os.getenv(env_var) for env_var in PRODUCTION_ENV_VARS)
+
+
+def allow_local_no_password():
+    _load_env_file()
+    return _truthy_env(LOCAL_AUTH_BYPASS_ENV_VAR)
 
 
 def _password_fingerprint(password):
@@ -125,12 +179,17 @@ def _render_lock_screen(password):
 def require_dashboard_login():
     password = dashboard_password()
     if not password:
+        if is_production_dashboard() or not allow_local_no_password():
+            st.error(
+                "Dashboard access is locked because no password is configured. "
+                "Set DASHBOARD_PASSWORD before starting the dashboard."
+            )
+            st.stop()
+
         if _show_development_warning():
             st.warning(
                 "Development mode: dashboard password is not configured. "
-                "Set [dashboard].password in Streamlit secrets or "
-                "GARNER_QUANT_DASHBOARD_PASSWORD in the environment before "
-                "production use."
+                "Set DASHBOARD_PASSWORD in the environment before production use."
             )
         return True
 
