@@ -10,6 +10,12 @@ import pandas as pd
 from research.experiment_config import build_experiment_config
 from research.live_rule_backtest import run_from_saved_files
 from research.parameter_schema import supported_parameter_keys
+from research.research_result_schema import (
+    make_research_result,
+    safe_float,
+    safe_int,
+    write_canonical_result,
+)
 
 
 EXPERIMENTS_FILE = Path("research/experiments.json")
@@ -269,6 +275,71 @@ def create_experiment(name_prefix, parameters, summary, equity_curve, metadata):
     }
 
 
+def _decision(summary, baseline_summary):
+    sharpe_delta = safe_float(summary.get("sharpe_ratio")) - safe_float(
+        baseline_summary.get("sharpe_ratio")
+    )
+    cagr_delta = safe_float(summary.get("cagr")) - safe_float(baseline_summary.get("cagr"))
+    drawdown_delta = safe_float(summary.get("max_drawdown")) - safe_float(
+        baseline_summary.get("max_drawdown")
+    )
+    if sharpe_delta > 0 and cagr_delta > 0 and drawdown_delta >= -0.02:
+        return "NEEDS MORE TESTING"
+    return "REJECT"
+
+
+def _risk_flags(summary, baseline_summary):
+    flags = []
+    if safe_int(summary.get("number_of_trades", summary.get("trade_count"))) < 30:
+        flags.append("low sample size")
+    if safe_float(summary.get("max_drawdown")) < safe_float(
+        baseline_summary.get("max_drawdown")
+    ):
+        flags.append("worse drawdown")
+    return flags
+
+
+def _write_canonical_experiment(experiment, baseline_summary):
+    summary = (experiment.get("results") or {}).get("summary") or {}
+    decision = _decision(summary, baseline_summary)
+    result = make_research_result(
+        id=experiment.get("id"),
+        title=experiment.get("description") or experiment.get("name"),
+        experiment_type="legacy_parameter_sweep",
+        status=experiment.get("status"),
+        baseline_strategy="Current binary exit",
+        candidate_strategy=experiment.get("description") or experiment.get("name"),
+        parameters=experiment.get("parameters") or {},
+        metrics=summary,
+        baseline_metrics=baseline_summary,
+        decision=decision,
+        confidence="high",
+        reason=(
+            f"{decision}: Sharpe delta "
+            f"{safe_float(summary.get('sharpe_ratio')) - safe_float(baseline_summary.get('sharpe_ratio')):.3f}; "
+            f"CAGR delta "
+            f"{(safe_float(summary.get('cagr')) - safe_float(baseline_summary.get('cagr'))) * 100:.2f}%."
+        ),
+        risk_flags=_risk_flags(summary, baseline_summary),
+        report_path="research/experiments.json",
+        created_at=experiment.get("created_timestamp"),
+        source="legacy_parameter_sweep_producer",
+        extra={"name": experiment.get("name")},
+    )
+    return write_canonical_result(result)
+
+
+def _baseline_summary(live_config):
+    try:
+        baseline_config = build_experiment_config(live_config, {})
+        equity_curve, _holdings, trade_journal, summary = run_from_saved_files(
+            experiment_config=baseline_config
+        )
+        return enrich_summary(equity_curve, trade_journal, summary)
+    except Exception:
+        return {}
+
+
 def run_parameter_sweep(
     live_config,
     sweep_spec,
@@ -281,6 +352,7 @@ def run_parameter_sweep(
     created_experiments = []
     start_time = time.time()
     total = len(combinations)
+    baseline_summary = _baseline_summary(live_config)
 
     for index, parameters in enumerate(combinations, start=1):
         experiment_config = build_experiment_config(live_config, parameters)
@@ -302,6 +374,8 @@ def run_parameter_sweep(
                 "experiment_config": experiment_config,
             },
         )
+        canonical_path = _write_canonical_experiment(experiment, baseline_summary)
+        experiment["results"]["canonical_result_path"] = canonical_path
 
         experiments.append(experiment)
         created_experiments.append(experiment)

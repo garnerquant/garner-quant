@@ -9,7 +9,7 @@ from research.live_rule_backtest import run_from_saved_files
 
 
 class BaselineStrategy:
-    name = "baseline_current_behaviour"
+    name = "Current binary exit"
 
     def __init__(self, experiment_config=None):
         self.experiment_config = dict(experiment_config or {})

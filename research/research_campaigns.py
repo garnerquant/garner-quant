@@ -14,6 +14,12 @@ from research.experiment_registry import (
     save_experiment,
 )
 from research.exit_simulation import run_exit_simulation
+from research.research_result_schema import (
+    make_research_result,
+    safe_float,
+    safe_int,
+    write_canonical_result,
+)
 
 
 CAMPAIGN_001_ID = "campaign_001_exit_optimisation"
@@ -450,6 +456,132 @@ def save_campaign_report_export(
     }
 
 
+def _row_metrics(row):
+    return {
+        "total_return": safe_float(row.get("total_return")),
+        "cagr": safe_float(row.get("cagr")),
+        "sharpe_ratio": safe_float(row.get("sharpe_ratio")),
+        "sortino_ratio": safe_float(row.get("sortino_ratio")),
+        "max_drawdown": safe_float(row.get("max_drawdown")),
+        "profit_factor": safe_float(row.get("profit_factor")),
+        "win_rate": safe_float(row.get("win_rate")),
+        "trade_count": safe_int(row.get("trade_count")),
+    }
+
+
+def _campaign_risk_flags(row, baseline_metrics):
+    flags = []
+    trade_count = safe_int(row.get("trade_count"))
+    if trade_count < 30:
+        flags.append("low sample size")
+    if safe_float(row.get("max_drawdown")) < safe_float(baseline_metrics.get("max_drawdown")):
+        flags.append("worse drawdown")
+    if safe_float(row.get("sharpe_ratio")) < safe_float(baseline_metrics.get("sharpe_ratio")):
+        flags.append("worse Sharpe")
+    if row.get("result_mode") == "dry_run":
+        flags.append("dry-run metrics")
+    return flags
+
+
+def _campaign_decision(row, baseline_metrics):
+    status = str(row.get("status") or "").lower()
+    if status not in {"completed", "dry_run"}:
+        return "REJECT"
+    if row.get("exit_method") == "current_binary_exit":
+        return "KEEP"
+
+    sharpe_delta = safe_float(row.get("sharpe_ratio")) - safe_float(
+        baseline_metrics.get("sharpe_ratio")
+    )
+    cagr_delta = safe_float(row.get("cagr")) - safe_float(baseline_metrics.get("cagr"))
+    drawdown_delta = safe_float(row.get("max_drawdown")) - safe_float(
+        baseline_metrics.get("max_drawdown")
+    )
+    if sharpe_delta > 0 and cagr_delta > 0 and drawdown_delta >= -0.02:
+        return "NEEDS MORE TESTING"
+    return "REJECT"
+
+
+def _campaign_reason(row, baseline_metrics, decision):
+    if row.get("exit_method") == "current_binary_exit":
+        return "Baseline result for comparison against tested exit variants."
+
+    parts = []
+    metrics = _row_metrics(row)
+    sharpe_delta = metrics["sharpe_ratio"] - safe_float(baseline_metrics.get("sharpe_ratio"))
+    cagr_delta = metrics["cagr"] - safe_float(baseline_metrics.get("cagr"))
+    drawdown_delta = metrics["max_drawdown"] - safe_float(
+        baseline_metrics.get("max_drawdown")
+    )
+    parts.append(f"Sharpe delta {sharpe_delta:.3f}")
+    parts.append(f"CAGR delta {cagr_delta * 100:.2f}%")
+    parts.append(f"drawdown delta {drawdown_delta * 100:.2f}%")
+    return f"{decision}: " + "; ".join(parts) + "."
+
+
+def export_campaign_canonical_results(
+    campaign_id,
+    leaderboard,
+    report_path="",
+):
+    if leaderboard.empty:
+        return []
+
+    baseline_rows = leaderboard[leaderboard["exit_method"] == "current_binary_exit"]
+    if baseline_rows.empty:
+        return []
+
+    baseline_row = baseline_rows.iloc[0].to_dict()
+    baseline_metrics = _row_metrics(baseline_row)
+    paths = []
+
+    for _, frame_row in leaderboard.iterrows():
+        row = frame_row.to_dict()
+        if row.get("status") not in {"completed", "dry_run"}:
+            continue
+
+        metrics = _row_metrics(row)
+        comparison = {
+            "return_delta": metrics["total_return"] - baseline_metrics["total_return"],
+            "cagr_delta": metrics["cagr"] - baseline_metrics["cagr"],
+            "sharpe_delta": metrics["sharpe_ratio"] - baseline_metrics["sharpe_ratio"],
+            "drawdown_delta": metrics["max_drawdown"] - baseline_metrics["max_drawdown"],
+            "profit_factor_delta": metrics["profit_factor"]
+            - baseline_metrics["profit_factor"],
+        }
+        decision = _campaign_decision(row, baseline_metrics)
+        result = make_research_result(
+            id=row.get("experiment_id"),
+            title=row.get("variation_name"),
+            experiment_type=CAMPAIGN_001_ID,
+            status=row.get("status"),
+            baseline_strategy="Current binary exit",
+            candidate_strategy=row.get("variation_name"),
+            parameters={
+                "exit_method": row.get("exit_method"),
+                "campaign_id": campaign_id,
+                "result_mode": row.get("result_mode"),
+            },
+            metrics=metrics,
+            baseline_metrics=baseline_metrics,
+            comparison=comparison,
+            decision=decision,
+            confidence="high" if row.get("result_mode") == "real_simulation" else "low",
+            reason=_campaign_reason(row, baseline_metrics, decision),
+            risk_flags=_campaign_risk_flags(row, baseline_metrics),
+            report_path=report_path,
+            created_at=row.get("timestamp"),
+            source="campaign_001_producer",
+            extra={
+                "campaign_name": row.get("campaign_name"),
+                "notes": row.get("notes"),
+            },
+        )
+        paths.append(write_canonical_result(result))
+
+    return paths
+
+
 def run_campaign_001(
     path=DEFAULT_EXPERIMENTS_FILE,
     dry_run=False,
@@ -524,6 +656,11 @@ def run_campaign_001(
         if save_report
         else {}
     )
+    canonical_result_paths = export_campaign_canonical_results(
+        campaign_run_id,
+        leaderboard,
+        report_path=report_exports.get("latest_path") or report_path or "",
+    )
 
     return {
         "campaign_id": campaign_run_id,
@@ -535,4 +672,5 @@ def run_campaign_001(
         "report_path": report_path,
         "report_export_path": report_exports.get("export_path"),
         "latest_report_export_path": report_exports.get("latest_path"),
+        "canonical_result_paths": canonical_result_paths,
     }

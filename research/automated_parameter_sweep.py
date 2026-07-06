@@ -16,6 +16,12 @@ from research.experiment_registry import (
 from research.live_rule_backtest import run_from_saved_files
 from research.parameter_schema import PARAMETER_ALIASES, supported_parameter_keys
 from research.parameter_sweep import enrich_summary
+from research.research_result_schema import (
+    make_research_result,
+    safe_float,
+    safe_int,
+    write_canonical_result,
+)
 
 
 def normalise_candidate_values(candidate_values):
@@ -74,6 +80,93 @@ def _metrics_from_summary(summary):
             )
         ),
     }
+
+
+def _canonical_decision(metrics, baseline_metrics, status):
+    if status != "completed":
+        return "REJECT"
+    sharpe_delta = safe_float(metrics.get("sharpe_ratio")) - safe_float(
+        baseline_metrics.get("sharpe_ratio")
+    )
+    cagr_delta = safe_float(metrics.get("cagr")) - safe_float(baseline_metrics.get("cagr"))
+    drawdown_delta = safe_float(metrics.get("max_drawdown")) - safe_float(
+        baseline_metrics.get("max_drawdown")
+    )
+    if sharpe_delta > 0 and cagr_delta > 0 and drawdown_delta >= -0.02:
+        return "NEEDS MORE TESTING"
+    return "REJECT"
+
+
+def _canonical_risk_flags(metrics, baseline_metrics, dry_run=False):
+    flags = []
+    if safe_int(metrics.get("trade_count")) < 30:
+        flags.append("low sample size")
+    if safe_float(metrics.get("max_drawdown")) < safe_float(
+        baseline_metrics.get("max_drawdown")
+    ):
+        flags.append("worse drawdown")
+    if dry_run:
+        flags.append("dry-run metrics")
+    return flags
+
+
+def _canonical_reason(metrics, baseline_metrics, decision):
+    sharpe_delta = safe_float(metrics.get("sharpe_ratio")) - safe_float(
+        baseline_metrics.get("sharpe_ratio")
+    )
+    cagr_delta = safe_float(metrics.get("cagr")) - safe_float(baseline_metrics.get("cagr"))
+    drawdown_delta = safe_float(metrics.get("max_drawdown")) - safe_float(
+        baseline_metrics.get("max_drawdown")
+    )
+    return (
+        f"{decision}: Sharpe delta {sharpe_delta:.3f}; "
+        f"CAGR delta {cagr_delta * 100:.2f}%; "
+        f"drawdown delta {drawdown_delta * 100:.2f}%."
+    )
+
+
+def _export_canonical_optimisation_result(
+    experiment,
+    *,
+    experiment_type,
+    title,
+    baseline_metrics,
+    dry_run=False,
+):
+    if experiment.get("status") != "completed":
+        return None
+    metrics = experiment.get("metrics") or {}
+    decision = _canonical_decision(metrics, baseline_metrics, experiment.get("status"))
+    result = make_research_result(
+        id=experiment.get("experiment_id"),
+        title=title,
+        experiment_type=experiment_type,
+        status=experiment.get("status"),
+        baseline_strategy="Current binary exit",
+        candidate_strategy=title,
+        parameters=experiment.get("parameter_config") or {},
+        metrics=metrics,
+        baseline_metrics=baseline_metrics,
+        decision=decision,
+        confidence="low" if dry_run else "high",
+        reason=_canonical_reason(metrics, baseline_metrics, decision),
+        risk_flags=_canonical_risk_flags(metrics, baseline_metrics, dry_run=dry_run),
+        report_path="",
+        created_at=experiment.get("timestamp"),
+        source="optimisation_producer",
+        extra={
+            "name": experiment.get("name"),
+            "notes": experiment.get("notes"),
+        },
+    )
+    return write_canonical_result(result)
+
+
+def _baseline_metrics_for_run(dry_run=False, base_path="."):
+    try:
+        return run_research_backtest_config({}, dry_run=dry_run, base_path=base_path)
+    except Exception:
+        return {}
 
 
 def run_research_backtest(parameter_key, value, dry_run=False, base_path="."):
@@ -141,6 +234,8 @@ def run_parameter_sweep(
     values = normalise_candidate_values(candidate_values)
     sweep_id = str(uuid4())
     saved_runs = []
+    canonical_result_paths = []
+    baseline_metrics = _baseline_metrics_for_run(dry_run=dry_run, base_path=base_path)
 
     for index, value in enumerate(values, start=1):
         status = "completed"
@@ -183,7 +278,17 @@ def run_parameter_sweep(
                 "value_tested": value,
             },
         )
-        saved_runs.append(save_experiment(experiment, path))
+        saved_experiment = save_experiment(experiment, path)
+        saved_runs.append(saved_experiment)
+        canonical_path = _export_canonical_optimisation_result(
+            saved_experiment,
+            experiment_type="parameter_sweep",
+            title=f"{experiment_name} - {parameter_key}={value}",
+            baseline_metrics=baseline_metrics,
+            dry_run=dry_run,
+        )
+        if canonical_path:
+            canonical_result_paths.append(canonical_path)
 
     return {
         "sweep_id": sweep_id,
@@ -192,6 +297,7 @@ def run_parameter_sweep(
         "runs": saved_runs,
         "summary": build_sweep_summary(sweep_id, path=path),
         "leaderboard": build_sweep_leaderboard(sweep_id, path=path),
+        "canonical_result_paths": canonical_result_paths,
     }
 
 
@@ -290,6 +396,8 @@ def run_parameter_grid(
     combinations = generate_parameter_combinations(parameter_grid, dry_run=dry_run)
     grid_id = str(uuid4())
     saved_runs = []
+    canonical_result_paths = []
+    baseline_metrics = _baseline_metrics_for_run(dry_run=dry_run, base_path=base_path)
 
     for index, parameter_config in enumerate(combinations, start=1):
         status = "completed"
@@ -333,7 +441,17 @@ def run_parameter_grid(
                 "grid_id": grid_id,
             },
         )
-        saved_runs.append(save_experiment(experiment, path))
+        saved_experiment = save_experiment(experiment, path)
+        saved_runs.append(saved_experiment)
+        canonical_path = _export_canonical_optimisation_result(
+            saved_experiment,
+            experiment_type="parameter_grid",
+            title=f"{experiment_name} - {label}",
+            baseline_metrics=baseline_metrics,
+            dry_run=dry_run,
+        )
+        if canonical_path:
+            canonical_result_paths.append(canonical_path)
 
     return {
         "grid_id": grid_id,
@@ -341,6 +459,7 @@ def run_parameter_grid(
         "runs": saved_runs,
         "summary": build_grid_summary(grid_id, path=path),
         "leaderboard": build_grid_leaderboard(grid_id, path=path),
+        "canonical_result_paths": canonical_result_paths,
     }
 
 

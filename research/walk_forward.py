@@ -11,6 +11,12 @@ from research.live_rule_backtest import (
     run_live_rule_backtest,
 )
 from research.parameter_sweep import enrich_summary
+from research.research_result_schema import (
+    make_research_result,
+    safe_float,
+    safe_int,
+    write_canonical_result,
+)
 
 
 def _date_range_from_inputs(signals, prices, weights):
@@ -227,6 +233,71 @@ def _combined_equity_curve(fold_curves):
     return rows
 
 
+def _averages_from_folds(fold_results):
+    return {
+        "return": _safe_mean(fold_results.get("Return", pd.Series(dtype=float))),
+        "cagr": _safe_mean(fold_results.get("CAGR", pd.Series(dtype=float))),
+        "sharpe_ratio": _safe_mean(
+            fold_results.get("Sharpe Ratio", pd.Series(dtype=float))
+        ),
+        "sortino_ratio": _safe_mean(
+            fold_results.get("Sortino Ratio", pd.Series(dtype=float))
+        ),
+        "max_drawdown": _safe_mean(
+            fold_results.get("Max Drawdown", pd.Series(dtype=float))
+        ),
+        "win_rate": _safe_mean(fold_results.get("Win Rate", pd.Series(dtype=float))),
+        "profit_factor": _safe_mean(
+            fold_results.get("Profit Factor", pd.Series(dtype=float))
+        ),
+        "number_of_trades": _safe_mean(
+            fold_results.get("Number of Trades", pd.Series(dtype=float))
+        ),
+    }
+
+
+def _write_walk_forward_canonical(
+    experiment,
+    candidate_averages,
+    baseline_averages,
+    assessment,
+    stability,
+):
+    decision = "NEEDS MORE TESTING" if assessment.get("status") == "Passed" else "REJECT"
+    risk_flags = []
+    if safe_int(candidate_averages.get("number_of_trades")) < 30:
+        risk_flags.append("low sample size")
+    if safe_float(candidate_averages.get("max_drawdown")) < safe_float(
+        baseline_averages.get("max_drawdown")
+    ):
+        risk_flags.append("worse drawdown")
+    if safe_float(stability.get("consistency_score")) < 0.6:
+        risk_flags.append("unstable folds")
+
+    result = make_research_result(
+        id=experiment.get("id") or experiment.get("experiment_id") or experiment.get("name"),
+        title=experiment.get("name") or experiment.get("description") or "Walk-forward validation",
+        experiment_type="walk_forward_validation",
+        status=assessment.get("status"),
+        baseline_strategy="Current binary exit",
+        candidate_strategy=experiment.get("name")
+        or experiment.get("description")
+        or "Walk-forward candidate",
+        parameters=experiment.get("parameters") or {},
+        metrics=candidate_averages,
+        baseline_metrics=baseline_averages,
+        decision=decision,
+        confidence="medium",
+        reason=f"{decision}: " + " ".join(assessment.get("reasons") or []),
+        risk_flags=risk_flags,
+        report_path="",
+        created_at=datetime.now().isoformat(timespec="seconds"),
+        source="walk_forward_producer",
+        extra={"stability": stability},
+    )
+    return write_canonical_result(result)
+
+
 def run_walk_forward_validation(
     live_config,
     experiment,
@@ -248,7 +319,9 @@ def run_walk_forward_validation(
         live_config,
         experiment.get("parameters", {}),
     )
+    baseline_config = build_experiment_config(live_config, {})
     fold_rows = []
+    baseline_fold_rows = []
     fold_curves = []
 
     for fold in folds:
@@ -285,9 +358,37 @@ def run_walk_forward_validation(
             }
         )
 
+        baseline_equity, _baseline_holdings, baseline_trades, baseline_summary = (
+            run_live_rule_backtest(
+                test_signals,
+                test_prices,
+                test_weights,
+                test_risk,
+                starting_cash=starting_cash,
+                experiment_config=baseline_config,
+                volumes=test_volumes,
+            )
+        )
+        baseline_summary = enrich_summary(
+            baseline_equity,
+            baseline_trades,
+            baseline_summary,
+        )
+        baseline_fold_rows.append(_fold_row(fold, baseline_summary))
+
     fold_results = pd.DataFrame(fold_rows)
+    baseline_fold_results = pd.DataFrame(baseline_fold_rows)
     stability = _stability_metrics(fold_results)
     assessment = _assessment(fold_results, stability)
+    averages = _averages_from_folds(fold_results)
+    baseline_averages = _averages_from_folds(baseline_fold_results)
+    canonical_result_path = _write_walk_forward_canonical(
+        experiment,
+        averages,
+        baseline_averages,
+        assessment,
+        stability,
+    )
 
     return {
         "status": assessment["status"],
@@ -300,26 +401,9 @@ def run_walk_forward_validation(
         "fold_results": fold_results.to_dict("records"),
         "fold_curves": fold_curves,
         "combined_equity_curve": _combined_equity_curve(fold_curves),
-        "averages": {
-            "return": _safe_mean(fold_results.get("Return", pd.Series(dtype=float))),
-            "cagr": _safe_mean(fold_results.get("CAGR", pd.Series(dtype=float))),
-            "sharpe_ratio": _safe_mean(
-                fold_results.get("Sharpe Ratio", pd.Series(dtype=float))
-            ),
-            "sortino_ratio": _safe_mean(
-                fold_results.get("Sortino Ratio", pd.Series(dtype=float))
-            ),
-            "max_drawdown": _safe_mean(
-                fold_results.get("Max Drawdown", pd.Series(dtype=float))
-            ),
-            "win_rate": _safe_mean(fold_results.get("Win Rate", pd.Series(dtype=float))),
-            "profit_factor": _safe_mean(
-                fold_results.get("Profit Factor", pd.Series(dtype=float))
-            ),
-            "number_of_trades": _safe_mean(
-                fold_results.get("Number of Trades", pd.Series(dtype=float))
-            ),
-        },
+        "averages": averages,
+        "baseline_averages": baseline_averages,
         "stability": stability,
         "assessment": assessment,
+        "canonical_result_path": canonical_result_path,
     }

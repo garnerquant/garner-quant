@@ -13,6 +13,7 @@ from research.research_campaigns import (
     build_campaign_summary,
     run_campaign_001,
 )
+from research.research_result_schema import load_canonical_result
 
 
 PRODUCTION_INPUTS = [
@@ -107,7 +108,7 @@ def _run_campaign(registry_path):
             path=registry_path,
             dry_run=False,
             base_path=ROOT,
-            save_report=True,
+            save_report=False,
         )
         mode = "real_simulation"
         return result, mode, None
@@ -116,7 +117,7 @@ def _run_campaign(registry_path):
             path=registry_path,
             dry_run=True,
             base_path=ROOT,
-            save_report=True,
+            save_report=False,
         )
         return result, "dry_run", str(exc)
 
@@ -133,6 +134,14 @@ def main():
         path=registry_path,
     )
     sanity_errors = _sanity_check(leaderboard)
+    canonical_paths = result.get("canonical_result_paths") or []
+    canonical_results = []
+    for path in canonical_paths:
+        result_path = Path(path)
+        if not result_path.is_absolute():
+            result_path = ROOT / result_path
+        canonical_results.append(load_canonical_result(result_path))
+
     changed_inputs = [
         filename
         for filename, before_hash in before_hashes.items()
@@ -146,6 +155,22 @@ def main():
             "production input files changed during validation: "
             + ", ".join(changed_inputs)
         )
+    if len(canonical_results) != len(leaderboard):
+        raise AssertionError(
+            f"expected {len(leaderboard)} canonical results, got {len(canonical_results)}"
+        )
+    if not any(
+        item["candidate_strategy"] == "Time exit 10 days"
+        for item in canonical_results
+    ):
+        raise AssertionError("canonical Campaign 001 variants were not exported")
+    if not all(
+        item["baseline_strategy"] == "Current binary exit"
+        and item["metrics"]["trade_count"] >= 0
+        and "sharpe_delta" in item["comparison"]
+        for item in canonical_results
+    ):
+        raise AssertionError("canonical Campaign 001 exports are incomplete")
 
     print("Research Campaign 001 validation passed")
     print(f"Mode: {mode}")
@@ -164,6 +189,7 @@ def main():
     print(f"Best Drawdown: {_best_name(summary, 'best_drawdown')}")
     print(f"Best Profit Factor: {_best_name(summary, 'best_profit_factor')}")
     print(f"Leaderboard rows: {len(leaderboard)}")
+    print(f"Canonical results: {len(canonical_results)}")
     print("Sanity checks: passed")
     print("Production input hashes: unchanged")
     if result.get("report_path"):

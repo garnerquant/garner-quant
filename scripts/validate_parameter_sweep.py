@@ -11,6 +11,7 @@ from research.automated_parameter_sweep import (
     build_sweep_summary,
     run_parameter_sweep,
 )
+from research.research_result_schema import load_canonical_result
 
 
 def main():
@@ -26,6 +27,21 @@ def main():
     )
     summary = build_sweep_summary(result["sweep_id"], path=registry_path)
     leaderboard = build_sweep_leaderboard(result["sweep_id"], path=registry_path)
+    canonical_results = [
+        load_canonical_result(path)
+        for path in result.get("canonical_result_paths", [])
+    ]
+    if len(canonical_results) != len(leaderboard):
+        raise AssertionError(
+            f"expected {len(leaderboard)} canonical sweep results, got {len(canonical_results)}"
+        )
+    if not all(
+        item["baseline_strategy"] == "Current binary exit"
+        and item["candidate_strategy"]
+        and "sharpe_delta" in item["comparison"]
+        for item in canonical_results
+    ):
+        raise AssertionError("canonical parameter sweep exports are incomplete")
 
     print("Research Lab V2 parameter sweep validation passed")
     print(f"Registry: {registry_path.relative_to(ROOT)}")
@@ -38,6 +54,7 @@ def main():
     print(f"Best CAGR value: {summary['best_cagr_value']}")
     print(f"Lowest drawdown value: {summary['lowest_drawdown_value']}")
     print(f"Leaderboard rows: {len(leaderboard)}")
+    print(f"Canonical results: {len(canonical_results)}")
 
 
 if __name__ == "__main__":

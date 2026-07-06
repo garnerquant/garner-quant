@@ -249,6 +249,9 @@ def canonical_from_experiment_result(result):
     reports = result.get("reports") or result.get("report_location") or {}
     report_path = reports.get("canonical") or reports.get("json") or reports.get("markdown") or ""
     candidate_name = candidate.get("name", "candidate")
+    baseline_name = baseline.get("name", "baseline")
+    if baseline_name == "baseline_current_behaviour":
+        baseline_name = "Current binary exit"
     parameters = result.get("parameters") or {}
     title = str(candidate_name)
     if candidate_name.startswith("atr_exit"):
@@ -263,8 +266,8 @@ def canonical_from_experiment_result(result):
         title=title,
         experiment_type=(result.get("metadata") or {}).get("experiment_family", "framework_experiment"),
         status=result.get("decision", "NEEDS MORE TESTING"),
-        baseline_strategy=baseline.get("name", "baseline"),
-        candidate_strategy=candidate_name,
+        baseline_strategy=baseline_name,
+        candidate_strategy=title,
         parameters=parameters,
         metrics=candidate.get("metrics") or {},
         baseline_metrics=baseline.get("metrics") or {},
@@ -286,7 +289,11 @@ def write_canonical_result(result, base_dir=CANONICAL_RESULT_DIR):
     validate_research_result(result)
     path = canonical_result_path(result["id"], base_dir=base_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(result, path)
+    atomic_write_json(
+        result,
+        path,
+        lock_path=path.with_suffix(path.suffix + ".lock"),
+    )
     return str(path)
 
 

@@ -11,6 +11,7 @@ from research.automated_parameter_sweep import (
     build_grid_summary,
     run_parameter_grid,
 )
+from research.research_result_schema import load_canonical_result
 
 
 def main():
@@ -29,6 +30,21 @@ def main():
     )
     summary = build_grid_summary(result["grid_id"], path=registry_path)
     leaderboard = build_grid_leaderboard(result["grid_id"], path=registry_path)
+    canonical_results = [
+        load_canonical_result(path)
+        for path in result.get("canonical_result_paths", [])
+    ]
+    if len(canonical_results) != len(leaderboard):
+        raise AssertionError(
+            f"expected {len(leaderboard)} canonical grid results, got {len(canonical_results)}"
+        )
+    if not all(
+        item["baseline_strategy"] == "Current binary exit"
+        and item["candidate_strategy"]
+        and "sharpe_delta" in item["comparison"]
+        for item in canonical_results
+    ):
+        raise AssertionError("canonical parameter grid exports are incomplete")
 
     print("Research Lab V3 parameter grid validation passed")
     print(f"Registry: {registry_path.relative_to(ROOT)}")
@@ -40,6 +56,7 @@ def main():
     print(f"Best CAGR config: {summary['best_cagr_config']}")
     print(f"Lowest drawdown config: {summary['lowest_drawdown_config']}")
     print(f"Leaderboard rows: {len(leaderboard)}")
+    print(f"Canonical results: {len(canonical_results)}")
 
 
 if __name__ == "__main__":
