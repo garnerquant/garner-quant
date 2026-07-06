@@ -8,6 +8,7 @@ from config import (
 )
 from execution.broker_account import load_account, update_account
 from execution.accounting import broker_values_from_ledger_and_holdings
+from execution.accounting import authoritative_ledger_accounting
 from execution.atomic_io import atomic_write_csv_frames, atomic_write_json
 from execution.trade_ledger import (
     LEDGER_FILE,
@@ -168,6 +169,41 @@ def commit_trade_state(
         Path(TRADE_SNAPSHOTS_FILE): snapshots[TRADE_SNAPSHOT_COLUMNS],
     }
     return atomic_write_csv_frames(frames_by_path)
+
+
+def _position_shares_by_ticker(frame):
+    if frame is None or frame.empty:
+        return {}
+    data = frame.copy()
+    data["ticker"] = data["ticker"].fillna("").astype(str).str.strip().str.upper()
+    data["shares"] = pd.to_numeric(data["shares"], errors="coerce").fillna(0.0)
+    return data[data["ticker"].ne("")].groupby("ticker")["shares"].sum().to_dict()
+
+
+def assert_portfolio_matches_ledger(portfolio, tolerance=1e-6):
+    accounting = authoritative_ledger_accounting()
+    if accounting is None:
+        return
+
+    open_lots = accounting["open_lots"]
+    ledger_positions = _position_shares_by_ticker(open_lots)
+    portfolio_positions = _position_shares_by_ticker(portfolio)
+    mismatches = []
+
+    for ticker in sorted(set(ledger_positions) | set(portfolio_positions)):
+        ledger_shares = float(ledger_positions.get(ticker, 0.0))
+        portfolio_shares = float(portfolio_positions.get(ticker, 0.0))
+        if abs(ledger_shares - portfolio_shares) > tolerance:
+            mismatches.append(
+                f"{ticker}: ledger={ledger_shares:.12g}, portfolio={portfolio_shares:.12g}"
+            )
+
+    if mismatches:
+        raise RuntimeError(
+            "Refusing paper execution because ledger open lots do not match "
+            "paper_portfolio_v3.csv shares: "
+            + "; ".join(mismatches)
+        )
 
 
 def holding_period_label(entry_date, exit_date):
@@ -400,6 +436,7 @@ def trade_currency(ticker):
 
 def update_portfolio(signals, prices, weights, risk_levels):
     portfolio = load_portfolio()
+    assert_portfolio_matches_ledger(portfolio)
     journal = load_trade_journal()
     transaction_log = load_transaction_log()
     snapshots = load_trade_snapshots()

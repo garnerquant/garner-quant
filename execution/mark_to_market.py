@@ -5,6 +5,7 @@ import os
 import pandas as pd
 
 from execution.accounting import broker_frame, broker_values_from_ledger_and_holdings
+from execution.accounting import authoritative_ledger_accounting
 from execution.atomic_io import atomic_write_csv_frames
 
 
@@ -133,6 +134,37 @@ def _existing_holding_rows(base_dir):
         str(row.get("ticker", "")).strip(): row
         for _, row in holdings.iterrows()
     }
+
+
+def _position_shares_by_ticker(frame):
+    if frame is None or frame.empty:
+        return {}
+    data = frame.copy()
+    data["ticker"] = data["ticker"].fillna("").astype(str).str.strip().str.upper()
+    data["shares"] = pd.to_numeric(data["shares"], errors="coerce").fillna(0.0)
+    return data[data["ticker"].ne("")].groupby("ticker")["shares"].sum().to_dict()
+
+
+def _ledger_portfolio_mismatches(portfolio, base_dir, tolerance=1e-6):
+    accounting = authoritative_ledger_accounting(base_dir=base_dir)
+    if accounting is None:
+        return []
+
+    ledger_positions = _position_shares_by_ticker(accounting["open_lots"])
+    portfolio_positions = _position_shares_by_ticker(portfolio)
+    mismatches = []
+    for ticker in sorted(set(ledger_positions) | set(portfolio_positions)):
+        ledger_shares = float(ledger_positions.get(ticker, 0.0))
+        portfolio_shares = float(portfolio_positions.get(ticker, 0.0))
+        if abs(ledger_shares - portfolio_shares) > tolerance:
+            mismatches.append(
+                {
+                    "ticker": ticker,
+                    "ledger_shares": ledger_shares,
+                    "portfolio_shares": portfolio_shares,
+                }
+            )
+    return mismatches
 
 
 def _build_valuation(portfolio, latest_prices, timestamp, existing_holdings=None):
@@ -476,6 +508,18 @@ def mark_to_market_refresh(monitor_result=None, sync_remote=True, base_dir="."):
         for ticker in portfolio.get("ticker", pd.Series(dtype=str)).dropna()
     }
     missing_tickers = sorted(held_tickers - set(latest_prices))
+    ledger_mismatches = _ledger_portfolio_mismatches(portfolio, base_dir)
+
+    if ledger_mismatches:
+        return {
+            "status": "skipped",
+            "reason": "ledger open lots do not match paper portfolio",
+            "changed_files": [],
+            "holdings_refreshed": 0,
+            "missing_tickers": missing_tickers,
+            "ledger_mismatches": ledger_mismatches,
+            "sync_errors": [],
+        }
 
     if not latest_prices:
         return {

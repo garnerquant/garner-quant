@@ -21,6 +21,13 @@ def safe_get(row, column, default=""):
     return default
 
 
+def legacy_row_number_for_audit(row):
+    source = str(safe_get(row, "source", "")).strip()
+    if source != "legacy_migration":
+        return ""
+    return safe_get(row, "legacy_row_number", "")
+
+
 def clean_ledger_events(ledger):
     if ledger is None or ledger.empty:
         return pd.DataFrame()
@@ -162,16 +169,8 @@ def build_trade_audit_trail_from_ledger(ledger):
                     "notes": "Source: trade_ledger_v1.csv",
                     "entry_event_id": safe_get(open_trade, "event_id", ""),
                     "exit_event_id": safe_get(row, "event_id", ""),
-                    "entry_legacy_row_number": safe_get(
-                        open_trade,
-                        "legacy_row_number",
-                        "",
-                    ),
-                    "exit_legacy_row_number": safe_get(
-                        row,
-                        "legacy_row_number",
-                        "",
-                    ),
+                    "entry_legacy_row_number": legacy_row_number_for_audit(open_trade),
+                    "exit_legacy_row_number": legacy_row_number_for_audit(row),
                     "source": "trade_ledger_v1.csv",
                 }
             )
