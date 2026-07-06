@@ -158,3 +158,5 @@ Production
 ```
 
 The goal is to keep research flexible while ensuring production trading remains stable, auditable, and deliberate.
+
+Auto deploy test
