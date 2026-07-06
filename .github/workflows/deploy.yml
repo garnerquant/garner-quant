@@ -1,0 +1,71 @@
+name: Deploy to AWS Lightsail
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightsail-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.AWS_SSH_PRIVATE_KEY }}" > ~/.ssh/lightsail_deploy_key
+          chmod 600 ~/.ssh/lightsail_deploy_key
+          ssh-keyscan -H "${{ secrets.AWS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy on Lightsail
+        run: |
+          ssh -i ~/.ssh/lightsail_deploy_key \
+            -o IdentitiesOnly=yes \
+            "${{ secrets.AWS_USER }}@${{ secrets.AWS_HOST }}" \
+            'bash -s' <<'REMOTE_DEPLOY'
+          set -euo pipefail
+
+          APP_DIR="/home/ubuntu/garner-quant"
+          DASHBOARD_SERVICE="garner-quant-dashboard"
+          RUNTIME_SERVICE="garner-quant-runtime"
+
+          cd "$APP_DIR"
+
+          echo "Stopping runtime before code update..."
+          sudo systemctl stop "$RUNTIME_SERVICE" || true
+
+          echo "Fetching latest main..."
+          git fetch origin main
+          git reset --hard origin/main
+
+          echo "Installing/updating dependencies..."
+          if [ ! -d ".venv" ]; then
+            python3 -m venv .venv
+          fi
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.txt
+
+          echo "Running startup validation..."
+          if ! .venv/bin/python -m runtime.startup_validation; then
+            echo "Startup validation failed. Runtime will remain stopped."
+            sudo systemctl status "$DASHBOARD_SERVICE" --no-pager || true
+            sudo systemctl status "$RUNTIME_SERVICE" --no-pager || true
+            exit 1
+          fi
+
+          echo "Restarting dashboard and runtime..."
+          sudo systemctl restart "$DASHBOARD_SERVICE"
+          sudo systemctl restart "$RUNTIME_SERVICE"
+
+          echo "Service status:"
+          sudo systemctl status "$DASHBOARD_SERVICE" --no-pager
+          sudo systemctl status "$RUNTIME_SERVICE" --no-pager
+REMOTE_DEPLOY
