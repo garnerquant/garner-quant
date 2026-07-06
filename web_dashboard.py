@@ -4091,6 +4091,161 @@ def load_supabase_table(table_name, fallback_csv=None, order_col=None):
         return pd.DataFrame()
 
 
+HOME_SOURCE_DETAILS = {}
+
+
+def csv_modified_at(path):
+    if not path:
+        return None
+    path = Path(path)
+    if not path.exists():
+        return None
+    try:
+        return pd.Timestamp.fromtimestamp(path.stat().st_mtime, tz="UTC")
+    except Exception:
+        return None
+
+
+def frame_latest_timestamp(frame, table_name):
+    if frame is None or frame.empty:
+        return None
+
+    candidates = {
+        "broker_account": ["updated_at", "timestamp", "date"],
+        "paper_30_day_tracker": ["date", "updated_at", "timestamp"],
+        "holdings": ["valuation_updated_at", "updated_at", "date", "timestamp"],
+        "trade_journal": ["timestamp", "created_at", "date"],
+    }.get(table_name, ["updated_at", "timestamp", "date"])
+
+    data = frame.copy()
+    if table_name == "trade_journal" and {"date", "time"}.issubset(data.columns):
+        date_text = data["date"].fillna("").astype(str)
+        time_text = data["time"].fillna("").astype(str).replace("nan", "")
+        parsed = pd.to_datetime(
+            (date_text + " " + time_text).str.strip(),
+            errors="coerce",
+            utc=True,
+        )
+        if parsed.notna().any():
+            return parsed.max()
+
+    for column in candidates:
+        if column not in data.columns:
+            continue
+        parsed = pd.to_datetime(data[column], errors="coerce", utc=True)
+        if parsed.notna().any():
+            return parsed.max()
+
+    return None
+
+
+def local_home_accounting_reconciled(tolerance=0.01):
+    broker = load_csv("broker_account.csv")
+    holdings = load_csv("holdings_report.csv")
+    portfolio = load_csv("paper_portfolio_v3.csv")
+
+    if broker.empty or holdings.empty or portfolio.empty:
+        return False
+    if not {"cash", "positions_value", "portfolio_value"}.issubset(broker.columns):
+        return False
+    if "market_value" not in holdings.columns:
+        return False
+
+    broker_row = broker.iloc[0]
+    cash = numeric_value(broker_row.get("cash"))
+    positions_value = numeric_value(broker_row.get("positions_value"))
+    portfolio_value = numeric_value(broker_row.get("portfolio_value"))
+    holdings_value = numeric_value(
+        pd.to_numeric(holdings.get("market_value"), errors="coerce")
+        .fillna(0)
+        .sum()
+    )
+
+    if abs(holdings_value - positions_value) > tolerance:
+        return False
+    if abs((cash + holdings_value) - portfolio_value) > tolerance:
+        return False
+
+    if "ticker" not in holdings.columns or "ticker" not in portfolio.columns:
+        return False
+
+    holdings_tickers = set(
+        holdings["ticker"].dropna().astype(str).str.strip().str.upper()
+    )
+    portfolio_tickers = set(
+        portfolio["ticker"].dropna().astype(str).str.strip().str.upper()
+    )
+    holdings_tickers.discard("CASH")
+    portfolio_tickers.discard("CASH")
+    return holdings_tickers == portfolio_tickers
+
+
+def load_home_table(table_name, fallback_csv=None, order_col=None):
+    local = load_csv(fallback_csv) if fallback_csv else pd.DataFrame()
+    local_reconciled = local_home_accounting_reconciled()
+    remote = pd.DataFrame()
+    remote_error = None
+
+    try:
+        if supabase is None:
+            raise RuntimeError("Supabase is not configured.")
+
+        query = supabase.table(table_name).select("*")
+        if order_col:
+            query = query.order(order_col)
+        response = query.execute()
+        remote = pd.DataFrame(response.data)
+    except Exception as exc:
+        remote_error = str(exc)
+
+    local_ts = frame_latest_timestamp(local, table_name) or csv_modified_at(fallback_csv)
+    remote_ts = frame_latest_timestamp(remote, table_name)
+
+    use_local = (
+        fallback_csv
+        and not local.empty
+        and local_reconciled
+        and (remote.empty or remote_ts is None or (local_ts is not None and local_ts >= remote_ts))
+    )
+
+    if use_local:
+        source = "local CSV (reconciled)"
+        frame = local
+    elif not remote.empty:
+        source = "Supabase"
+        frame = remote
+    elif not local.empty:
+        source = "local CSV fallback"
+        frame = local
+    else:
+        source = "unavailable"
+        frame = pd.DataFrame()
+
+    HOME_SOURCE_DETAILS[table_name] = {
+        "source": source,
+        "local_reconciled": local_reconciled,
+        "local_timestamp": local_ts,
+        "remote_timestamp": remote_ts,
+        "remote_error": remote_error,
+    }
+    return frame
+
+
+def home_source_summary():
+    labels = []
+    for table_name in ["broker_account", "paper_30_day_tracker", "holdings", "trade_journal"]:
+        detail = HOME_SOURCE_DETAILS.get(table_name, {})
+        source = detail.get("source", "unknown")
+        if table_name == "paper_30_day_tracker":
+            label = "tracker"
+        elif table_name == "trade_journal":
+            label = "trades"
+        else:
+            label = table_name.replace("_account", "").replace("_", " ")
+        labels.append(f"{label}: {source}")
+    return "Home data sources | " + " | ".join(labels)
+
+
 def load_trade_audit(journal):
     local_audit = load_csv("trade_audit_trail.csv")
     if not local_audit.empty:
@@ -4102,16 +4257,16 @@ def load_trade_audit(journal):
     return pd.DataFrame()
 
 
-broker = load_supabase_table("broker_account", "broker_account.csv")
-paper_30 = load_supabase_table(
+broker = load_home_table("broker_account", "broker_account.csv")
+paper_30 = load_home_table(
     "paper_30_day_tracker",
     "paper_30_day_tracker.csv",
     "date",
 )
-holdings = load_supabase_table("holdings", "holdings_report.csv")
+holdings = load_home_table("holdings", "holdings_report.csv")
 history = load_supabase_table("holdings_history", None, "date")
 signals = load_supabase_table("signals", "signal_report_v2.csv")
-trades = load_supabase_table("trade_journal", "trade_journal_v3.csv")
+trades = load_home_table("trade_journal", "trade_journal_v3.csv")
 
 portfolio = load_csv("portfolio_v2.csv")
 analytics = load_csv("trade_analytics_v3.csv")
@@ -4167,6 +4322,7 @@ render_investment_brief(
     open_positions,
     win_rate_value,
 )
+st.caption(home_source_summary())
 
 home_tab, scanner_tab = st.tabs(["Home", "Global Scanner"])
 
