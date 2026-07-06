@@ -1244,6 +1244,49 @@ def inject_mission_control_css():
         .gq-performance.positive { color:#22c55e; border-color: rgba(34,197,94,0.45); }
         .gq-performance.negative { color:#ef4444; border-color: rgba(239,68,68,0.45); }
         .gq-performance.neutral { color:#e5e7eb; }
+        .gq-mc-card {
+            border-radius: 8px;
+            padding: 0.9rem;
+            border: 1px solid rgba(148,163,184,0.25);
+            background: rgba(15,23,42,0.05);
+            min-height: 7.2rem;
+        }
+        .gq-mc-card.green {
+            border-left: 6px solid #22c55e;
+            background: rgba(34,197,94,0.08);
+        }
+        .gq-mc-card.amber {
+            border-left: 6px solid #eab308;
+            background: rgba(234,179,8,0.08);
+        }
+        .gq-mc-card.red {
+            border-left: 6px solid #ef4444;
+            background: rgba(239,68,68,0.08);
+        }
+        .gq-mc-card.neutral {
+            border-left: 6px solid #64748b;
+        }
+        .gq-mc-value {
+            font-size: 1.35rem;
+            font-weight: 800;
+            line-height: 1.2;
+            margin-bottom: 0.35rem;
+            color: #f8fafc;
+        }
+        .gq-mc-detail {
+            color: #cbd5e1;
+            font-size: 0.86rem;
+            line-height: 1.35;
+        }
+        .gq-briefing {
+            border: 1px solid rgba(125,211,252,0.34);
+            border-radius: 8px;
+            background: rgba(14,116,144,0.08);
+            padding: 0.95rem;
+            margin: 0.35rem 0 1rem 0;
+            color: #e2e8f0;
+            line-height: 1.45;
+        }
         .gq-freshness-grid {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2216,6 +2259,358 @@ def tracker_day_pnl(tracker):
     return f"{values.iloc[-1] - values.iloc[-2]:,.2f}"
 
 
+def tracker_value_pair(tracker):
+    if tracker.empty or "portfolio_value" not in tracker.columns:
+        return None, None
+
+    values = pd.to_numeric(tracker["portfolio_value"], errors="coerce").dropna()
+    if values.empty:
+        return None, None
+
+    latest = float(values.iloc[-1])
+    previous = float(values.iloc[-2]) if len(values) >= 2 else None
+    return latest, previous
+
+
+def tracker_daily_return(tracker):
+    latest, previous = tracker_value_pair(tracker)
+    if latest is None or previous in (None, 0):
+        return None
+    return (latest / previous) - 1
+
+
+def tracker_total_return(tracker):
+    if tracker.empty or "portfolio_value" not in tracker.columns:
+        return None
+
+    values = pd.to_numeric(tracker["portfolio_value"], errors="coerce").dropna()
+    if len(values) < 2 or values.iloc[0] == 0:
+        return None
+
+    return (float(values.iloc[-1]) / float(values.iloc[0])) - 1
+
+
+def todays_realised_pnl(today_trade_rows):
+    total = 0.0
+    found_value = False
+    for row in today_trade_rows:
+        pnl = safe_float(row.get("pnl"))
+        if pnl is None:
+            continue
+        total += pnl
+        found_value = True
+    return total if found_value else None
+
+
+def holding_extremes(holdings):
+    if holdings.empty or "ticker" not in holdings.columns:
+        return None, None
+
+    pnl_column = None
+    for candidate in ["unrealised_pnl", "pnl", "profit_loss"]:
+        if candidate in holdings.columns:
+            pnl_column = candidate
+            break
+
+    if pnl_column is None:
+        return None, None
+
+    working = holdings.copy()
+    working["_pnl"] = pd.to_numeric(working[pnl_column], errors="coerce")
+    working = working.dropna(subset=["_pnl"])
+    if working.empty:
+        return None, None
+
+    winner = working.loc[working["_pnl"].idxmax()]
+    loser = working.loc[working["_pnl"].idxmin()]
+    return (
+        {
+            "ticker": winner.get("ticker", "Unknown"),
+            "pnl": float(winner["_pnl"]),
+        },
+        {
+            "ticker": loser.get("ticker", "Unknown"),
+            "pnl": float(loser["_pnl"]),
+        },
+    )
+
+
+def holding_concentration(holdings, portfolio_value):
+    if holdings.empty or "market_value" not in holdings.columns or not portfolio_value:
+        return None, None
+
+    values = pd.to_numeric(holdings["market_value"], errors="coerce").dropna()
+    if values.empty:
+        return None, None
+
+    top_value = float(values.max())
+    ticker = "Unknown"
+    if "ticker" in holdings.columns:
+        row = holdings.loc[pd.to_numeric(holdings["market_value"], errors="coerce").idxmax()]
+        ticker = row.get("ticker", "Unknown")
+
+    return ticker, top_value / portfolio_value
+
+
+def allocation_rows(frame, category_candidates, value_candidates):
+    if frame.empty:
+        return []
+
+    category_column = next(
+        (column for column in category_candidates if column in frame.columns),
+        None,
+    )
+    value_column = next(
+        (column for column in value_candidates if column in frame.columns),
+        None,
+    )
+    if category_column is None or value_column is None:
+        return []
+
+    working = frame[[category_column, value_column]].copy()
+    working[value_column] = pd.to_numeric(working[value_column], errors="coerce")
+    working = working.dropna(subset=[value_column])
+    if working.empty:
+        return []
+
+    grouped = working.groupby(category_column, dropna=False)[value_column].sum()
+    total = grouped.sum()
+    if total == 0:
+        return []
+
+    return [
+        {
+            "Name": str(name) if str(name) else "Unclassified",
+            "Value": money_label(value),
+            "Weight": percent_label(value / total),
+        }
+        for name, value in grouped.sort_values(ascending=False).head(6).items()
+    ]
+
+
+def research_control_summary():
+    registry = load_json_file("experiments/registry.json")
+    experiments = safe_list(registry.get("experiments"))
+
+    active_statuses = {"ACTIVE", "RUNNING", "IN_PROGRESS"}
+    pending_statuses = {"PENDING", "PLANNED", "QUEUED", "NEEDS MORE TESTING"}
+    completed_statuses = {"COMPLETE", "COMPLETED", "DONE", "APPROVED", "REJECTED"}
+
+    active = 0
+    pending = 0
+    completed = []
+    latest_candidate = None
+
+    for experiment in experiments:
+        decision = str(
+            experiment.get("status")
+            or experiment.get("decision")
+            or experiment.get("result", {}).get("decision")
+            or ""
+        ).upper()
+        timestamp = parse_timestamp(experiment.get("date") or experiment.get("completed_at"))
+        if decision in active_statuses:
+            active += 1
+        elif decision in pending_statuses:
+            pending += 1
+        elif decision in completed_statuses:
+            completed.append((timestamp, experiment))
+
+        if latest_candidate is None:
+            latest_candidate = (timestamp, experiment)
+        elif timestamp is not None and (
+            latest_candidate[0] is None or timestamp > latest_candidate[0]
+        ):
+            latest_candidate = (timestamp, experiment)
+
+    reports = sorted(
+        Path("research/report_exports/campaign_reports").glob("*.md"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    latest_report = reports[0] if reports else None
+
+    latest_completed = "Unavailable"
+    latest_recommendation = "Unavailable"
+    if completed:
+        _, experiment = sorted(
+            completed,
+            key=lambda item: item[0] or pd.Timestamp.min.tz_localize("Europe/London"),
+            reverse=True,
+        )[0]
+        latest_completed = str(experiment.get("experiment_id") or "Completed experiment")
+        latest_recommendation = str(
+            experiment.get("decision")
+            or experiment.get("result", {}).get("decision")
+            or "Completed"
+        )
+    elif latest_candidate is not None:
+        _, experiment = latest_candidate
+        latest_completed = str(experiment.get("experiment_id") or "Latest experiment")
+        latest_recommendation = str(
+            experiment.get("decision")
+            or experiment.get("result", {}).get("decision")
+            or "Unavailable"
+        )
+
+    if latest_report is not None and latest_recommendation == "Unavailable":
+        latest_recommendation = latest_report.stem.replace("_", " ")
+
+    return {
+        "active": active,
+        "pending": pending,
+        "latest_completed": latest_completed,
+        "latest_recommendation": latest_recommendation,
+        "latest_report": latest_report.name if latest_report is not None else "Unavailable",
+    }
+
+
+def portfolio_health_grade(
+    warning_count,
+    critical_count,
+    heartbeat_ok,
+    runtime_live,
+    tracker_fresh,
+    concentration,
+):
+    if critical_count:
+        return "F", "red", f"{critical_count} critical validation issue(s) need attention."
+    if not heartbeat_ok or not runtime_live:
+        return "D", "red", "Runtime heartbeat or process state is not healthy."
+    if not tracker_fresh:
+        return "C", "amber", "Portfolio tracker data is stale or unavailable."
+    if warning_count >= 3:
+        return "C", "amber", f"{warning_count} validation warnings are open."
+    if concentration is not None and concentration >= 0.4:
+        return "B", "amber", "Largest position is above the preferred concentration threshold."
+    if warning_count:
+        return "B", "amber", f"{warning_count} warning(s) are open, but no critical issue is detected."
+    return "A", "green", "Runtime, portfolio, and data checks are operating normally."
+
+
+def mission_control_actions(
+    warning_count,
+    critical_count,
+    heartbeat_ok,
+    runtime_live,
+    tracker_fresh,
+    concentration,
+    concentration_ticker,
+    daily_return,
+    research_summary,
+):
+    actions = []
+    if critical_count:
+        actions.append(
+            {
+                "Priority": "Critical",
+                "Item": "Validation failed",
+                "Detail": f"{critical_count} critical validation issue(s) detected.",
+            }
+        )
+    if not runtime_live:
+        actions.append(
+            {
+                "Priority": "Critical",
+                "Item": "Runtime stopped",
+                "Detail": "Runtime status does not show an active process.",
+            }
+        )
+    if not heartbeat_ok:
+        actions.append(
+            {
+                "Priority": "Warning",
+                "Item": "Heartbeat stale",
+                "Detail": "Runtime heartbeat requires attention.",
+            }
+        )
+    if not tracker_fresh:
+        actions.append(
+            {
+                "Priority": "Warning",
+                "Item": "Tracker stale",
+                "Detail": "Latest portfolio tracker timestamp is older than expected.",
+            }
+        )
+    if warning_count:
+        actions.append(
+            {
+                "Priority": "Warning",
+                "Item": "Validation warnings",
+                "Detail": f"{warning_count} warning(s) are open.",
+            }
+        )
+    if concentration is not None and concentration >= 0.4:
+        actions.append(
+            {
+                "Priority": "Warning",
+                "Item": "Portfolio concentration high",
+                "Detail": f"{concentration_ticker} is {percent_label(concentration)} of portfolio value.",
+            }
+        )
+    if daily_return is not None and abs(daily_return) >= 0.03:
+        actions.append(
+            {
+                "Priority": "Info",
+                "Item": "Large portfolio move",
+                "Detail": f"Daily return is {percent_label(daily_return)}.",
+            }
+        )
+    if research_summary.get("pending", 0):
+        actions.append(
+            {
+                "Priority": "Info",
+                "Item": "Research pending",
+                "Detail": f"{research_summary['pending']} pending experiment(s) need review.",
+            }
+        )
+    return actions
+
+
+def daily_briefing_text(
+    grade,
+    grade_explanation,
+    runtime_stats,
+    critical_count,
+    warning_count,
+    winner,
+    research_summary,
+):
+    scans_today = runtime_stats.get("today_strategy_runs", 0)
+    if critical_count:
+        validation_text = f"{critical_count} critical validation issue(s) detected."
+    elif warning_count:
+        validation_text = f"{warning_count} validation warning(s) detected."
+    else:
+        validation_text = "No validation failures detected."
+
+    strongest = (
+        f"{winner['ticker']} is currently the strongest holding."
+        if winner
+        else "Strongest holding is unavailable."
+    )
+    recommendation = research_summary.get("latest_recommendation") or "Unavailable"
+    return (
+        f"Portfolio health is {grade}. {grade_explanation} "
+        f"Runtime has completed {scans_today} successful scan(s) today. "
+        f"{validation_text} {strongest} "
+        f"Research recommendation: {recommendation}."
+    )
+
+
+def render_mission_control_card(title, value, detail="", level="neutral"):
+    st.markdown(
+        (
+            f'<div class="gq-mc-card {html.escape(level)}">'
+            f'<div class="gq-label">{html.escape(title)}</div>'
+            f'<div class="gq-mc-value">{html.escape(str(value))}</div>'
+            f'<div class="gq-mc-detail">{html.escape(str(detail))}</div>'
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def decorated_trace_rows(decisions):
     rows = []
     for row in build_decision_trace_rows(decisions):
@@ -2920,6 +3315,148 @@ st.info(
         notification_health,
     )
 )
+
+tracker_fresh = is_recent(tracker_latest_date, hours=36)
+daily_return = tracker_daily_return(tracker)
+total_return = tracker_total_return(tracker)
+today_realised = todays_realised_pnl(today_trade_rows)
+winner, loser = holding_extremes(holdings)
+concentration_ticker, concentration = holding_concentration(holdings, portfolio_value)
+research_summary = research_control_summary()
+health_grade, health_level, health_explanation = portfolio_health_grade(
+    warning_count,
+    critical_count,
+    heartbeat_ok,
+    runtime_live,
+    tracker_fresh,
+    concentration,
+)
+action_items = mission_control_actions(
+    warning_count,
+    critical_count,
+    heartbeat_ok,
+    runtime_live,
+    tracker_fresh,
+    concentration,
+    concentration_ticker,
+    daily_return,
+    research_summary,
+)
+sector_rows = allocation_rows(
+    holdings,
+    ["sector", "Sector", "industry", "Industry"],
+    ["market_value", "position_value", "value"],
+)
+asset_rows = allocation_rows(
+    holdings,
+    ["asset_class", "asset_type", "Asset Class", "type"],
+    ["market_value", "position_value", "value"],
+)
+
+st.markdown("**Mission Control v1.0**")
+st.markdown(
+    f'<div class="gq-briefing">{html.escape(daily_briefing_text(health_grade, health_explanation, runtime_stats, critical_count, warning_count, winner, research_summary))}</div>',
+    unsafe_allow_html=True,
+)
+
+health_cols = responsive_columns(3)
+with health_cols[0]:
+    render_mission_control_card(
+        "Portfolio Health",
+        f"Grade {health_grade}",
+        health_explanation,
+        health_level,
+    )
+with health_cols[1]:
+    render_mission_control_card(
+        "Runtime Health",
+        runtime_state(runtime_status)["health"],
+        f"Heartbeat: {heartbeat_label}; uptime: {runtime_uptime_label(runtime_status)}",
+        "green" if heartbeat_ok and runtime_live else "red",
+    )
+with health_cols[2]:
+    render_mission_control_card(
+        "Action Centre",
+        "Everything operating normally." if not action_items else f"{len(action_items)} item(s)",
+        "Only items requiring attention are listed below.",
+        "green" if not action_items else "amber",
+    )
+
+overview_cols = responsive_columns(6)
+overview_cols[0].metric("Today's realised P/L", money_label(today_realised))
+overview_cols[1].metric("Today's unrealised P/L", money_label(unrealised_pnl))
+overview_cols[2].metric("Daily return", percent_label(daily_return))
+overview_cols[3].metric("Total return", percent_label(total_return))
+overview_cols[4].metric(
+    "Largest winner",
+    winner["ticker"] if winner else "Unavailable",
+    money_label(winner["pnl"]) if winner else None,
+)
+overview_cols[5].metric(
+    "Largest loser",
+    loser["ticker"] if loser else "Unavailable",
+    money_label(loser["pnl"]) if loser else None,
+)
+
+allocation_cols = responsive_columns(4)
+allocation_cols[0].metric("Cash", percent_label(cash / portfolio_value if portfolio_value else None))
+allocation_cols[1].metric(
+    "Invested",
+    percent_label(holdings_value / portfolio_value if portfolio_value else None),
+)
+allocation_cols[2].metric("Holdings", open_holdings_count)
+allocation_cols[3].metric(
+    "Largest position",
+    concentration_ticker or "Unavailable",
+    percent_label(concentration),
+)
+
+runtime_cols = responsive_columns(6)
+runtime_cols[0].metric("Runtime heartbeat", heartbeat_label)
+runtime_cols[1].metric("Last successful scan", short_time(last_successful.get("timestamp") if last_successful else None))
+runtime_cols[2].metric("Runtime uptime", runtime_uptime_label(runtime_status))
+runtime_cols[3].metric("Runtime status", runtime_state(runtime_status)["health"])
+runtime_cols[4].metric("Dashboard status", "Online")
+runtime_cols[5].metric(
+    "Data freshness",
+    STATUS_LABELS[HEALTHY] if tracker_fresh else STATUS_LABELS[WARNING],
+)
+
+research_cols = responsive_columns(4)
+research_cols[0].metric("Active experiments", research_summary["active"])
+research_cols[1].metric("Latest completed", research_summary["latest_completed"])
+research_cols[2].metric("Latest recommendation", research_summary["latest_recommendation"])
+research_cols[3].metric("Pending experiments", research_summary["pending"])
+
+system_cols = responsive_columns(4)
+system_cols[0].metric("Runtime warnings", 0 if heartbeat_ok and runtime_live else 1)
+system_cols[1].metric("Portfolio warnings", warning_count)
+system_cols[2].metric("Data warnings", 0 if tracker_fresh else 1)
+system_cols[3].metric("Validation warnings", f"{warning_count} / {critical_count}")
+
+detail_cols = responsive_columns(3)
+with detail_cols[0]:
+    st.markdown("**Sector Allocation**")
+    if sector_rows:
+        responsive_table(pd.DataFrame(sector_rows), hide_index=True)
+    else:
+        st.caption("Sector allocation is not available in the current holdings files.")
+with detail_cols[1]:
+    st.markdown("**Asset Class Allocation**")
+    if asset_rows:
+        responsive_table(pd.DataFrame(asset_rows), hide_index=True)
+    else:
+        st.caption("Asset class allocation is not available in the current holdings files.")
+with detail_cols[2]:
+    st.markdown("**Action Centre**")
+    if action_items:
+        responsive_table(
+            pd.DataFrame(action_items),
+            hide_index=True,
+            mobile_columns=["Priority", "Item", "Detail"],
+        )
+    else:
+        st.success("Everything operating normally.")
 
 st.markdown("**Data Freshness**")
 freshness_items = data_freshness_items(runtime_status, configured_markets)
@@ -4107,7 +4644,9 @@ responsive_table(
     hide_index=True,
 )
 
-warnings_df = checks_df[checks_df["Status"].isin([WARNING, CRITICAL])]
+warnings_df = checks_df[
+    checks_df["Status"].isin([STATUS_LABELS[WARNING], STATUS_LABELS[CRITICAL]])
+]
 
 st.divider()
 st.subheader("Warnings")
