@@ -53,6 +53,15 @@ except Exception:
     generate_experiment_verdict = None
 
 try:
+    from research.research_lab_v2 import (
+        build_metric_delta_table,
+        build_research_lab_v2_model,
+    )
+except Exception:
+    build_metric_delta_table = None
+    build_research_lab_v2_model = None
+
+try:
     from research.automated_parameter_sweep import (
         build_grid_leaderboard,
         build_sweep_leaderboard,
@@ -774,6 +783,163 @@ def render_research_summary(report_text, summary, leaderboard):
         st.info("Campaign 001 report data is not available yet.")
     else:
         responsive_table(leaderboard, hide_index=True)
+
+
+def render_research_lab_v2(model):
+    st.title("Research Lab v2")
+    st.write(
+        "Research interpretation layer: what Garner Quant learned, what matters, "
+        "and what should happen next."
+    )
+
+    summary = model["summary"]
+    experiments = model["experiments"]
+    leaderboard = model["leaderboard"]
+    latest = summary.get("latest")
+    best = summary.get("best")
+
+    st.subheader("Research Briefing")
+    st.info(model["briefing"])
+
+    st.subheader("Research Summary")
+    summary_cols = responsive_columns(6)
+    summary_cols[0].metric("Total experiments", summary["total"])
+    summary_cols[1].metric("Completed experiments", summary["completed"])
+    summary_cols[2].metric("Pending / review", summary["pending"])
+    summary_cols[3].metric(
+        "Latest experiment",
+        latest.get("title", "Unavailable") if latest else "Unavailable",
+    )
+    summary_cols[4].metric(
+        "Best experiment",
+        best.get("title", "Unavailable") if best else "Unavailable",
+    )
+    summary_cols[5].metric("Latest recommendation", summary["latest_recommendation"])
+
+    if latest:
+        st.markdown("**Latest conclusion**")
+        st.write(latest["plain_conclusion"])
+
+    st.subheader("Experiment Leaderboard")
+    if leaderboard.empty:
+        st.info("No experiment leaderboard data is available yet.")
+    else:
+        display_columns = [
+            "Score",
+            "Experiment",
+            "Candidate Strategy",
+            "Baseline Strategy",
+            "CAGR Delta",
+            "Sharpe Delta",
+            "Max Drawdown Delta",
+            "Trade Count",
+            "Decision",
+            "Promotion Recommendation",
+            "Reason",
+        ]
+        responsive_table(
+            leaderboard[display_columns],
+            hide_index=True,
+            mobile_columns=[
+                "Score",
+                "Experiment",
+                "Decision",
+                "Promotion Recommendation",
+            ],
+        )
+
+    st.subheader("Promotion Recommendations")
+    recommendation_rows = []
+    for experiment in experiments[:12]:
+        recommendation_rows.append(
+            {
+                "Experiment": experiment["title"],
+                "Recommendation": experiment["promotion_recommendation"],
+                "Why": experiment["reason"],
+            }
+        )
+    if recommendation_rows:
+        responsive_table(
+            pd.DataFrame(recommendation_rows),
+            hide_index=True,
+            mobile_columns=["Experiment", "Recommendation", "Why"],
+        )
+    else:
+        st.info("No promotion recommendations are available yet.")
+
+    st.subheader("Experiment Detail View")
+    if not experiments:
+        st.info("No experiments have been recorded yet.")
+        return
+
+    default_experiment = best or latest or experiments[0]
+    options = {
+        f"{experiment['title']} | {experiment['promotion_recommendation']} | score {experiment['score']:.2f}": experiment
+        for experiment in experiments
+    }
+    default_label = next(
+        (
+            label
+            for label, experiment in options.items()
+            if experiment.get("experiment_id") == default_experiment.get("experiment_id")
+        ),
+        next(iter(options)),
+    )
+    selected_label = st.selectbox(
+        "Experiment to inspect",
+        list(options.keys()),
+        index=list(options.keys()).index(default_label),
+        key="research_lab_v2_detail_experiment",
+    )
+    selected = options[selected_label]
+
+    detail_cols = responsive_columns(4)
+    detail_cols[0].metric("Decision", selected["decision"])
+    detail_cols[1].metric("Risk-aware score", f"{selected['score']:.2f}")
+    detail_cols[2].metric("Trade count", selected["trade_count"])
+    detail_cols[3].metric("Recommendation", selected["promotion_recommendation"])
+
+    st.markdown("**Hypothesis**")
+    st.write(selected["hypothesis"])
+    st.markdown("**Strategy tested**")
+    st.write(
+        f"{selected['candidate_strategy']} versus {selected['baseline_strategy']}."
+    )
+    st.markdown("**Parameter set**")
+    st.write(selected["parameter_set"])
+    st.markdown("**Plain-English conclusion**")
+    st.write(selected["plain_conclusion"])
+
+    st.markdown("**Baseline vs Candidate Metrics**")
+    if build_metric_delta_table is None:
+        st.info("Metric detail helper is unavailable.")
+    else:
+        metric_delta_table = build_metric_delta_table(selected)
+        responsive_table(
+            metric_delta_table,
+            hide_index=True,
+            mobile_columns=["Metric", "Baseline", "Candidate", "Delta"],
+        )
+
+    st.markdown("**Risk Warnings**")
+    penalties = selected.get("penalties") or []
+    if penalties:
+        for penalty in penalties:
+            st.warning(penalty)
+    else:
+        st.success("No risk penalties were applied by the Research Lab v2 scorer.")
+
+    st.markdown("**Generated Reports**")
+    reports = selected.get("reports") or {}
+    report_rows = [
+        {"Type": report_type, "Path": report_path}
+        for report_type, report_path in reports.items()
+        if report_path
+    ]
+    if report_rows:
+        responsive_table(pd.DataFrame(report_rows), hide_index=True)
+    else:
+        st.info("No generated report links are recorded for this experiment.")
 
 
 def render_metric_explanations():
@@ -1675,19 +1841,31 @@ latest_report, campaign_report_text, campaign_summary, campaign_leaderboard = (
     latest_campaign_report_data()
 )
 
-if campaign_summary:
-    render_research_summary(
-        campaign_report_text,
-        campaign_summary,
-        campaign_leaderboard,
-    )
+research_lab_v2_model = (
+    build_research_lab_v2_model()
+    if build_research_lab_v2_model is not None
+    else None
+)
+
+if research_lab_v2_model is not None:
+    render_research_lab_v2(research_lab_v2_model)
 else:
     st.title("Research Lab Overview")
     st.write(
         "This page shows what Garner Quant has tested, what won, and what "
         "should be tested next."
     )
-    st.info("No Campaign 001 report data is available yet.")
+    st.info("Research Lab v2 interpretation helpers are unavailable.")
+
+with st.expander("Campaign 001 legacy overview", expanded=False):
+    if campaign_summary:
+        render_research_summary(
+            campaign_report_text,
+            campaign_summary,
+            campaign_leaderboard,
+        )
+    else:
+        st.info("No Campaign 001 report data is available yet.")
 
 if "research_lab_mode" not in st.session_state:
     st.session_state["research_lab_mode"] = "Test One Idea"
