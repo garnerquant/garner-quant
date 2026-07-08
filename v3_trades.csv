@@ -1,2 +1,1 @@
-event_id,trade_id,date,time,timestamp,ticker,action,price,entry_price,reason,position_value,value,shares,stop_loss,take_profit,justification
-te_11f7a487f09f4a7706c14473,MSFT_2026-07-07_BUY,2026-07-07,16:13:35,2026-07-07 16:13:35,MSFT,BUY,393.5400085449219,393.5400085449219,SIGNAL ENTRY,1000.0,1000.0,2.541037704647638,366.15287126813615,434.62071446010043,"['Signal passed', 'Weight assigned', 'Risk level available', 'Position added to paper portfolio']"
+
