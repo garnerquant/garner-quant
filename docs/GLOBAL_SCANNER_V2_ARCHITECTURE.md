@@ -88,5 +88,72 @@ python -m research.scanner_v2.acquire --universe sp500
 python -m research.scanner_v2.acquire --all-enabled
 ```
 
+## Phase 3: Canonical Feature Production
+
+The Phase 3 producer pins the active acquisition generation before reading any
+partition. It processes one ticker at a time and publishes a separate immutable
+feature generation. `current_generation.json` is replaced only after features,
+rankings, candidates, rejections, movement and the manifest are complete. A
+generation failure therefore leaves the previous pointer unchanged.
+
+```text
+python -m research.scanner_v2.features --generation current
+python -m research.scanner_v2.features --dry-run
+```
+
+Dry-run reads the same pinned bar partitions and performs the full calculation,
+ranking, comparison-completeness and reconciliation path, but writes nothing.
+Partition-at-a-time reads bound bar memory; only one feature row per asset and
+the ranking table are retained, so the layout remains suitable for 10,000+ assets.
+
+### Migration map
+
+| Legacy input/calculation | Canonical bar input | Feature/ranking field | Deferred dashboard consumer |
+|---|---|---|---|
+| Wide Close last value | ticker `close` partition | `latest_close`, `latest_price_date` | cards and tables |
+| Wide-frame date/null alignment | ticker dates plus generation reference date | `missing_close_pct`, `stale_latest_price`, quality components | diagnostics |
+| EMA20/50, RSI14, MACD and Volume20 flags | ticker close/volume | five flags, indicator values, `technical_score` | cards/comparison |
+| Close × volume mean, trailing 60 | ticker close/volume | `avg_traded_value_60d`, liquidity/volume components | cards/comparison |
+| Returns standard deviation | ticker close | `volatility_20d`, `volatility_60d` (%) | risk/comparison |
+| True range mean, 14 bars | ticker OHLC | `atr_percent` (%) | risk/comparison |
+| Close/running peak, trailing 252 | ticker close | `max_drawdown_1y` (%) | risk/comparison |
+| Trend/swing/volatility/drawdown blend | canonical ticker features | `trend_stability_score` (0–100) | risk/comparison |
+| Legacy six-component sum | canonical component fields | `scanner_score`, `global_score` (0–160) | rank and selection |
+| Quality/score/liquidity/ticker sort | canonical features and memberships | `global_rank`, `universe_ranks` | ranking tables |
+| Mutable prior snapshot inference | prior active feature ranking | movement state, rank/score deltas | movement/history |
+
+`latest_rankings.csv` and `selected_candidates.csv` have identical schemas; the
+latter is only the selected row subset. This removes the legacy schema drift
+caused by selecting candidates before history and persistence enrichment.
+
+### Feature dictionary
+
+All nulls are explicit CSV nulls. Calculation exceptions produce a `failed` row;
+quality-rule failures produce a `rejected` row; neither receives a hidden score.
+
+| Field group | Source/formula and units | Minimum history / null and rejection handling |
+|---|---|---|
+| Price/freshness | final adjusted close and date; stale when older than generation reference by 7 calendar days; freshness 20 for price plus 20 if fresh | one bar; missing partition fails |
+| History/missingness | bar count; absent business dates divided by expected business dates; history `min(count/252,1)×20`; completeness `(1-missing)×20` | 126 to score; >10% missing rejects |
+| Technical indicators | EMA20/EMA50 price tests with existing ticker threshold; RSI14 in (45,70); MACD12/26 above EMA9 signal; volume above SMA20 | 60 bars; insufficient history rejects; no forward fill |
+| Technical score | sum of five Boolean tests, 0–5; component `score×10` | 60 bars; null on insufficient history |
+| Liquidity/volume | mean adjusted close × volume over 60 bars, native currency/day; component `min(log10(max(value,1))×2,20)`; recent volume component 0/10 | available observations; zero recent volume rejects |
+| Volatility | sample standard deviation of daily returns over 20/60 observations ×√252×100, percent | two returns; null if insufficient |
+| ATR | mean 14-bar true range/latest close×100, percent | available true ranges; null if unavailable |
+| Max drawdown | absolute minimum of close/running maximum over final 252 bars×100, percent | one bar |
+| Trend stability | above-EMA50 consistency 40 + low large-swing frequency 20 + inverse volatility 20 + inverse drawdown 20 | 60 bars; null if unavailable |
+| Risk | capped vol/80×40 + drawdown/60×40 + ATR/8×20; labels at 20/40/60/80 | all three diagnostics; otherwise Unknown |
+| Confidence | `(freshness + history + missingness + volume) / 90`, 0–1 | explicit zero for failed assets |
+| Total score | freshness + history + missingness + volume + technical + liquidity, 0–160 | only quality-passing rows enter ranking |
+| Metadata | canonical universe and membership join | preserved strings; memberships sorted and pipe-delimited |
+| Terminal state | exactly one of scored/rejected/failed; rejection reasons sorted and pipe-delimited | no asset may occupy two states |
+
+The intentional differences from the legacy wide frame are: technical inputs are
+never forward-filled; missingness is measured from each partition's business-date
+coverage rather than another asset's index; drawdown is explicitly capped to 252
+observations; missing OHLC never falls back to a close-only ATR approximation; and
+download/feature failures are distinct from quality rejection. Complete-bar golden
+fixtures preserve legacy indicators, weights, thresholds, score and tie-breaking.
+
 Dry-run builds and prints the plan without downloads or canonical writes. Live
 network smoke testing is optional and is not part of required validation.
