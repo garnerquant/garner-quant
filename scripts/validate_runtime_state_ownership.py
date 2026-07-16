@@ -45,6 +45,37 @@ def main():
     restore_at = deploy.index("Restoring server-owned runtime state")
     validation_at = deploy.index("Running startup validation")
     check(reset_at < restore_at < validation_at, "deployment restores state before startup validation", issues)
+    check(
+        "flock -n 9" in deploy,
+        "deployment has a host-side concurrency lock",
+        issues,
+    )
+    check(
+        "Unsafe runtime backup path:" in deploy
+        and "git check-ignore -q" in deploy,
+        "deployment rejects source, secret, and non-ignored backup paths",
+        issues,
+    )
+    check(
+        'systemctl stop "$RUNTIME_SERVICE" "$DASHBOARD_SERVICE" || true' not in deploy,
+        "deployment fails if services cannot be stopped",
+        issues,
+    )
+    check(
+        "RUNTIME_RESTORED=false" in deploy
+        and 'if [ "$RUNTIME_RESTORED" = true ]' in deploy
+        and "Recovery backup retained at:" in deploy,
+        "failed restoration retains the recovery backup",
+        issues,
+    )
+    check(
+        "DASHBOARD_WAS_ACTIVE=false" in deploy
+        and "RUNTIME_WAS_ACTIVE=false" in deploy
+        and 'if [ "$DASHBOARD_WAS_ACTIVE" = true ]' in deploy
+        and 'if [ "$RUNTIME_WAS_ACTIVE" = true ]' in deploy,
+        "deployment preserves each service's pre-deploy running state",
+        issues,
+    )
     check("git add -u" not in daily and "git push" not in daily, "daily Actions run cannot publish runtime state", issues)
     check("contents: read" in daily, "daily Actions workflow has read-only repository permission", issues)
     check(

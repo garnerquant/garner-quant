@@ -39,20 +39,47 @@ jobs:
 
           cd "$APP_DIR"
 
+          exec 9>/tmp/garner-quant-deploy.lock
+          flock -n 9 || {
+            echo "Another deployment is already running."
+            exit 1
+          }
+
           RUNTIME_BACKUP="$(mktemp -d)"
+          RUNTIME_RESTORED=false
           cleanup_runtime_backup() {
-            rm -rf "$RUNTIME_BACKUP"
+            if [ "$RUNTIME_RESTORED" = true ]; then
+              rm -rf "$RUNTIME_BACKUP"
+            else
+              echo "Deployment failed before runtime-state restoration completed."
+              echo "Recovery backup retained at: $RUNTIME_BACKUP"
+            fi
           }
           trap cleanup_runtime_backup EXIT
 
+          DASHBOARD_WAS_ACTIVE=false
+          RUNTIME_WAS_ACTIVE=false
+          sudo systemctl is-active --quiet "$DASHBOARD_SERVICE" && DASHBOARD_WAS_ACTIVE=true
+          sudo systemctl is-active --quiet "$RUNTIME_SERVICE" && RUNTIME_WAS_ACTIVE=true
+
           echo "Stopping runtime and dashboard before code update..."
-          sudo systemctl stop "$RUNTIME_SERVICE" "$DASHBOARD_SERVICE" || true
+          sudo systemctl stop "$RUNTIME_SERVICE" "$DASHBOARD_SERVICE"
 
           echo "Preserving server-owned runtime state..."
           while IFS= read -r runtime_path; do
             runtime_path="${runtime_path%%#*}"
             runtime_path="${runtime_path%$'\r'}"
             [ -n "$runtime_path" ] || continue
+            case "$runtime_path" in
+              /*|..|../*|*/../*|*/..|.env|.env/*|.streamlit/secrets.toml)
+                echo "Unsafe runtime backup path: $runtime_path"
+                exit 1
+                ;;
+            esac
+            if ! git check-ignore -q -- "$runtime_path"; then
+              echo "Runtime backup path is not Git-ignored: $runtime_path"
+              exit 1
+            fi
             if [ -d "$runtime_path" ]; then
               mkdir -p "$RUNTIME_BACKUP/$runtime_path"
               cp -a "$runtime_path/." "$RUNTIME_BACKUP/$runtime_path/"
@@ -68,6 +95,7 @@ jobs:
 
           echo "Restoring server-owned runtime state..."
           cp -a "$RUNTIME_BACKUP/." "$APP_DIR/"
+          RUNTIME_RESTORED=true
 
           echo "Installing/updating dependencies..."
           if [ ! -d ".venv" ]; then
@@ -84,11 +112,20 @@ jobs:
             exit 1
           fi
 
-          echo "Restarting dashboard and runtime..."
-          sudo systemctl restart "$DASHBOARD_SERVICE"
-          sudo systemctl restart "$RUNTIME_SERVICE"
+          if [ "$DASHBOARD_WAS_ACTIVE" = true ]; then
+            echo "Restarting dashboard..."
+            sudo systemctl restart "$DASHBOARD_SERVICE"
+          else
+            echo "Dashboard was stopped before deployment; leaving it stopped."
+          fi
+          if [ "$RUNTIME_WAS_ACTIVE" = true ]; then
+            echo "Restarting runtime..."
+            sudo systemctl restart "$RUNTIME_SERVICE"
+          else
+            echo "Runtime was stopped before deployment; leaving it stopped."
+          fi
 
           echo "Service status:"
-          sudo systemctl status "$DASHBOARD_SERVICE" --no-pager
-          sudo systemctl status "$RUNTIME_SERVICE" --no-pager
+          sudo systemctl status "$DASHBOARD_SERVICE" --no-pager || true
+          sudo systemctl status "$RUNTIME_SERVICE" --no-pager || true
           REMOTE_DEPLOY
