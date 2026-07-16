@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from dashboard.data_loader import load_csv
+from dashboard.equity_chart import build_equity_curve_layers
 from dashboard.metrics import unrealised_pnl_from_holdings
 from execution.trade_audit import build_authoritative_trade_audit
 from reporting.paper_performance import challenge_initial_capital
@@ -3998,28 +3999,11 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
         ),
         tooltip_value,
     ]
-    continuity_line = (
-        alt.Chart(chart_data_for_plot)
-        .mark_line(strokeWidth=2, strokeDash=[5, 5], opacity=0.42)
-        .encode(**shared_encoding, tooltip=tooltip)
-    )
-    recorded_lines = (
-        alt.Chart(chart_data_for_plot)
-        .transform_filter(alt.datum.is_recorded)
-        .mark_line(strokeWidth=3)
-        .encode(
-            **shared_encoding,
-            detail=alt.Detail("recorded_run:N"),
-            tooltip=tooltip,
-        )
-    )
-    recorded_points = (
-        alt.Chart(chart_data_for_plot)
-        .transform_filter(alt.datum.is_recorded)
-        .mark_point(filled=True, size=70)
-        .encode(**shared_encoding, tooltip=tooltip)
-    )
-    chart = (continuity_line + recorded_lines + recorded_points).properties(height=420)
+    chart = build_equity_curve_layers(
+        chart_data_for_plot,
+        shared_encoding,
+        tooltip,
+    ).properties(height=420)
     if zero_line is not None:
         chart = zero_line + chart
 
