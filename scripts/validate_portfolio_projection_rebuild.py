@@ -4,6 +4,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -22,6 +23,7 @@ from scripts.rebuild_portfolio_projection import (
     file_hash,
     position_map,
     run,
+    validate_projection,
 )
 
 
@@ -99,6 +101,50 @@ def main():
         check(list(projection.columns) == PORTFOLIO_COLUMNS, "canonical portfolio columns are preserved", issues)
         check(projection["signal_exit_count"].eq(0).all() and projection["last_signal_exit_check"].eq("").all(), "operational fields follow explicit reset policy", issues)
         check(float(projection.loc[projection.ticker.eq("IUSA.L"), "entry_price"].iloc[0]) == 5597.0, "incorrect existing rows are replaced rather than preserved", issues)
+        check(not projection.isna().all(axis=1).any(), "valid reconstruction contains no all-NaN rows", issues)
+        check(set(projection["ticker"]).isdisjoint({"STALE", "WRONG"}), "stale portfolio rows never leak into reconstruction", issues)
+
+        authoritative = ledger_accounting(clean_ledger_events(load_trade_ledger(base / "trade_ledger_v1.csv")))["open_lots"]
+
+        malformed = projection.copy()
+        malformed.loc[len(malformed)] = {
+            "signal_exit_count": 0,
+            "last_signal_exit_check": "",
+        }
+        try:
+            validate_projection(malformed, authoritative, 7000.0)
+            blank_refused = False
+        except ProjectionRebuildError as exc:
+            blank_refused = "null" in str(exc).lower() or "missing" in str(exc).lower()
+        check(blank_refused, "exact malformed blank portfolio row is refused", issues)
+
+        substituted_authoritative = authoritative.copy()
+        substituted_authoritative.loc[
+            substituted_authoritative["ticker"].eq("BTC-GBP"), "ticker"
+        ] = "AAPL"
+        try:
+            validate_projection(projection, substituted_authoritative, 7000.0)
+            substitution_refused = False
+        except ProjectionRebuildError as exc:
+            substitution_refused = "ticker set" in str(exc).lower()
+        check(substitution_refused, "AAPL/ETH-style ticker substitution is refused", issues)
+
+        wrong_cost = projection.copy()
+        wrong_cost.loc[wrong_cost["ticker"].eq("VWRL.L"), "position_value"] = 1000.0
+        try:
+            validate_projection(wrong_cost, authoritative, 7000.0)
+            cost_refused = False
+        except ProjectionRebuildError as exc:
+            cost_refused = "open_cost_basis" in str(exc)
+        check(cost_refused, "total cost-basis mismatch is refused", issues)
+
+        misaligned = projection.copy()[list(reversed(PORTFOLIO_COLUMNS))]
+        try:
+            validate_projection(misaligned, authoritative, 7000.0)
+            alignment_refused = False
+        except ProjectionRebuildError as exc:
+            alignment_refused = "canonical column order" in str(exc).lower()
+        check(alignment_refused, "column misalignment is refused", issues)
 
         source_names = ["trade_ledger_v1.csv", "trade_snapshots.csv", "trade_journal_v3.csv", "trade_transactions_v1.csv"]
         before_sources = {name: (base / name).read_bytes() for name in source_names}
@@ -168,6 +214,27 @@ def main():
         except ProjectionRebuildError:
             duplicate_id_refused = True
         check(duplicate_id_refused, "duplicate ledger event IDs are refused", issues)
+
+        write_fixture(base)
+        if (base / "data").exists():
+            shutil.rmtree(base / "data")
+        protected_before = (base / "paper_portfolio_v3.csv").read_bytes()
+        with patch(
+            "scripts.rebuild_portfolio_projection.validate_projection",
+            side_effect=ProjectionRebuildError("simulated final invariant failure"),
+        ):
+            try:
+                run(base, apply=True)
+                apply_refused = False
+            except ProjectionRebuildError:
+                apply_refused = True
+        check(
+            apply_refused
+            and (base / "paper_portfolio_v3.csv").read_bytes() == protected_before
+            and not (base / "data").exists(),
+            "apply refuses before mutation when any final invariant fails",
+            issues,
+        )
     finally:
         if base.exists():
             shutil.rmtree(base)

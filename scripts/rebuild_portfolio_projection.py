@@ -26,6 +26,15 @@ from runtime.locks import acquire_execution_lock
 
 SHARE_TOLERANCE = 1e-9
 VALUE_TOLERANCE = 1e-6
+REQUIRED_POSITION_FIELDS = (
+    "ticker",
+    "entry_date",
+    "entry_price",
+    "shares",
+    "position_value",
+    "stop_loss",
+    "take_profit",
+)
 REPORT_NAME = "portfolio_projection_rebuild_report.json"
 SOURCE_FILES = (
     "trade_ledger_v1.csv",
@@ -87,6 +96,91 @@ def position_map(frame: pd.DataFrame, shares_column="shares") -> dict[str, float
     return data.groupby("ticker")[shares_column].sum().to_dict()
 
 
+def validate_projection(
+    projection: pd.DataFrame,
+    open_lots: pd.DataFrame,
+    authoritative_open_cost_basis: float,
+) -> dict:
+    if list(projection.columns) != PORTFOLIO_COLUMNS:
+        raise ProjectionRebuildError(
+            "reconstructed projection columns do not match canonical column order"
+        )
+    if projection.isna().all(axis=1).any():
+        raise ProjectionRebuildError("reconstructed projection contains an all-null row")
+
+    for field in REQUIRED_POSITION_FIELDS:
+        if projection[field].isna().any():
+            raise ProjectionRebuildError(
+                f"reconstructed projection contains missing {field}"
+            )
+    if len(projection) != len(open_lots):
+        raise ProjectionRebuildError(
+            "reconstructed row count does not equal authoritative open-lot count"
+        )
+    tickers = projection["ticker"].astype(str).str.strip().str.upper()
+    if tickers.eq("").any() or tickers.isin({"NAN", "NONE", "NAT"}).any():
+        raise ProjectionRebuildError("reconstructed projection contains missing ticker")
+    if tickers.duplicated().any():
+        raise ProjectionRebuildError("reconstructed projection contains duplicate tickers")
+    if projection["entry_date"].astype(str).str.strip().eq("").any():
+        raise ProjectionRebuildError("reconstructed projection contains missing entry_date")
+
+    numeric_fields = (
+        "entry_price",
+        "shares",
+        "position_value",
+        "stop_loss",
+        "take_profit",
+    )
+    for field in numeric_fields:
+        values = pd.to_numeric(projection[field], errors="coerce")
+        if values.isna().any() or not values.map(math.isfinite).all() or not values.gt(0).all():
+            raise ProjectionRebuildError(
+                f"reconstructed projection contains invalid {field}"
+            )
+    exit_counts = pd.to_numeric(projection["signal_exit_count"], errors="coerce")
+    if exit_counts.isna().any() or not exit_counts.eq(0).all():
+        raise ProjectionRebuildError("signal_exit_count must be zero for every rebuilt row")
+    checks = projection["last_signal_exit_check"].fillna("").astype(str)
+    if not checks.eq("").all():
+        raise ProjectionRebuildError("last_signal_exit_check must be empty for every rebuilt row")
+
+    ledger_positions = position_map(open_lots)
+    projection_positions = position_map(projection)
+    if set(ledger_positions) != set(projection_positions):
+        raise ProjectionRebuildError(
+            "reconstructed ticker set does not equal authoritative ledger open lots"
+        )
+    for ticker in sorted(ledger_positions):
+        if abs(float(ledger_positions[ticker]) - float(projection_positions[ticker])) > SHARE_TOLERANCE:
+            raise ProjectionRebuildError(
+                f"reconstructed shares do not equal ledger open shares for {ticker}"
+            )
+
+    expected_cost = finite_positive(
+        authoritative_open_cost_basis,
+        "authoritative open cost basis",
+    ) if len(open_lots) else 0.0
+    reconstructed_cost = float(
+        pd.to_numeric(projection["position_value"], errors="coerce").sum()
+    )
+    if abs(reconstructed_cost - expected_cost) > VALUE_TOLERANCE:
+        raise ProjectionRebuildError(
+            "reconstructed total position_value does not equal authoritative "
+            f"open_cost_basis ({reconstructed_cost} != {expected_cost})"
+        )
+    return {
+        "orphan_sells": 0,
+        "unique_tickers": True,
+        "no_null_or_partial_rows": True,
+        "ledger_portfolio_shares_equal": True,
+        "position_count": len(projection),
+        "reconstructed_cost_basis": reconstructed_cost,
+        "authoritative_open_cost_basis": expected_cost,
+        "cost_basis_equal": True,
+    }
+
+
 def build_projection(base_dir) -> tuple[pd.DataFrame, dict]:
     base = Path(base_dir)
     ledger_path = base / "trade_ledger_v1.csv"
@@ -124,6 +218,8 @@ def build_projection(base_dir) -> tuple[pd.DataFrame, dict]:
     sources = []
     for _, lot in open_lots.sort_values("ticker").iterrows():
         ticker = str(lot["ticker"]).strip().upper()
+        if not ticker or ticker in {"NAN", "NONE", "NAT"}:
+            raise ProjectionRebuildError("open ledger lot contains missing ticker")
         shares = finite_positive(lot["shares"], f"{ticker} shares")
         entry_price = finite_positive(lot["entry_price"], f"{ticker} entry price")
         cost_basis = finite_positive(lot["cost_basis"], f"{ticker} cost basis")
@@ -154,7 +250,11 @@ def build_projection(base_dir) -> tuple[pd.DataFrame, dict]:
             "signal_exit_count": 0,
             "last_signal_exit_check": "",
         }
-        rows.append(row)
+        if set(row) != set(PORTFOLIO_COLUMNS):
+            raise ProjectionRebuildError(
+                f"{ticker} reconstructed row is not keyed by canonical columns"
+            )
+        rows.append({column: row[column] for column in PORTFOLIO_COLUMNS})
         sources.append({
             "ticker": ticker,
             "ledger_event_id": str(lot["event_id"]),
@@ -162,26 +262,16 @@ def build_projection(base_dir) -> tuple[pd.DataFrame, dict]:
             "snapshot_trade_id": str(snapshot["trade_id"]),
         })
 
-    projection = pd.DataFrame(rows, columns=PORTFOLIO_COLUMNS)
-    if projection["ticker"].duplicated().any():
-        raise ProjectionRebuildError("reconstructed projection contains duplicate tickers")
-    ledger_positions = position_map(open_lots)
-    projection_positions = position_map(projection)
-    equality = all(
-        abs(float(ledger_positions.get(ticker, 0)) - float(projection_positions.get(ticker, 0))) <= SHARE_TOLERANCE
-        for ticker in set(ledger_positions) | set(projection_positions)
+    projection = pd.DataFrame.from_records(rows, columns=PORTFOLIO_COLUMNS)
+    validation = validate_projection(
+        projection,
+        open_lots,
+        float(accounting["open_cost_basis"]),
     )
-    if not equality:
-        raise ProjectionRebuildError("reconstructed shares do not equal ledger open shares")
     return projection, {
         "positions": sources,
         "open_cost_basis": float(accounting["open_cost_basis"]),
-        "validation": {
-            "orphan_sells": 0,
-            "unique_tickers": True,
-            "ledger_portfolio_shares_equal": True,
-            "position_count": len(projection),
-        },
+        "validation": validation,
     }
 
 
@@ -202,6 +292,9 @@ def run(base_dir=ROOT, apply=False):
     if not lock.acquired:
         raise ProjectionRebuildError("another execution holds the runtime lock")
     try:
+        # Re-read authoritative sources under the lock so the validated frame is
+        # exactly the frame written; never reuse a pre-lock or existing portfolio.
+        projection, details = build_projection(base)
         before_hash = file_hash(portfolio_path)
         source_hashes_before = {name: file_hash(base / name) for name in SOURCE_FILES}
         atomic_write_csv_frames({portfolio_path: projection}, lock_path=lock_path)
