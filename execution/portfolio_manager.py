@@ -180,6 +180,17 @@ def _position_shares_by_ticker(frame):
     return data[data["ticker"].ne("")].groupby("ticker")["shares"].sum().to_dict()
 
 
+def append_portfolio_position(portfolio, values):
+    """Append one position without relying on potentially sparse row labels."""
+    updated = portfolio.reset_index(drop=True).copy()
+    ticker = str(values[0]).strip()
+    existing = updated.get("ticker", pd.Series(dtype=str)).fillna("").astype(str)
+    if ticker and existing.str.strip().eq(ticker).any():
+        raise ValueError(f"Refusing duplicate open portfolio position for {ticker}")
+    updated.loc[len(updated)] = values
+    return updated
+
+
 def assert_portfolio_matches_ledger(portfolio, tolerance=1e-6):
     accounting = authoritative_ledger_accounting()
     if accounting is None:
@@ -688,7 +699,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
 
             portfolio = portfolio[
                 portfolio["ticker"] != ticker
-            ]
+            ].reset_index(drop=True)
 
             cash += value
             exited_tickers.add(ticker)
@@ -738,7 +749,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 else cash
             )
 
-            portfolio.loc[len(portfolio)] = [
+            portfolio = append_portfolio_position(portfolio, [
                 ticker,
                 trade_date,
                 price,
@@ -748,7 +759,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
                 take_profits[ticker],
                 0,
                 "",
-            ]
+            ])
 
             now = datetime.now()
             trade_time = now.strftime("%H:%M:%S")
