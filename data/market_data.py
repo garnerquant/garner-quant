@@ -1,7 +1,10 @@
 import yfinance as yf
 
+from data.yfinance_cache import configure_yfinance_cache_for_ci
+
 
 def download_market_data(tickers, period="3y"):
+    configure_yfinance_cache_for_ci()
     data = yf.download(
         tickers,
         period=period,
