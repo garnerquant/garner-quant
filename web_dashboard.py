@@ -3973,45 +3973,62 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
     )
     chart_data_for_plot = plot_data.dropna(subset=[active_value_column])
 
-    chart = (
+    shared_encoding = {
+        "x": alt.X(
+            "challenge_day:O",
+            title="Challenge day",
+            axis=alt.Axis(labelExpr="'Day ' + datum.value"),
+            sort=None,
+        ),
+        "y": alt.Y(
+            y_field,
+            title=y_title,
+            scale=alt.Scale(domain=list(y_domain), zero=False),
+            axis=alt.Axis(format=y_format),
+        ),
+    }
+    tooltip = [
+        alt.Tooltip("challenge_day_label:N", title="Challenge day"),
+        alt.Tooltip("date:T", title="Date", format="%Y-%m-%d"),
+        alt.Tooltip("is_recorded:N", title="Recorded snapshot"),
+        alt.Tooltip(
+            "portfolio_value:Q",
+            title="Portfolio value",
+            format=",.2f",
+        ),
+        tooltip_value,
+    ]
+    continuity_line = (
         alt.Chart(chart_data_for_plot)
-        .mark_line(point=True, strokeWidth=3)
-        .encode(
-            x=alt.X(
-                "challenge_day:O",
-                title="Challenge day",
-                axis=alt.Axis(labelExpr="'Day ' + datum.value"),
-                sort=None,
-            ),
-            y=alt.Y(
-                y_field,
-                title=y_title,
-                scale=alt.Scale(domain=list(y_domain), zero=False),
-                axis=alt.Axis(format=y_format),
-            ),
-            tooltip=[
-                alt.Tooltip(
-                    "challenge_day_label:N",
-                    title="Challenge day",
-                ),
-                alt.Tooltip("date:T", title="Date", format="%Y-%m-%d"),
-                alt.Tooltip("is_recorded:N", title="Recorded snapshot"),
-                alt.Tooltip(
-                    "portfolio_value:Q",
-                    title="Portfolio value",
-                    format=",.2f",
-                ),
-                tooltip_value,
-            ],
-        )
-        .properties(height=420)
+        .mark_line(strokeWidth=2, strokeDash=[5, 5], opacity=0.42)
+        .encode(**shared_encoding, tooltip=tooltip)
     )
+    recorded_lines = (
+        alt.Chart(chart_data_for_plot)
+        .transform_filter(alt.datum.is_recorded)
+        .mark_line(strokeWidth=3)
+        .encode(
+            **shared_encoding,
+            detail=alt.Detail("recorded_run:N"),
+            tooltip=tooltip,
+        )
+    )
+    recorded_points = (
+        alt.Chart(chart_data_for_plot)
+        .transform_filter(alt.datum.is_recorded)
+        .mark_point(filled=True, size=70)
+        .encode(**shared_encoding, tooltip=tooltip)
+    )
+    chart = (continuity_line + recorded_lines + recorded_points).properties(height=420)
     if zero_line is not None:
         chart = zero_line + chart
 
     st.altair_chart(chart, width="stretch")
     if caption:
         st.caption(caption)
+    st.caption(
+        "Missing calendar days are shown using the last recorded portfolio value."
+    )
 
 
 st.set_page_config(

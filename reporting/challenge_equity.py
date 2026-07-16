@@ -12,6 +12,8 @@ def prepare_challenge_equity_curve(tracker, initial_capital, today=None):
         "challenge_day_label",
         "return_pct",
         "is_recorded",
+        "recorded_point_value",
+        "recorded_run",
     ]
     if tracker is None or tracker.empty or "date" not in tracker.columns:
         return pd.DataFrame(columns=columns), 0
@@ -60,4 +62,13 @@ def prepare_challenge_equity_curve(tracker, initial_capital, today=None):
     display["return_pct"] = (
         display["portfolio_value"] / baseline - 1
     ) * 100
+    display["recorded_point_value"] = display["portfolio_value"].where(
+        display["is_recorded"]
+    )
+    recorded_starts = display["is_recorded"] & ~display["is_recorded"].shift(
+        fill_value=False
+    )
+    display["recorded_run"] = recorded_starts.cumsum().where(
+        display["is_recorded"]
+    )
     return display[columns], current_challenge_day
