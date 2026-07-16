@@ -140,8 +140,6 @@ def _run_main_unlocked(show_charts=True, send_telegram=True, sync_remote=True):
             "weights_v2.csv": weights,
             "risk_levels_v2.csv": risk_levels,
             "portfolio_v2.csv": portfolio,
-            "paper_portfolio_v3.csv": paper_portfolio,
-            "trade_journal_v3.csv": trade_journal,
             "v3_trades.csv": v3_trades,
         },
         to_csv_kwargs_by_path={
