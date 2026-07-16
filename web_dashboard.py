@@ -15,6 +15,7 @@ from dashboard.data_loader import load_csv
 from dashboard.metrics import unrealised_pnl_from_holdings
 from execution.trade_audit import build_authoritative_trade_audit
 from reporting.paper_performance import challenge_initial_capital
+from reporting.challenge_equity import prepare_challenge_equity_curve
 from ui.auth import require_dashboard_login
 from ui.responsive import (
     apply_responsive_styles,
@@ -3894,47 +3895,15 @@ def numeric_y_domain(values, *, minimum_padding):
 
 
 def render_equity_curve(chart_data, current_value, initial_capital=None):
-    plot_data = chart_data.reset_index()[["date", "portfolio_value"]].copy()
-    plot_data["date"] = pd.to_datetime(plot_data["date"], errors="coerce")
-    plot_data["portfolio_value"] = pd.to_numeric(
-        plot_data["portfolio_value"],
-        errors="coerce",
-    )
-    plot_data = plot_data.dropna(subset=["date", "portfolio_value"])
-    plot_data = plot_data.sort_values("date")
-    plot_data["trading_date"] = plot_data["date"].dt.date
-    plot_data = (
-        plot_data.groupby("trading_date", as_index=False)
-        .tail(1)
-        .reset_index(drop=True)
-    )
+    plot_data = chart_data.copy()
     if plot_data.empty:
         st.info("No valid equity values available for the chart yet.")
         return
 
-    first_value = plot_data["portfolio_value"].iloc[0]
     baseline_value = initial_capital
     if baseline_value is None or pd.isna(baseline_value) or float(baseline_value) <= 0:
-        baseline_value = first_value
+        baseline_value = plot_data["portfolio_value"].iloc[0]
     can_show_return = pd.notna(baseline_value) and float(baseline_value) != 0
-
-    if can_show_return and abs(float(first_value) - float(baseline_value)) > 0.01:
-        baseline_row = {
-            "date": plot_data["date"].iloc[0] - pd.Timedelta(days=1),
-            "portfolio_value": float(baseline_value),
-            "trading_date": (
-                plot_data["date"].iloc[0] - pd.Timedelta(days=1)
-            ).date(),
-        }
-        plot_data = pd.concat(
-            [pd.DataFrame([baseline_row]), plot_data],
-            ignore_index=True,
-        )
-
-    plot_data["challenge_day"] = range(0, len(plot_data))
-    plot_data["challenge_day_label"] = plot_data["challenge_day"].map(
-        lambda day: f"Day {day}"
-    )
 
     chart_mode = st.radio(
         "Equity chart view",
@@ -3943,14 +3912,12 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
         key="thirty_day_equity_chart_view",
     )
 
-    plot_data["return_pct"] = (
-        (
-            plot_data["portfolio_value"] / float(baseline_value) - 1
+    if "return_pct" not in plot_data.columns:
+        plot_data["return_pct"] = (
+            (plot_data["portfolio_value"] / float(baseline_value) - 1) * 100
+            if can_show_return
+            else None
         )
-        * 100
-        if can_show_return
-        else None
-    )
 
     if chart_mode == "Return from start (%)" and can_show_return:
         y_domain = numeric_y_domain(
@@ -4028,6 +3995,7 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
                     title="Challenge day",
                 ),
                 alt.Tooltip("date:T", title="Date", format="%Y-%m-%d"),
+                alt.Tooltip("is_recorded:N", title="Recorded snapshot"),
                 alt.Tooltip(
                     "portfolio_value:Q",
                     title="Portfolio value",
@@ -4353,19 +4321,17 @@ with home_tab:
             else 0
         )
 
-        paper_30["date"] = pd.to_datetime(
-            paper_30["date"],
-            errors="coerce",
-        )
-
-        start_date = paper_30["date"].min().date()
         today = pd.Timestamp.now().date()
-        days_tracked = (today - start_date).days + 1
+        chart_data, current_challenge_day = prepare_challenge_equity_curve(
+            paper_30,
+            start_balance,
+            today=today,
+        )
 
         col1, col2 = responsive_columns(2)
 
         with col1:
-            metric_card("Day", f"{days_tracked}/30", True)
+            metric_card("Day", f"{current_challenge_day}/30", True)
             metric_card("Return", f"{total_return:.2%}", True)
             metric_card(
                 "Realised PnL",
@@ -4383,11 +4349,6 @@ with home_tab:
             )
 
         st.subheader("📈 30 Day Equity Curve")
-
-        chart_data = paper_30.copy()
-        chart_data["date"] = pd.to_datetime(chart_data["date"])
-        chart_data = chart_data.sort_values("date")
-        chart_data = chart_data.set_index("date")
 
         render_equity_curve(chart_data, current_balance, start_balance)
 
