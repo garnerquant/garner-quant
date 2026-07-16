@@ -425,8 +425,16 @@ def _commit_refresh_frames(
     base_dir=".",
     failure_hook=None,
     output_paths=None,
+    source_portfolio=None,
 ):
-    _validate_refresh_frames(frames)
+    validation_frames = dict(frames)
+    if source_portfolio is not None:
+        validation_frames[PORTFOLIO_FILE] = source_portfolio
+    _validate_refresh_frames(validation_frames)
+    if PORTFOLIO_FILE in frames:
+        raise ValueError(
+            "Mark-to-market refresh cannot write the upstream paper portfolio."
+        )
     output_paths = output_paths or {}
     changed_frames = {}
     changed_files = []
@@ -558,13 +566,16 @@ def mark_to_market_refresh(monitor_result=None, sync_remote=True, base_dir="."):
     portfolio_report, _ = _build_portfolio_report_refresh(base_dir, portfolio_value)
     tracker, _ = _build_tracker_refresh(base_dir, broker.loc[0], timestamp)
     refresh_frames = {
-        PORTFOLIO_FILE: valued_portfolio,
         HOLDINGS_FILE: holdings,
         BROKER_FILE: broker,
         PORTFOLIO_REPORT_FILE: portfolio_report,
         TRACKER_FILE: tracker,
     }
-    changed_files = _commit_refresh_frames(refresh_frames, base_dir=base_dir)
+    changed_files = _commit_refresh_frames(
+        refresh_frames,
+        base_dir=base_dir,
+        source_portfolio=valued_portfolio,
+    )
 
     sync_errors = _sync_changed_files(changed_files) if sync_remote else []
 

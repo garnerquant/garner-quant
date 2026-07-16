@@ -1,4 +1,4 @@
-name: Daily Garner Quant Run
+name: Daily Garner Quant Validation
 
 # Runs Garner Quant every morning at 8am UK time
 on:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: garner-quant-daily-state
@@ -29,19 +29,9 @@ jobs:
       - name: Install requirements
         run: pip install -r requirements.txt
 
-      - name: Run Garner Quant
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main_v2.py
-
-      - name: Commit updated data files
+      - name: Validate accounting architecture
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -u
-          git diff --cached --quiet && exit 0
-          git commit -m "Update generated trading data"
-          git push
+          python scripts/validate_runtime_state_ownership.py
+          python scripts/validate_artifact_hygiene.py
+          python scripts/validate_runtime_bootstrap.py
+          python scripts/validate_atomic_trade_state.py

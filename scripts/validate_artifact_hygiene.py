@@ -31,29 +31,7 @@ MUST_NOT_BE_IGNORED = [
     "data/universes/current_assets.csv",
 ]
 
-ALLOWED_TRACKED_IGNORED_EXACT = {
-    "broker_account.csv",
-    "holdings_report.csv",
-    "paper_30_day_tracker.csv",
-    "paper_portfolio_v3.csv",
-    "portfolio_v2.csv",
-    "signal_report_v2.csv",
-    "trade_analytics_v3.csv",
-    "trade_audit_trail.csv",
-    "trade_journal_v3.csv",
-    "trade_snapshots.csv",
-    "v3_trades.csv",
-    "data/live_monitor_runtime.json",
-    "data/live_monitor_snapshot.json",
-    "data/live_runtime_execution_log.json",
-    "data/live_runtime_status.json",
-    "data/market_intelligence.json",
-    "data/news_events.json",
-    "data/notification_state.json",
-    "data/runtime_operations_log.json",
-    "research/report_exports/campaign_reports/campaign_001_exit_optimisation_38504693-4616-43d4-8887-62adefbc3a50.md",
-    "research/report_exports/campaign_reports/campaign_001_exit_optimisation_latest.md",
-}
+ALLOWED_TRACKED_IGNORED_EXACT = set()
 
 
 def run_git(args):
@@ -103,7 +81,7 @@ def main():
     unexpected = sorted(tracked_ignored - ALLOWED_TRACKED_IGNORED_EXACT)
     check(
         not unexpected,
-        "tracked ignored files are limited to documented historical runtime artifacts",
+        "generated runtime artifacts are absent from the Git index",
         issues,
     )
     if unexpected:
@@ -112,7 +90,7 @@ def main():
 
     doc = (ROOT / "docs" / "ARTIFACT_CLASSIFICATION.md").read_text(encoding="utf-8")
     manifest = (ROOT / "runtime" / "generated_runtime_files.txt").read_text(encoding="utf-8")
-    check("Existing Tracked Runtime Files" in doc, "artifact doc explains tracked runtime history", issues)
+    check("Runtime Ownership" in doc, "artifact doc defines server-owned runtime state", issues)
     check("research/report_exports/" in manifest, "runtime manifest includes research exports", issues)
     check("data/global_scanner/" in manifest, "runtime manifest includes scanner output", issues)
     check("data/legacy_sandbox/" in manifest, "runtime manifest includes legacy sandbox output", issues)

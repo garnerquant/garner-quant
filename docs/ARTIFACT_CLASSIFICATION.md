@@ -23,12 +23,11 @@ state unless explicitly listed as source or fixture data below.
 | legacy/archive outputs | `old_files/`, `data/legacy_sandbox/`, `portfolio.csv`, `paper_portfolio.csv` | Deprecated or sandboxed compatibility material. |
 | local machine artifacts | `.env`, `.streamlit/secrets.toml`, `logs/`, `.tmp/`, `__pycache__/`, `venv/` | Secrets, logs, scratch files, build/cache output. |
 
-## Existing Tracked Runtime Files
+## Runtime Ownership
 
-Some generated runtime files are already tracked from earlier history. This pass does
-not untrack or delete them. They should be removed from the index only in an explicit
-data-migration commit after confirming how production bootstrap should seed initial
-state.
+Generated runtime files are not tracked by Git. Deployment preserves the server-owned
+files listed in `runtime/generated_runtime_files.txt` across code resets. Bootstrap
+creates only missing state and never replaces an existing production file.
 
 See `docs/RUNTIME_BOOTSTRAP_AND_INDEX.md` for the tracked-generated inventory,
 bootstrap behavior, and recommended manual untrack command.

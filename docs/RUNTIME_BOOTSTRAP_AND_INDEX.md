@@ -1,10 +1,10 @@
 # Runtime Bootstrap And Git Index Decision
 
-Generated runtime files are local mutable state. They should be ignored for future
-changes and removed from the Git index in a dedicated data-index cleanup commit.
-This pass does not untrack or delete local data.
+Generated runtime files are local mutable state. They are ignored and absent from the
+Git index. Production deployment preserves them before updating source code and
+restores them before startup validation.
 
-## Tracked Generated Files
+## Generated Files
 
 The following tracked files are classified as generated artifacts by `.gitignore`:
 
@@ -45,11 +45,4 @@ Manual apply:
 python scripts\bootstrap_runtime_state.py --apply
 ```
 
-## Recommended Manual Untrack Command
-
-Run this only in a deliberate data-index cleanup commit after confirming local
-runtime files are backed up:
-
-```powershell
-git rm --cached broker_account.csv holdings_report.csv paper_30_day_tracker.csv paper_portfolio_v3.csv portfolio_v2.csv signal_report_v2.csv trade_analytics_v3.csv trade_audit_trail.csv trade_journal_v3.csv trade_snapshots.csv v3_trades.csv data/live_monitor_runtime.json data/live_monitor_snapshot.json data/live_runtime_execution_log.json data/live_runtime_status.json data/market_intelligence.json data/news_events.json data/notification_state.json data/runtime_operations_log.json research/report_exports/campaign_reports/campaign_001_exit_optimisation_38504693-4616-43d4-8887-62adefbc3a50.md research/report_exports/campaign_reports/campaign_001_exit_optimisation_latest.md
-```
+The index cleanup is complete. Do not re-add generated state with `git add -f`.

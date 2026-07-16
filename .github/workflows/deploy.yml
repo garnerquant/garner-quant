@@ -39,12 +39,35 @@ jobs:
 
           cd "$APP_DIR"
 
-          echo "Stopping runtime before code update..."
-          sudo systemctl stop "$RUNTIME_SERVICE" || true
+          RUNTIME_BACKUP="$(mktemp -d)"
+          cleanup_runtime_backup() {
+            rm -rf "$RUNTIME_BACKUP"
+          }
+          trap cleanup_runtime_backup EXIT
+
+          echo "Stopping runtime and dashboard before code update..."
+          sudo systemctl stop "$RUNTIME_SERVICE" "$DASHBOARD_SERVICE" || true
+
+          echo "Preserving server-owned runtime state..."
+          while IFS= read -r runtime_path; do
+            runtime_path="${runtime_path%%#*}"
+            runtime_path="${runtime_path%$'\r'}"
+            [ -n "$runtime_path" ] || continue
+            if [ -d "$runtime_path" ]; then
+              mkdir -p "$RUNTIME_BACKUP/$runtime_path"
+              cp -a "$runtime_path/." "$RUNTIME_BACKUP/$runtime_path/"
+            elif [ -f "$runtime_path" ]; then
+              mkdir -p "$RUNTIME_BACKUP/$(dirname "$runtime_path")"
+              cp -a "$runtime_path" "$RUNTIME_BACKUP/$runtime_path"
+            fi
+          done < runtime/generated_runtime_files.txt
 
           echo "Fetching latest main..."
           git fetch origin main
           git reset --hard origin/main
+
+          echo "Restoring server-owned runtime state..."
+          cp -a "$RUNTIME_BACKUP/." "$APP_DIR/"
 
           echo "Installing/updating dependencies..."
           if [ ! -d ".venv" ]; then

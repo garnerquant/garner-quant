@@ -18,29 +18,7 @@ from runtime.bootstrap_state import bootstrap_runtime_state  # noqa: E402
 from runtime.startup_validation import validate_runtime_startup  # noqa: E402
 
 
-TRACKED_GENERATED_EXPECTED = {
-    "broker_account.csv",
-    "holdings_report.csv",
-    "paper_30_day_tracker.csv",
-    "paper_portfolio_v3.csv",
-    "portfolio_v2.csv",
-    "signal_report_v2.csv",
-    "trade_analytics_v3.csv",
-    "trade_audit_trail.csv",
-    "trade_journal_v3.csv",
-    "trade_snapshots.csv",
-    "v3_trades.csv",
-    "data/live_monitor_runtime.json",
-    "data/live_monitor_snapshot.json",
-    "data/live_runtime_execution_log.json",
-    "data/live_runtime_status.json",
-    "data/market_intelligence.json",
-    "data/news_events.json",
-    "data/notification_state.json",
-    "data/runtime_operations_log.json",
-    "research/report_exports/campaign_reports/campaign_001_exit_optimisation_38504693-4616-43d4-8887-62adefbc3a50.md",
-    "research/report_exports/campaign_reports/campaign_001_exit_optimisation_latest.md",
-}
+TRACKED_GENERATED_EXPECTED = set()
 
 
 def check(condition, message, issues):
@@ -149,7 +127,7 @@ def startup_bootstraps_missing_root():
 def docs_include_untrack_command():
     text = (ROOT / "docs" / "RUNTIME_BOOTSTRAP_AND_INDEX.md").read_text(encoding="utf-8")
     return (
-        "git rm --cached" in text
+        "index cleanup is complete" in text
         and "No generated runtime artifact is required as Git-tracked seed state" in text
     )
 
@@ -159,7 +137,7 @@ def main():
     tracked = tracked_ignored_files()
     check(
         tracked == TRACKED_GENERATED_EXPECTED,
-        "tracked generated artifact inventory is explicit",
+        "generated runtime artifacts are absent from the Git index",
         issues,
     )
     if tracked != TRACKED_GENERATED_EXPECTED:
@@ -173,7 +151,7 @@ def main():
         issues,
     )
     check(startup_bootstraps_missing_root(), "startup validation bootstraps missing state", issues)
-    check(docs_include_untrack_command(), "bootstrap docs include untrack decision command", issues)
+    check(docs_include_untrack_command(), "bootstrap docs record completed index cleanup", issues)
 
     if issues:
         print("\nRuntime bootstrap validation failed:")

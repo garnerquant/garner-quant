@@ -22,7 +22,6 @@ from execution.mark_to_market import (  # noqa: E402
 
 
 MARK_TO_MARKET_FILES = [
-    PORTFOLIO_FILE,
     HOLDINGS_FILE,
     BROKER_FILE,
     PORTFOLIO_REPORT_FILE,
@@ -161,9 +160,14 @@ def simulate_failure(stage_to_fail):
     try:
         try:
             _commit_refresh_frames(
-                refresh_frames(),
+                {
+                    key: value
+                    for key, value in refresh_frames().items()
+                    if key != PORTFOLIO_FILE
+                },
                 output_paths=paths,
                 failure_hook=failure_hook,
+                source_portfolio=refresh_frames()[PORTFOLIO_FILE],
             )
         except Exception:
             pass
@@ -192,6 +196,12 @@ def mark_to_market_uses_atomic_commit():
     return "atomic_write_csv_frames" in source and ".to_csv(" not in source
 
 
+def mark_to_market_does_not_write_upstream_portfolio():
+    source = (ROOT / "execution" / "mark_to_market.py").read_text(encoding="utf-8")
+    refresh_block = source.split("refresh_frames = {", 1)[1].split("}", 1)[0]
+    return "PORTFOLIO_FILE:" not in refresh_block
+
+
 def main():
     issues = []
 
@@ -207,6 +217,11 @@ def main():
     check(
         mark_to_market_uses_atomic_commit(),
         "mark_to_market_refresh has no direct CSV write path",
+        issues,
+    )
+    check(
+        mark_to_market_does_not_write_upstream_portfolio(),
+        "mark-to-market cannot write the upstream paper portfolio",
         issues,
     )
     check(
