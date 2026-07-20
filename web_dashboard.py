@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from dashboard.data_loader import load_csv
-from dashboard.equity_chart import build_equity_curve_layers, build_realised_equity_chart
+from dashboard.equity_chart import build_equity_curve_layers
 from dashboard.metrics import unrealised_pnl_from_holdings
 from dashboard.paper_challenge import (
     build_day_over_day_attribution,
@@ -3974,14 +3974,7 @@ with home_tab:
     )
     if realised_series.reconciliation_error:
         LOGGER.warning("Paper realised P&L reconciliation: %s", realised_series.reconciliation_error)
-        st.warning("Realised trade events do not reconcile to the headline Realised P&L, so the curve was not displayed as valid.")
-    elif realised_series.event_count == 0:
-        st.info("No canonical realised trade events are available yet; realised P&L remains £0.00 until the first close.")
-    else:
-        st.subheader("📈 Realised Equity Curve")
-        realised_chart = build_realised_equity_chart(realised_series.data, start_balance)
-        st.altair_chart(realised_chart, width="stretch")
-        st.caption("Starting balance plus canonical after-fee realised P&L; same-day closes are netted for display only.")
+        st.warning("Realised trade events do not reconcile to the headline Realised P&L.")
     if realised_series.malformed_events:
         st.warning(f"{realised_series.malformed_events} malformed realised event(s) were excluded.")
     if audit.empty or "pnl" not in audit.columns:

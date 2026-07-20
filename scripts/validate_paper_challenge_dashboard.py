@@ -17,7 +17,7 @@ from dashboard.paper_challenge import (  # noqa: E402
     build_paper_challenge_series,
     build_realised_pnl_series,
 )
-from dashboard.equity_chart import build_realised_equity_chart  # noqa: E402
+from dashboard.equity_chart import build_equity_curve_layers  # noqa: E402
 
 
 def check(condition, message, issues):
@@ -111,51 +111,6 @@ def main():
     check(loss.data["date"].is_monotonic_increasing and not loss.data["date"].duplicated().any(),
           "realised-equity display dates are unique and chronological", issues)
     seven_rows = loss.data.copy(deep=True)
-    seven_rows_before = seven_rows.copy(deep=True)
-    chart_spec = build_realised_equity_chart(
-        seven_rows, starting_balance=10000.0
-    ).to_dict(validate=True)
-    chart_dataset = next(
-        dataset for dataset in chart_spec["datasets"].values() if len(dataset) == 7
-    )
-    reference_dataset = next(
-        dataset
-        for dataset in chart_spec["datasets"].values()
-        if dataset and "starting_balance" in dataset[0]
-    )
-    reference_layer, line_layer, point_layer = chart_spec["layer"]
-    check(len(seven_rows) == len(chart_dataset) == 7,
-          "all seven helper rows reach the Altair chart dataset", issues)
-    check(seven_rows.equals(seven_rows_before),
-          "chart construction adds no synthetic dates or values", issues)
-    check(
-        line_layer["encoding"]["x"]["field"] == "date"
-        and line_layer["encoding"]["y"]["field"] == "realised_equity"
-        and {"date", "realised_equity"}.issubset(seven_rows.columns),
-        "Altair x and y fields exist and exactly match the chart dataframe",
-        issues,
-    )
-    encoded_fields = {
-        line_layer["encoding"]["x"]["field"],
-        line_layer["encoding"]["y"]["field"],
-        *(item["field"] for item in line_layer["encoding"]["tooltip"]),
-    }
-    check(encoded_fields.issubset(seven_rows.columns),
-          "every Altair encoded field exists in the chart dataframe", issues)
-    check(line_layer["mark"]["type"] == "line"
-          and line_layer["mark"]["interpolate"] == "linear",
-          "primary realised-equity mark uses linear interpolation", issues)
-    check(point_layer["mark"]["type"] == "point"
-          and point_layer["mark"]["shape"] == "circle"
-          and point_layer["mark"]["filled"]
-          and "has_realisation_event" in point_layer["transform"][0]["filter"],
-          "markers are filtered to the baseline and actual realisation dates", issues)
-    check(reference_layer["mark"]["type"] == "rule"
-          and reference_dataset == [{"starting_balance": 10000.0}],
-          "chart contains a starting-balance reference rule at 10000", issues)
-    check("event_id" not in encoded_fields
-          and "cumulative_realised_pnl" in encoded_fields,
-          "daily tooltip includes cumulative P&L and excludes event IDs", issues)
     non_events = seven_rows[~seven_rows["has_realisation_event"] & ~seven_rows["is_baseline"]]
     check(len(seven_rows) == 7 and list(seven_rows["date"]) == list(pd.date_range("2026-01-01", "2026-01-07")),
           "every challenge calendar day has exactly one display row", issues)
@@ -174,9 +129,6 @@ def main():
           "daily rows eliminate multi-day line segments between realised events", issues)
     check(int((seven_rows["has_realisation_event"] | seven_rows["is_baseline"]).sum()) == 2,
           "only baseline and true realisation dates qualify for markers", issues)
-    check("£,.2f" not in str(chart_spec) and "Â£" not in str(chart_spec),
-          "Altair spec contains no invalid currency-prefixed number format", issues)
-
     holdings_history = pd.DataFrame([
         {"date": "2026-01-01", "ticker": "AAA", "market_value": 60.0},
         {"date": "2026-01-02", "ticker": "AAA", "market_value": 65.0},
@@ -194,14 +146,56 @@ def main():
           "missing history is explicit and current holdings are not reconstructed", issues)
 
     source = (ROOT / "web_dashboard.py").read_text(encoding="utf-8")
+    compact_source = "".join(source.split())
+    removed_title = "Realised Equity " + "Curve"
+    removed_builder = "build_realised_" + "equity_chart"
     check("30 Day Paper Trading Challenge" not in source and "30 Day Equity Curve" not in source,
           "dashboard titles no longer contain 30 Day", issues)
     check(
-        'st.subheader("📈 Realised Equity Curve")' in source
-        and "build_realised_equity_chart(realised_series.data, start_balance)" in source,
-        "realised chart title and GBP equity-axis contract are explicit",
+        removed_title not in source
+        and removed_builder not in source,
+        "realised-equity title, builder call, and render path are absent",
         issues,
     )
+    chart_helper_source = (ROOT / "dashboard/equity_chart.py").read_text(encoding="utf-8")
+    check(removed_builder not in chart_helper_source,
+          "removed realised chart builder has no remaining definition", issues)
+    check(source.count("st.altair_chart(") == 2,
+          "dashboard retains exactly the total-equity and drawdown chart render calls", issues)
+    check(
+        "Day Equity Curve" in source
+        and 'st.subheader("Drawdown")' in source,
+        "remaining dashboard chart-title set is unchanged",
+        issues,
+    )
+    check(
+        "render_equity_curve(chart_data, current_balance, start_balance)" in source
+        and "build_equity_curve_layers(" in source
+        and 'st.altair_chart(chart, width="stretch")' in source,
+        "main total-equity chart builder and responsive render remain invoked",
+        issues,
+    )
+    expected_drawdown_columns = (
+        '["timestamp","challenge_day","total_equity","running_peak","drawdown_pct"]'
+    )
+    check(
+        expected_drawdown_columns in compact_source
+        and "alt.Chart(drawdown_data)" in source
+        and 'st.altair_chart(drawdown_chart, width="stretch")' in source,
+        "drawdown retains its expected canonical fields, builder, and render",
+        issues,
+    )
+    shared_fixture = pd.DataFrame([
+        {"challenge_day": 0, "portfolio_value": 10000.0, "is_recorded": True, "recorded_run": 1},
+        {"challenge_day": 1, "portfolio_value": 10010.0, "is_recorded": True, "recorded_run": 1},
+    ])
+    shared_spec = build_equity_curve_layers(
+        shared_fixture,
+        {"x": "challenge_day:Q", "y": "portfolio_value:Q"},
+        ["portfolio_value:Q"],
+    ).to_dict()
+    check(len(shared_fixture) == 2 and len(shared_spec["layer"]) == 4,
+          "shared total-equity chart helper remains callable with unchanged layers", issues)
     helper = ROOT / "dashboard/paper_challenge.py"
     prohibited = {"scanner_v2", "yfinance", "execution", "streamlit", "runtime"}
     check(not (import_roots(helper) & prohibited), "analytics helper has no scanner, network, UI, execution, or runtime dependency", issues)
