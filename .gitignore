@@ -52,6 +52,7 @@ data/news_events.json
 data/notification_state.json
 data/runtime_operations_log.json
 data/runtime/
+data/accounting_generations/
 runtime_data/
 logs/
 

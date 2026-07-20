@@ -14,6 +14,8 @@ from supabase import create_client
 
 from dashboard.data_loader import load_csv
 from dashboard.equity_chart import build_equity_curve_layers
+from dashboard.accounting_reader import load_dashboard_accounting
+from canonical_accounting.generation import GenerationError
 from dashboard.metrics import unrealised_pnl_from_holdings
 from dashboard.paper_challenge import (
     build_day_over_day_attribution,
@@ -3392,6 +3394,16 @@ history = load_supabase_table("holdings_history", None, "date")
 signals = load_supabase_table("signals", "signal_report_v2.csv")
 trades = load_home_table("trade_journal", "trade_journal_v3.csv")
 
+canonical_accounting = None
+try:
+    canonical_accounting = load_dashboard_accounting()
+except GenerationError:
+    pass
+else:
+    broker = canonical_accounting.broker
+    holdings = canonical_accounting.holdings
+    paper_30 = canonical_accounting.tracker
+
 analytics = load_csv("trade_analytics_v3.csv")
 snapshots = load_csv("trade_snapshots.csv")
 
@@ -3453,6 +3465,20 @@ portfolio_value = broker_row.get("portfolio_value", current_balance)
 
 st.title("Garner Quant")
 st.caption("Personal investment research and paper trading dashboard.")
+
+if canonical_accounting is None:
+    st.warning(
+        "Legacy nominal history — not currency-normalized and excluded from canonical GBP accounting. "
+        "No active verified accounting generation is published."
+    )
+    st.caption(
+        "All account figures below are legacy nominal audit values. Currency symbols are retained "
+        "for historical presentation only and do not certify GBP-normalized performance."
+    )
+else:
+    st.success(
+        f"Canonical accounting generation {canonical_accounting.generation_id} — verified GBP."
+    )
 
 render_investment_brief(
     runtime_details,

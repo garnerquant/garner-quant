@@ -1,5 +1,13 @@
 STARTING_CASH = 10000
 
+# Canonical accounting v2 policy. Legacy flat-file history predates this policy
+# and is explicitly excluded from verified GBP accounting generations.
+PORTFOLIO_BASE_CURRENCY = "GBP"
+PAPER_ACCOUNT_CURRENCY = "GBP"
+FX_MAX_AGE_SECONDS = 10800
+FX_FUTURE_TOLERANCE_SECONDS = 300
+CANONICAL_ACCOUNTING_STATE_ROOT = "data/accounting_generations"
+
 PAPER_TRADING_CHALLENGE_DAYS = 60
 
 MAX_DRAWDOWN = 0.30

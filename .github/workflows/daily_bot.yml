@@ -36,3 +36,6 @@ jobs:
           python scripts/validate_runtime_bootstrap.py
           python scripts/validate_atomic_trade_state.py
           python scripts/validate_execution_input_guards.py
+          python scripts/validate_canonical_currency_generation.py
+          python scripts/validate_accounting_reconciliation.py
+          python scripts/validate_accounting_reconciliation_output.py

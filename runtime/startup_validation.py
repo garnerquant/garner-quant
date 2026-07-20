@@ -143,6 +143,21 @@ def validate_runtime_startup(root_dir=ROOT_DIR, manifest_path=MANIFEST_FILE):
             "Stop the runtime, recover the affected generated files, then start "
             "the runtime again."
         )
+    accounting_pointer = (
+        Path(root_dir)
+        / "data"
+        / "accounting_generations"
+        / "accounting_generation.json"
+    )
+    if accounting_pointer.exists():
+        try:
+            from canonical_accounting.generation import load_active_generation
+            load_active_generation(accounting_pointer.parent)
+        except Exception as exc:
+            raise RuntimeStartupValidationError(
+                "Runtime startup refused because the active canonical accounting "
+                f"generation is invalid: {exc}"
+            ) from exc
     return result
 
 

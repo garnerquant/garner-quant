@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from collections import defaultdict, deque
@@ -102,7 +103,18 @@ def serialise_frame(frame):
     return frame.where(pd.notna(frame), None).to_dict(orient="records")
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Validate ledger, projection, holdings, and broker reconciliation."
+    )
+    parser.add_argument(
+        "--report-file",
+        help=(
+            "Explicit destination for the generated JSON report. By default the "
+            "validator is read-only."
+        ),
+    )
+    args = parser.parse_args(argv)
     issues = []
     ledger = load_trade_ledger(LEDGER_FILE)
     events = clean_ledger_events(ledger)
@@ -341,9 +353,13 @@ def main():
             "must be derived from clean trade_ledger_v1.csv cashflows."
         ),
     }
-    REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_FILE.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(f"wrote={REPORT_FILE.relative_to(ROOT)}")
+    if args.report_file:
+        report_file = Path(args.report_file).resolve()
+        report_file.parent.mkdir(parents=True, exist_ok=True)
+        report_file.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(f"wrote={report_file}")
+    else:
+        print("report_write=disabled (use --report-file to generate a report)")
 
     critical_or_high = [
         issue for issue in issues if issue["severity"] in {"CRITICAL", "HIGH"}

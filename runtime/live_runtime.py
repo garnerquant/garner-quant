@@ -652,6 +652,12 @@ def paper_execution_blocked_reason(
     if config.get("paper_execution_enabled") is not True:
         return "paper_execution_enabled is false"
 
+    from canonical_accounting.gate import canonical_execution_block_reason
+
+    currency_block = canonical_execution_block_reason(now=now)
+    if currency_block:
+        return f"canonical accounting gate: {currency_block}"
+
     if not markets_open:
         return "market closed"
 
