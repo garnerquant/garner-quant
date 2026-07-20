@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from dashboard.data_loader import load_csv
-from dashboard.equity_chart import build_equity_curve_layers
+from dashboard.equity_chart import build_equity_curve_layers, build_realised_equity_chart
 from dashboard.metrics import unrealised_pnl_from_holdings
 from dashboard.paper_challenge import (
     build_day_over_day_attribution,
@@ -3973,26 +3973,7 @@ with home_tab:
         st.info("No canonical realised trade events are available yet; realised P&L remains £0.00 until the first close.")
     else:
         st.subheader("📈 Realised Equity Curve")
-        realised_chart = (
-            alt.Chart(realised_series.data)
-            .mark_line(interpolate="step-after", point=True, color="#2563EB")
-            .encode(
-                x=alt.X("date:T", title="Realisation date"),
-                y=alt.Y(
-                    "realised_equity:Q",
-                    title="Realised equity (GBP)",
-                    axis=alt.Axis(format="£,.2f"),
-                    scale=alt.Scale(zero=False),
-                ),
-                tooltip=[
-                    alt.Tooltip("date:T", title="Date"),
-                    alt.Tooltip("event_id:N", title="Ledger events"),
-                    alt.Tooltip("daily_realised_pnl:Q", title="Daily realised P&L", format="£,.2f"),
-                    alt.Tooltip("realised_equity:Q", title="Realised equity", format="£,.2f"),
-                ],
-            )
-            .properties(height=300)
-        )
+        realised_chart = build_realised_equity_chart(realised_series.data)
         st.altair_chart(realised_chart, width="stretch")
         st.caption("Starting balance plus canonical after-fee realised P&L; same-day closes are netted for display only.")
     if realised_series.malformed_events:

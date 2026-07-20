@@ -59,3 +59,35 @@ def build_equity_curve_layers(chart_data, shared_encoding, tooltip):
         .encode(**shared_encoding, tooltip=tooltip)
     )
     return continuity + recorded_line + recorded_points + final_point
+
+
+def build_realised_equity_chart(chart_data):
+    """Build the read-only daily realised-equity presentation chart."""
+    return (
+        alt.Chart(chart_data)
+        .mark_line(interpolate="step-after", point=True, color=RECORDED_COLOUR)
+        .encode(
+            x=alt.X("date:T", title="Realisation date"),
+            y=alt.Y(
+                "realised_equity:Q",
+                title="Realised equity (GBP)",
+                axis=alt.Axis(labelExpr="'£' + format(datum.value, ',.2f')"),
+                scale=alt.Scale(zero=False),
+            ),
+            tooltip=[
+                alt.Tooltip("date:T", title="Date"),
+                alt.Tooltip("event_id:N", title="Ledger events"),
+                alt.Tooltip(
+                    "daily_realised_pnl:Q",
+                    title="Daily realised P&L (GBP)",
+                    format=",.2f",
+                ),
+                alt.Tooltip(
+                    "realised_equity:Q",
+                    title="Realised equity (GBP)",
+                    format=",.2f",
+                ),
+            ],
+        )
+        .properties(height=300)
+    )

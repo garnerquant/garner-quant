@@ -17,6 +17,7 @@ from dashboard.paper_challenge import (  # noqa: E402
     build_paper_challenge_series,
     build_realised_pnl_series,
 )
+from dashboard.equity_chart import build_realised_equity_chart  # noqa: E402
 
 
 def check(condition, message, issues):
@@ -106,6 +107,35 @@ def main():
           "10000 starting balance and -36.34 realised P&L end at 9963.66", issues)
     check(loss.data["date"].is_monotonic_increasing and not loss.data["date"].duplicated().any(),
           "realised-equity display dates are unique and chronological", issues)
+    seven_rows = pd.concat(
+        [loss.data.iloc[[0]]] + [
+            loss.data.iloc[[-1]].assign(
+                date=pd.Timestamp("2026-01-05") + pd.Timedelta(days=offset)
+            )
+            for offset in range(6)
+        ],
+        ignore_index=True,
+    )
+    chart_spec = build_realised_equity_chart(seven_rows).to_dict(validate=True)
+    chart_dataset = next(iter(chart_spec["datasets"].values()))
+    check(len(seven_rows) == len(chart_dataset) == 7,
+          "all seven helper rows reach the Altair chart dataset", issues)
+    check(
+        chart_spec["encoding"]["x"]["field"] == "date"
+        and chart_spec["encoding"]["y"]["field"] == "realised_equity"
+        and {"date", "realised_equity"}.issubset(seven_rows.columns),
+        "Altair x and y fields exist and exactly match the chart dataframe",
+        issues,
+    )
+    encoded_fields = {
+        chart_spec["encoding"]["x"]["field"],
+        chart_spec["encoding"]["y"]["field"],
+        *(item["field"] for item in chart_spec["encoding"]["tooltip"]),
+    }
+    check(encoded_fields.issubset(seven_rows.columns),
+          "every Altair encoded field exists in the chart dataframe", issues)
+    check("£,.2f" not in str(chart_spec) and "Â£" not in str(chart_spec),
+          "Altair spec contains no invalid currency-prefixed number format", issues)
 
     holdings_history = pd.DataFrame([
         {"date": "2026-01-01", "ticker": "AAA", "market_value": 60.0},
@@ -128,8 +158,7 @@ def main():
           "dashboard titles no longer contain 30 Day", issues)
     check(
         'st.subheader("📈 Realised Equity Curve")' in source
-        and '"realised_equity:Q"' in source
-        and 'title="Realised equity (GBP)"' in source,
+        and "build_realised_equity_chart(realised_series.data)" in source,
         "realised chart title and GBP equity-axis contract are explicit",
         issues,
     )
