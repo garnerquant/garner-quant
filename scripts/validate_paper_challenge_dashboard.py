@@ -83,10 +83,12 @@ def main():
         {"close_time": "bad", "symbol": "BAD", "entry_event_id": "", "exit_event_id": "", "pnl": 500.0, "cumulative_pnl": 500},
     ])
     realised = build_realised_pnl_series(
-        audit, 6.0, starting_balance=10000.0, challenge_start_date="2026-01-01"
+        audit, 6.0, starting_balance=10000.0, challenge_start_date="2026-01-01",
+        display_end_date="2026-01-06",
     )
     check(float(realised.data.iloc[0]["realised_equity"]) == 10000.0, "realised equity begins at configured balance", issues)
-    check(realised.event_count == 2 and list(realised.data["daily_realised_pnl"]) == [0.0, 10.0, -4.0],
+    check(realised.event_count == 2
+          and list(realised.data.loc[realised.data["has_realisation_event"], "daily_realised_pnl"]) == [10.0, -4.0],
           "partial closes aggregate and duplicate lots do not double count", issues)
     check(float(realised.data.iloc[-1]["realised_equity"]) == 10006.0 and realised.reconciliation_error is None,
           "winning/loss events reconcile to headline realised P&L", issues)
@@ -102,20 +104,13 @@ def main():
         -36.34,
         starting_balance=10000.0,
         challenge_start_date="2026-01-01",
+        display_end_date="2026-01-07",
     )
     check(float(loss.data.iloc[-1]["realised_equity"]) == 9963.66,
           "10000 starting balance and -36.34 realised P&L end at 9963.66", issues)
     check(loss.data["date"].is_monotonic_increasing and not loss.data["date"].duplicated().any(),
           "realised-equity display dates are unique and chronological", issues)
-    seven_rows = pd.concat(
-        [loss.data.iloc[[0]]] + [
-            loss.data.iloc[[-1]].assign(
-                date=pd.Timestamp("2026-01-05") + pd.Timedelta(days=offset)
-            )
-            for offset in range(6)
-        ],
-        ignore_index=True,
-    )
+    seven_rows = loss.data.copy(deep=True)
     seven_rows_before = seven_rows.copy(deep=True)
     chart_spec = build_realised_equity_chart(
         seven_rows, starting_balance=10000.0
@@ -152,14 +147,33 @@ def main():
           "primary realised-equity mark uses linear interpolation", issues)
     check(point_layer["mark"]["type"] == "point"
           and point_layer["mark"]["shape"] == "circle"
-          and point_layer["mark"]["filled"],
-          "every actual display row has a visible circular point marker", issues)
+          and point_layer["mark"]["filled"]
+          and "has_realisation_event" in point_layer["transform"][0]["filter"],
+          "markers are filtered to the baseline and actual realisation dates", issues)
     check(reference_layer["mark"]["type"] == "rule"
           and reference_dataset == [{"starting_balance": 10000.0}],
           "chart contains a starting-balance reference rule at 10000", issues)
     check("event_id" not in encoded_fields
           and "cumulative_realised_pnl" in encoded_fields,
           "daily tooltip includes cumulative P&L and excludes event IDs", issues)
+    non_events = seven_rows[~seven_rows["has_realisation_event"] & ~seven_rows["is_baseline"]]
+    check(len(seven_rows) == 7 and list(seven_rows["date"]) == list(pd.date_range("2026-01-01", "2026-01-07")),
+          "every challenge calendar day has exactly one display row", issues)
+    check(non_events["daily_realised_pnl"].eq(0.0).all(),
+          "non-event display days have zero daily realised P&L", issues)
+    prior_equity = seven_rows["realised_equity"].shift()
+    check(seven_rows.loc[non_events.index, "realised_equity"].eq(prior_equity.loc[non_events.index]).all(),
+          "non-event display days carry realised equity forward", issues)
+    event_row = seven_rows[seven_rows["has_realisation_event"]].iloc[0]
+    check(float(event_row["daily_realised_pnl"]) == -36.34,
+          "realisation date applies its exact daily net canonical P&L", issues)
+    check(float(seven_rows.iloc[-1]["cumulative_realised_pnl"]) == -36.34
+          and float(seven_rows.iloc[-1]["realised_equity"]) == 9963.66,
+          "daily resampling preserves cumulative P&L and realised-equity endpoints", issues)
+    check(seven_rows["date"].diff().dropna().eq(pd.Timedelta(days=1)).all(),
+          "daily rows eliminate multi-day line segments between realised events", issues)
+    check(int((seven_rows["has_realisation_event"] | seven_rows["is_baseline"]).sum()) == 2,
+          "only baseline and true realisation dates qualify for markers", issues)
     check("£,.2f" not in str(chart_spec) and "Â£" not in str(chart_spec),
           "Altair spec contains no invalid currency-prefixed number format", issues)
 

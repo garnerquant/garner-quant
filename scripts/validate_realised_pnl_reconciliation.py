@@ -37,7 +37,8 @@ def main():
     broker = pd.read_csv(ROOT / "broker_account.csv").iloc[0]
     headline = float(broker["realised_pnl"])
     curve = build_realised_pnl_series(
-        audit, headline, starting_balance=10000.0, challenge_start_date="2026-06-21"
+        audit, headline, starting_balance=10000.0, challenge_start_date="2026-06-21",
+        display_end_date="2026-07-20",
     )
 
     ledger_total = float(accounting["realised_pnl"])
@@ -47,9 +48,7 @@ def main():
     sell_ids = set(sells["event_id"].astype(str))
     curve_ids = {
         event_id
-        for value in curve.data.loc[
-            curve.data["event_id"].ne("challenge-realised-baseline"), "event_id"
-        ].astype(str)
+        for value in curve.data.loc[curve.data["has_realisation_event"], "event_id"].astype(str)
         for event_id in value.split(" | ")
     }
 
@@ -70,7 +69,8 @@ def main():
         {"close_time": "bad", "entry_event_id": "", "exit_event_id": "", "pnl": 1000.0},
     ])
     fixture_curve = build_realised_pnl_series(
-        fixture, 6.0, starting_balance=10000.0, challenge_start_date="2025-12-31"
+        fixture, 6.0, starting_balance=10000.0, challenge_start_date="2025-12-31",
+        display_end_date="2026-01-03",
     )
     check(fixture_curve.event_count == 1 and float(fixture_curve.data.iloc[-1]["cumulative_realised_pnl"]) == 6.0,
           "partial FIFO matches consolidate once and altered duplicates do not double count", issues)

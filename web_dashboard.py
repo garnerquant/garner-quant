@@ -3960,6 +3960,12 @@ with home_tab:
             if challenge_result is not None and not challenge_result.data.empty
             else None
         ),
+        display_end_date=(
+            challenge_result.data.iloc[0]["date"]
+            + pd.Timedelta(days=challenge_result.current_day)
+            if challenge_result is not None and not challenge_result.data.empty
+            else None
+        ),
         through=(
             challenge_result.data.iloc[-1]["timestamp"]
             if challenge_result is not None and not challenge_result.data.empty

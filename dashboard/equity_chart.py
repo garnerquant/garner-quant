@@ -83,6 +83,7 @@ def build_realised_equity_chart(chart_data, starting_balance):
     )
     tooltip = [
         alt.Tooltip("date:T", title="Date"),
+        alt.Tooltip("display_state:N", title="Observation"),
         alt.Tooltip(
             "daily_realised_pnl:Q",
             title="Daily realised P&L (GBP)",
@@ -105,14 +106,18 @@ def build_realised_equity_chart(chart_data, starting_balance):
         color=RECORDED_COLOUR,
         strokeWidth=3,
     ).encode(x=x_encoding, y=y_encoding, tooltip=tooltip)
-    points = base.mark_point(
-        color=RECORDED_COLOUR,
-        filled=True,
-        shape="circle",
-        size=75,
-        stroke="white",
-        strokeWidth=1,
-    ).encode(x=x_encoding, y=y_encoding, tooltip=tooltip)
+    points = (
+        base.transform_filter(alt.datum.has_realisation_event | alt.datum.is_baseline)
+        .mark_point(
+            color=RECORDED_COLOUR,
+            filled=True,
+            shape="circle",
+            size=75,
+            stroke="white",
+            strokeWidth=1,
+        )
+        .encode(x=x_encoding, y=y_encoding, tooltip=tooltip)
+    )
     reference = (
         alt.Chart(pd.DataFrame({"starting_balance": [float(starting_balance)]}))
         .mark_rule(color="#64748B", opacity=0.45, strokeDash=[5, 5], strokeWidth=1.25)

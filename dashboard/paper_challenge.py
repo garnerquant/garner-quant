@@ -128,15 +128,17 @@ def build_realised_pnl_series(
     *,
     starting_balance,
     challenge_start_date,
+    display_end_date,
     through=None,
     tolerance: float = RECONCILIATION_TOLERANCE,
 ) -> RealisedPnlSeries:
     columns = [
         "date", "event_id", "daily_realised_pnl", "cumulative_realised_pnl",
-        "realised_equity",
+        "realised_equity", "has_realisation_event", "is_baseline", "display_state",
     ]
     starting = pd.to_numeric(starting_balance, errors="coerce")
     start_date = pd.to_datetime(challenge_start_date, errors="coerce")
+    end_date = pd.to_datetime(display_end_date, errors="coerce")
     if pd.isna(starting) or not np.isfinite(float(starting)) or float(starting) <= 0:
         return RealisedPnlSeries(
             pd.DataFrame(columns=columns), 0, 0,
@@ -148,6 +150,12 @@ def build_realised_pnl_series(
             "Realised equity requires a valid challenge start date.",
         )
     start_date = pd.Timestamp(start_date).normalize()
+    if pd.isna(end_date) or pd.Timestamp(end_date).normalize() < start_date:
+        return RealisedPnlSeries(
+            pd.DataFrame(columns=columns), 0, 0,
+            "Realised equity requires a valid display end date on or after the challenge start.",
+        )
+    end_date = pd.Timestamp(end_date).normalize()
     if audit is None or audit.empty or "close_time" not in audit or "pnl" not in audit:
         headline = pd.to_numeric(displayed_realised_pnl, errors="coerce")
         mismatch = (
@@ -197,14 +205,25 @@ def build_realised_pnl_series(
             pd.DataFrame(columns=columns), event_count, malformed,
             "A realised event is not later than the challenge baseline date.",
         )
-    initial = pd.DataFrame([{
-        "date": start_date, "event_id": "challenge-realised-baseline",
-        "daily_realised_pnl": 0.0, "cumulative_realised_pnl": 0.0,
-        "realised_equity": float(starting),
-    }])
-    daily["cumulative_realised_pnl"] = daily["daily_realised_pnl"].cumsum()
-    daily["realised_equity"] = float(starting) + daily["cumulative_realised_pnl"]
-    result = pd.concat([initial, daily], ignore_index=True)[columns]
+    if not daily.empty and daily.iloc[-1]["date"] > end_date:
+        return RealisedPnlSeries(
+            pd.DataFrame(columns=columns), event_count, malformed,
+            "A realised event falls after the requested display date range.",
+        )
+    calendar = pd.DataFrame({"date": pd.date_range(start_date, end_date, freq="D")})
+    result = calendar.merge(daily, on="date", how="left", validate="one_to_one")
+    result["has_realisation_event"] = result["event_id"].notna()
+    result["event_id"] = result["event_id"].fillna("")
+    result["daily_realised_pnl"] = result["daily_realised_pnl"].fillna(0.0)
+    result["cumulative_realised_pnl"] = result["daily_realised_pnl"].cumsum()
+    result["realised_equity"] = float(starting) + result["cumulative_realised_pnl"]
+    result["is_baseline"] = result["date"].eq(start_date)
+    result["display_state"] = np.select(
+        [result["is_baseline"], result["has_realisation_event"]],
+        ["Challenge baseline", "Realisation date"],
+        default="Carried forward",
+    )
+    result = result[columns]
     mismatch = None
     headline = pd.to_numeric(displayed_realised_pnl, errors="coerce")
     if pd.notna(headline) and abs(float(result.iloc[-1]["cumulative_realised_pnl"]) - float(headline)) > tolerance:
