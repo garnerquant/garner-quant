@@ -77,6 +77,14 @@ def build_trade_audit_trail_from_ledger(ledger):
     if events.empty:
         return pd.DataFrame()
 
+    # Accounting owns FIFO matching and realised values. Import lazily because
+    # execution.accounting uses clean_ledger_events during ledger loading.
+    from execution.accounting import ledger_accounting
+
+    canonical_closed = ledger_accounting(events)["closed_trades"]
+    canonical_matches = canonical_closed.to_dict(orient="records")
+    canonical_index = 0
+
     open_lots = defaultdict(deque)
     audit_rows = []
 
@@ -111,11 +119,18 @@ def build_trade_audit_trail_from_ledger(ledger):
                 if float(row["shares"])
                 else 0.0
             )
-            pnl = (
-                (sell_price - buy_price) * matched_shares
-                - entry_fee_share
-                - exit_fee_share
+            if canonical_index >= len(canonical_matches):
+                raise ValueError("Trade audit produced a FIFO match absent from canonical accounting")
+            canonical = canonical_matches[canonical_index]
+            canonical_index += 1
+            identity_matches = (
+                str(canonical.get("entry_event_id", "")) == str(open_trade.get("event_id", ""))
+                and str(canonical.get("exit_event_id", "")) == str(row.get("event_id", ""))
+                and abs(float(canonical.get("shares", 0.0)) - matched_shares) <= 1e-12
             )
+            if not identity_matches:
+                raise ValueError("Trade audit FIFO identity diverged from canonical accounting")
+            pnl = float(canonical["realised_pnl"])
             pnl_pct = (
                 pnl / (buy_price * matched_shares)
                 if buy_price and matched_shares
@@ -132,8 +147,8 @@ def build_trade_audit_trail_from_ledger(ledger):
                     "buy_price": buy_price,
                     "sell_price": sell_price,
                     "shares": matched_shares,
-                    "pnl": round(pnl, 2),
-                    "pnl_pct": round(pnl_pct * 100, 2),
+                    "pnl": pnl,
+                    "pnl_pct": pnl_pct * 100,
                     "open_reason": safe_get(open_trade, "reason", "SIGNAL ENTRY"),
                     "close_reason": safe_get(row, "reason", "SIGNAL EXIT"),
                     "entry_action": "BUY",
@@ -182,6 +197,8 @@ def build_trade_audit_trail_from_ledger(ledger):
             if float(open_trade["remaining_shares"]) <= 1e-12:
                 open_lots[ticker].popleft()
 
+    if canonical_index != len(canonical_matches):
+        raise ValueError("Canonical accounting contains FIFO matches absent from trade audit")
     return pd.DataFrame(audit_rows)
 
 

@@ -144,7 +144,14 @@ def build_realised_pnl_series(
     events["realised_pnl_delta"] = pd.to_numeric(events["pnl"], errors="coerce")
     if through is not None:
         events = events[events["timestamp"].le(pd.Timestamp(through))].copy()
-    valid = events["timestamp"].notna() & np.isfinite(events["realised_pnl_delta"])
+    exit_ids = events.get("exit_event_id", pd.Series("", index=events.index)).fillna("").astype(str).str.strip()
+    entry_ids = events.get("entry_event_id", pd.Series("", index=events.index)).fillna("").astype(str).str.strip()
+    valid = (
+        events["timestamp"].notna()
+        & np.isfinite(events["realised_pnl_delta"])
+        & exit_ids.ne("")
+        & entry_ids.ne("")
+    )
     malformed = int((~valid).sum())
     events = events.loc[valid].copy()
     if events.empty:
@@ -155,20 +162,9 @@ def build_realised_pnl_series(
             else None
         )
         return RealisedPnlSeries(pd.DataFrame(columns=columns), 0, malformed, mismatch)
-    exit_ids = events.get("exit_event_id", pd.Series("", index=events.index)).fillna("").astype(str).str.strip()
-    entry_ids = events.get("entry_event_id", pd.Series("", index=events.index)).fillna("").astype(str).str.strip()
-    symbols = (
-        events["symbol"].fillna("").astype(str)
-        if "symbol" in events
-        else pd.Series("", index=events.index)
-    )
-    fallback = (
-        events["timestamp"].astype(str) + "|" + symbols
-        + "|" + events["realised_pnl_delta"].round(12).astype(str)
-    )
-    events["event_id"] = exit_ids.where(exit_ids.ne(""), fallback)
-    events["_lot_key"] = events["event_id"] + "|" + entry_ids + "|" + events["realised_pnl_delta"].round(12).astype(str)
-    events = events.sort_values(["timestamp", "_source_order"], kind="stable").drop_duplicates("_lot_key", keep="last")
+    events["event_id"] = exit_ids.loc[events.index]
+    events["_lot_key"] = events["event_id"] + "|" + entry_ids.loc[events.index]
+    events = events.sort_values(["timestamp", "_source_order"], kind="stable").drop_duplicates("_lot_key", keep="first")
     events = events.groupby(["timestamp", "event_id"], sort=True, as_index=False)["realised_pnl_delta"].sum()
     events = events.sort_values(["timestamp", "event_id"], kind="stable").reset_index(drop=True)
     initial = pd.DataFrame([{

@@ -77,8 +77,9 @@ def main():
     audit = pd.DataFrame([
         {"close_time": "2026-01-05", "symbol": "AAA", "entry_event_id": "buy-1", "exit_event_id": "sell-1", "pnl": 7.0, "cumulative_pnl": 700},
         {"close_time": "2026-01-05", "symbol": "AAA", "entry_event_id": "buy-2", "exit_event_id": "sell-1", "pnl": 3.0, "cumulative_pnl": 700},
-        {"close_time": "2026-01-05", "symbol": "AAA", "entry_event_id": "buy-2", "exit_event_id": "sell-1", "pnl": 3.0, "cumulative_pnl": 700},
+        {"close_time": "2026-01-05", "symbol": "AAA", "entry_event_id": "buy-2", "exit_event_id": "sell-1", "pnl": 999.0, "cumulative_pnl": 700},
         {"close_time": "2026-01-06", "symbol": "BBB", "entry_event_id": "buy-3", "exit_event_id": "sell-2", "pnl": -4.0, "cumulative_pnl": -999},
+        {"close_time": "bad", "symbol": "BAD", "entry_event_id": "", "exit_event_id": "", "pnl": 500.0, "cumulative_pnl": 500},
     ])
     realised = build_realised_pnl_series(audit, 6.0)
     check(float(realised.data.iloc[0]["cumulative_realised_pnl"]) == 0.0, "realised curve begins at zero", issues)
@@ -86,6 +87,8 @@ def main():
           "partial closes aggregate and duplicate lots do not double count", issues)
     check(float(realised.data.iloc[-1]["cumulative_realised_pnl"]) == 6.0 and realised.reconciliation_error is None,
           "winning/loss events reconcile to headline realised P&L", issues)
+    check(realised.malformed_events == 1,
+          "malformed realised events are excluded rather than counted", issues)
     check(float(realised.data.iloc[-1]["cumulative_realised_pnl"]) != audit["cumulative_pnl"].sum(),
           "already-cumulative fields are never cumulatively summed", issues)
 
