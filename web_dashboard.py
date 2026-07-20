@@ -15,6 +15,7 @@ from supabase import create_client
 from dashboard.data_loader import load_csv
 from dashboard.equity_chart import build_equity_curve_layers
 from dashboard.accounting_reader import load_dashboard_accounting
+from dashboard.scheduler_reader import load_scheduler_state
 from canonical_accounting.generation import GenerationError
 from dashboard.metrics import unrealised_pnl_from_holdings
 from dashboard.paper_challenge import (
@@ -3459,6 +3460,7 @@ win_rate_value = (
 )
 runtime_status = load_runtime_status()
 runtime_details = runtime_brief_details(runtime_status)
+scheduler_dashboard = load_scheduler_state()
 latest_trade = latest_trade_details(trades)
 open_positions = open_positions_count(holdings)
 portfolio_value = broker_row.get("portfolio_value", current_balance)
@@ -3491,6 +3493,19 @@ render_investment_brief(
     win_rate_value,
 )
 st.caption(home_source_summary())
+if scheduler_dashboard.error:
+    st.warning(f"Strategy scheduler state unavailable: {scheduler_dashboard.error}")
+elif scheduler_dashboard.instruments:
+    scheduler_labels = []
+    for symbol, record in sorted(scheduler_dashboard.instruments.items()):
+        identity = record.get("identity", {})
+        scheduler_labels.append(
+            f"{symbol}: {record.get('status', 'UNKNOWN')} "
+            f"({identity.get('bar_close_utc', 'no bar')})"
+        )
+    st.caption("Per-instrument completed bars | " + " | ".join(scheduler_labels))
+else:
+    st.caption("Per-instrument scheduler | No completed strategy bars recorded yet.")
 
 home_tab, scanner_tab = st.tabs(["Home", "Global Scanner"])
 

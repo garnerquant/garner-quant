@@ -445,7 +445,17 @@ def trade_currency(ticker):
     return str(asset_config.get("listing_currency") or "UNKNOWN")
 
 
-def update_portfolio(signals, prices, weights, risk_levels):
+def update_portfolio(
+    signals,
+    prices,
+    weights,
+    risk_levels,
+    *,
+    eligible_symbols=None,
+    bar_identities=None,
+):
+    eligible_symbols = set(eligible_symbols or signals.columns)
+    bar_identities = dict(bar_identities or {})
     portfolio = load_portfolio()
     assert_portfolio_matches_ledger(portfolio)
     journal = load_trade_journal()
@@ -515,6 +525,9 @@ def update_portfolio(signals, prices, weights, risk_levels):
     for position_index, position in portfolio.copy().iterrows():
         ticker = position["ticker"]
 
+        if ticker not in eligible_symbols:
+            continue
+
         if ticker not in latest_prices.index:
             if ticker in decisions:
                 decisions[ticker]["reason"] = "risk data missing"
@@ -531,7 +544,7 @@ def update_portfolio(signals, prices, weights, risk_levels):
             position,
             signal,
             latest_date,
-            trace_timestamp,
+            bar_identities.get(ticker, trace_timestamp),
         )
 
         portfolio.loc[

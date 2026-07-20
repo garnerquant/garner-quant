@@ -11,13 +11,11 @@ sys.path.insert(
     str(ROOT_DIR)
 )
 
-from main_v2 import main
-
-
 def run_bot():
-    print("\n===== RUNNING GARNER QUANT =====\n")
-    main(show_charts=False, send_telegram=True)
-    print("\n===== COMPLETE =====\n")
+    raise RuntimeError(
+        "The legacy daily all-asset scheduler is disabled. Use "
+        "runtime/live_runtime.py with per-instrument completed-bar orchestration."
+    )
 
 
 def main():

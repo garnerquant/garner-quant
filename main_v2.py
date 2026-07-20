@@ -32,7 +32,13 @@ from reporting.paper_performance import (
 from runtime.locks import acquire_execution_lock
 
 
-def _run_main_unlocked(show_charts=True, send_telegram=True, sync_remote=True):
+def _run_main_unlocked(
+    show_charts=True,
+    send_telegram=True,
+    sync_remote=True,
+    eligible_symbols=None,
+    bar_identities=None,
+):
     run_started = time.perf_counter()
     pipeline_events = []
 
@@ -48,7 +54,15 @@ def _run_main_unlocked(show_charts=True, send_telegram=True, sync_remote=True):
 
     from config import BENCHMARK_TICKER
 
-    tickers = list(ASSETS.keys()) + [BENCHMARK_TICKER]
+    if eligible_symbols is None:
+        raise RuntimeError(
+            "Per-instrument completed-bar eligibility is required; refusing the "
+            "legacy all-asset strategy path."
+        )
+    asset_tickers = [symbol for symbol in ASSETS if symbol in set(eligible_symbols)]
+    if not asset_tickers:
+        raise RuntimeError("No independently eligible instruments were supplied.")
+    tickers = list(dict.fromkeys(list(ASSETS.keys()) + [BENCHMARK_TICKER]))
 
     print("Downloading market data...")
     market_data = download_market_data(tickers)
@@ -62,8 +76,6 @@ def _run_main_unlocked(show_charts=True, send_telegram=True, sync_remote=True):
     highs = get_price_field(market_data, "High")
     lows = get_price_field(market_data, "Low")
     volumes = get_price_field(market_data, "Volume")
-
-    asset_tickers = list(ASSETS.keys())
 
     asset_prices = prices[asset_tickers]
     asset_highs = highs[asset_tickers]
@@ -102,7 +114,9 @@ def _run_main_unlocked(show_charts=True, send_telegram=True, sync_remote=True):
         signals,
         prices,
         weights,
-        risk_levels
+        risk_levels,
+        eligible_symbols=asset_tickers,
+        bar_identities=bar_identities or {},
     )
     record_event(
         "Paper Portfolio Updated",
@@ -271,10 +285,19 @@ def _run_main_unlocked(show_charts=True, send_telegram=True, sync_remote=True):
             if len(v3_trades)
             else None
         ),
+        "executed_symbols": sorted(
+            set(v3_trades.get("ticker", pd.Series(dtype=str)).dropna().astype(str))
+        ),
     }
 
 
-def main(show_charts=True, send_telegram=True, sync_remote=True):
+def main(
+    show_charts=True,
+    send_telegram=True,
+    sync_remote=True,
+    eligible_symbols=None,
+    bar_identities=None,
+):
     execution_lock = acquire_execution_lock(context="main_v2.main")
 
     if not execution_lock.acquired:
@@ -313,6 +336,8 @@ def main(show_charts=True, send_telegram=True, sync_remote=True):
             show_charts=show_charts,
             send_telegram=send_telegram,
             sync_remote=sync_remote,
+            eligible_symbols=eligible_symbols,
+            bar_identities=bar_identities,
         )
     finally:
         execution_lock.release()

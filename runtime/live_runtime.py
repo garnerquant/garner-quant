@@ -16,7 +16,11 @@ from execution.live_market_monitor import (  # noqa: E402
     load_current_holding_tickers,
     run_live_market_monitor,
 )
-from config import ASSETS  # noqa: E402
+from config import (  # noqa: E402
+    ASSETS,
+    STRATEGY_CONFIGURATION_VERSION,
+    STRATEGY_VERSION,
+)
 from notifications.alert_notifier import notify_alerts  # noqa: E402
 from runtime.startup_validation import validate_runtime_startup  # noqa: E402
 from execution.atomic_io import atomic_write_json  # noqa: E402
@@ -544,27 +548,16 @@ def build_cycle_explanation(
             ),
         }
 
-    if not markets_open:
-        return {
-            "cycle_summary": (
-                "Runtime completed successfully. No markets were open."
-            ),
-            "reason": "All configured markets were closed during this cycle.",
-            "action_taken": "No monitoring or paper execution was required.",
-            "next_expected_action": (
-                "Runtime will check again on the next scheduled cycle."
-            ),
-        }
-
     if blocked_reason:
         if mode == "monitor_only":
             return {
                 "cycle_summary": (
                     "Runtime completed successfully in monitor-only mode."
                 ),
-                "reason": "Market was open, but paper execution is disabled.",
+                "reason": "Paper execution is disabled.",
                 "action_taken": (
-                    "Live holdings were monitored and paper alerts were checked."
+                    "Eligible completed bars were recorded without submitting "
+                    "orders; open markets were monitored when available."
                 ),
                 "next_expected_action": (
                     "Enable Paper Execution Mode only when ready for automatic "
@@ -578,6 +571,18 @@ def build_cycle_explanation(
             "action_taken": "No paper trades were created.",
             "next_expected_action": (
                 "Review runtime config if paper execution should be enabled."
+            ),
+        }
+
+    if not markets_open:
+        return {
+            "cycle_summary": (
+                "Runtime completed successfully. No markets were open."
+            ),
+            "reason": "All configured markets were closed during this cycle.",
+            "action_taken": "No live market monitoring was required.",
+            "next_expected_action": (
+                "Runtime will check again on the next scheduled cycle."
             ),
         }
 
@@ -639,6 +644,7 @@ def paper_execution_blocked_reason(
     mode = config.get("mode")
     execution_log = execution_log or {}
     now = now or utc_now()
+    _ = markets_open, execution_log
 
     if not config.get("_config_exists", False):
         return "config missing"
@@ -658,23 +664,18 @@ def paper_execution_blocked_reason(
     if currency_block:
         return f"canonical accounting gate: {currency_block}"
 
-    if not markets_open:
-        return "market closed"
-
-    last_execution_at = execution_log.get("last_execution_at")
-    if last_execution_at:
-        try:
-            last_execution = datetime.fromisoformat(last_execution_at)
-            elapsed = (now - last_execution).total_seconds()
-            if elapsed < int(config.get("cycle_seconds", 300)):
-                return "already executed within current cycle"
-        except Exception:
-            pass
-
     return None
 
 
-def run_paper_execution(now, markets_open, mode, events=None):
+def run_paper_execution(
+    now,
+    markets_open,
+    mode,
+    *,
+    eligible_symbols,
+    bar_identities,
+    events=None,
+):
     events = events if events is not None else []
     execution_started = time_module.perf_counter()
     entry = {
@@ -682,6 +683,8 @@ def run_paper_execution(now, markets_open, mode, events=None):
         "timestamp": iso_timestamp(now),
         "mode": mode,
         "markets_open": markets_open,
+        "eligible_symbols": list(eligible_symbols),
+        "bar_identities": dict(bar_identities),
         "symbols_scanned": 0,
         "signals_count": 0,
         "buy_signals": 0,
@@ -697,6 +700,7 @@ def run_paper_execution(now, markets_open, mode, events=None):
         "notifications_sent": 0,
         "execution_time_seconds": 0,
         "latest_paper_trade": None,
+        "executed_symbols": [],
         "remote_sync": {
             "attempted": False,
             "success": None,
@@ -722,6 +726,8 @@ def run_paper_execution(now, markets_open, mode, events=None):
             show_charts=False,
             send_telegram=False,
             sync_remote=False,
+            eligible_symbols=eligible_symbols,
+            bar_identities=bar_identities,
         )
         result = result or {}
         for event in result.get("events", []):
@@ -764,6 +770,7 @@ def run_paper_execution(now, markets_open, mode, events=None):
                     or 0
                 ),
                 "latest_paper_trade": json_safe(result.get("latest_paper_trade")),
+                "executed_symbols": list(result.get("executed_symbols", [])),
                 "status": "success",
             }
         )
@@ -883,6 +890,44 @@ def run_cycle(config, started_at, cycle_count):
         execution_log=execution_log,
         now=now,
     )
+    scheduler_summary = {
+        "decisions": [], "eligible_symbols": [], "bar_identities": {},
+        "health": {}, "error": None,
+    }
+
+    try:
+        from runtime.strategy_orchestrator import (
+            download_daily_closes,
+            schedule_completed_bars,
+        )
+
+        scheduler_closes = download_daily_closes(ASSETS.keys())
+        scheduler_summary = schedule_completed_bars(
+            scheduler_closes,
+            now=now,
+            strategy_version=STRATEGY_VERSION,
+            configuration_version=STRATEGY_CONFIGURATION_VERSION,
+            execution_block_reason=blocked_reason,
+        )
+        append_event(
+            events,
+            "Strategy Bar Schedule Evaluated",
+            "Evaluated completed strategy bars independently by instrument.",
+            details={
+                "eligible_symbols": scheduler_summary["eligible_symbols"],
+                "decisions": scheduler_summary["decisions"],
+            },
+        )
+    except Exception as exc:
+        scheduler_summary["error"] = str(exc)
+        blocked_reason = f"strategy scheduler failed closed: {exc}"
+        append_event(
+            events,
+            "Strategy Scheduler Failure",
+            "Per-instrument strategy scheduling failed closed.",
+            severity="error",
+            details={"error": str(exc)},
+        )
 
     if config.get("enabled", True) and should_monitor:
         append_event(
@@ -996,16 +1041,33 @@ def run_cycle(config, started_at, cycle_count):
             details={"error": str(exc)},
         )
 
-    if blocked_reason is None:
+    if blocked_reason is None and scheduler_summary["eligible_symbols"]:
         execution_entry = run_paper_execution(
             now,
             markets_open,
             config.get("mode", "monitor_only"),
+            eligible_symbols=scheduler_summary["eligible_symbols"],
+            bar_identities=scheduler_summary["bar_identities"],
             events=events,
         )
         if execution_entry.get("status") == "error":
             last_error = execution_entry.get("error")
+        else:
+            from runtime.bar_scheduler import ProcessedBarStore
+
+            scheduler_store = ProcessedBarStore()
+            executed = set(execution_entry.get("executed_symbols", []))
+            for decision in scheduler_summary["claimed"]:
+                status = "EXECUTED" if decision.symbol in executed else "NO_ACTION"
+                scheduler_store.transition(
+                    decision.identity,
+                    status,
+                    timestamp=now,
+                    execution_result=execution_entry.get("status"),
+                )
     else:
+        if blocked_reason is None:
+            blocked_reason = "no new completed instrument bars are eligible"
         append_event(
             events,
             "Paper Execution Blocked",
@@ -1013,6 +1075,8 @@ def run_cycle(config, started_at, cycle_count):
             severity="warning" if markets_open else "info",
             details={"reason": blocked_reason},
         )
+
+    scheduler_summary.pop("claimed", None)
 
     next_cycle_at = now + timedelta(
         seconds=int(config.get("cycle_seconds", 300))
@@ -1121,6 +1185,7 @@ def run_cycle(config, started_at, cycle_count):
             config.get("paper_execution_enabled", False)
         ),
         "paper_execution_blocked_reason": blocked_reason,
+        "strategy_scheduler": json_safe(scheduler_summary),
         "last_execution_at": (
             execution_entry.get("timestamp")
             if execution_entry is not None
