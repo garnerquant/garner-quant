@@ -36,20 +36,32 @@ def main():
     audit = build_authoritative_trade_audit(ledger_path=ROOT / "trade_ledger_v1.csv")
     broker = pd.read_csv(ROOT / "broker_account.csv").iloc[0]
     headline = float(broker["realised_pnl"])
-    curve = build_realised_pnl_series(audit, headline)
+    curve = build_realised_pnl_series(
+        audit, headline, starting_balance=10000.0, challenge_start_date="2026-06-21"
+    )
 
     ledger_total = float(accounting["realised_pnl"])
     event_total = float(audit["pnl"].sum())
-    endpoint = float(curve.data.iloc[-1]["cumulative_realised_pnl"])
+    event_endpoint = float(curve.data.iloc[-1]["cumulative_realised_pnl"])
+    equity_endpoint = float(curve.data.iloc[-1]["realised_equity"])
     sell_ids = set(sells["event_id"].astype(str))
-    curve_ids = set(curve.data.loc[curve.data["event_id"].ne("challenge-realised-baseline"), "event_id"].astype(str))
+    curve_ids = {
+        event_id
+        for value in curve.data.loc[
+            curve.data["event_id"].ne("challenge-realised-baseline"), "event_id"
+        ].astype(str)
+        for event_id in value.split(" | ")
+    }
 
     check(len(sells) == sells["event_id"].nunique(), "every canonical SELL has a unique event ID", issues)
     check(sell_ids == curve_ids and curve.event_count == len(sells), "every SELL produces exactly one consolidated realised event", issues)
     check(audit[["entry_event_id", "exit_event_id"]].duplicated().sum() == 0, "FIFO lot matches cannot be duplicated", issues)
-    check(float(curve.data.iloc[0]["cumulative_realised_pnl"]) == 0.0, "realised curve starts at zero", issues)
+    check(float(curve.data.iloc[0]["realised_equity"]) == 10000.0, "realised-equity curve starts at configured balance", issues)
     check(curve.reconciliation_error is None, "dashboard reconciliation accepts the exact canonical chain", issues)
-    check(headline == ledger_total == event_total == endpoint, "headline, ledger, events, and curve endpoint are exactly equal", issues)
+    check(headline == ledger_total == event_total == event_endpoint, "headline, ledger, and event-level cumulative total are exactly equal", issues)
+    check(equity_endpoint == 10000.0 + headline, "realised-equity endpoint exactly equals starting balance plus headline", issues)
+    check(curve.data["date"].is_monotonic_increasing and not curve.data["date"].duplicated().any(),
+          "daily realised-equity dates are strictly chronological and unique", issues)
 
     fixture = pd.DataFrame([
         {"close_time": "2026-01-01", "entry_event_id": "buy-a", "exit_event_id": "sell-a", "pnl": 4.25},
@@ -57,7 +69,9 @@ def main():
         {"close_time": "2026-01-01", "entry_event_id": "buy-b", "exit_event_id": "sell-a", "pnl": 999.0},
         {"close_time": "bad", "entry_event_id": "", "exit_event_id": "", "pnl": 1000.0},
     ])
-    fixture_curve = build_realised_pnl_series(fixture, 6.0)
+    fixture_curve = build_realised_pnl_series(
+        fixture, 6.0, starting_balance=10000.0, challenge_start_date="2025-12-31"
+    )
     check(fixture_curve.event_count == 1 and float(fixture_curve.data.iloc[-1]["cumulative_realised_pnl"]) == 6.0,
           "partial FIFO matches consolidate once and altered duplicates do not double count", issues)
     check(fixture_curve.malformed_events == 1, "malformed realised events are ignored", issues)
@@ -80,7 +94,8 @@ def main():
     print(f"headline={headline!r}")
     print(f"ledger={ledger_total!r}")
     print(f"events={event_total!r}")
-    print(f"curve_endpoint={endpoint!r}")
+    print(f"event_endpoint={event_endpoint!r}")
+    print(f"realised_equity_endpoint={equity_endpoint!r}")
     print(f"summary={len(issues)} failure(s)")
     return 1 if issues else 0
 

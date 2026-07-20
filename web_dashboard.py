@@ -3954,6 +3954,12 @@ with home_tab:
     realised_series = build_realised_pnl_series(
         audit,
         paper_row.get("realised_pnl"),
+        starting_balance=start_balance,
+        challenge_start_date=(
+            challenge_result.data.iloc[0]["date"]
+            if challenge_result is not None and not challenge_result.data.empty
+            else None
+        ),
         through=(
             challenge_result.data.iloc[-1]["timestamp"]
             if challenge_result is not None and not challenge_result.data.empty
@@ -3971,19 +3977,24 @@ with home_tab:
             alt.Chart(realised_series.data)
             .mark_line(interpolate="step-after", point=True, color="#2563EB")
             .encode(
-                x=alt.X("timestamp:T", title="Realisation timestamp"),
-                y=alt.Y("cumulative_realised_pnl:Q", title="Cumulative realised P&L (GBP)"),
+                x=alt.X("date:T", title="Realisation date"),
+                y=alt.Y(
+                    "realised_equity:Q",
+                    title="Realised equity (GBP)",
+                    axis=alt.Axis(format="£,.2f"),
+                    scale=alt.Scale(zero=False),
+                ),
                 tooltip=[
-                    alt.Tooltip("timestamp:T", title="Timestamp"),
-                    alt.Tooltip("event_id:N", title="Ledger event"),
-                    alt.Tooltip("realised_pnl_delta:Q", title="Event P&L", format=",.2f"),
-                    alt.Tooltip("cumulative_realised_pnl:Q", title="Cumulative P&L", format=",.2f"),
+                    alt.Tooltip("date:T", title="Date"),
+                    alt.Tooltip("event_id:N", title="Ledger events"),
+                    alt.Tooltip("daily_realised_pnl:Q", title="Daily realised P&L", format="£,.2f"),
+                    alt.Tooltip("realised_equity:Q", title="Realised equity", format="£,.2f"),
                 ],
             )
             .properties(height=300)
         )
         st.altair_chart(realised_chart, width="stretch")
-        st.caption("Canonical after-fee close events only; buys, deposits, and trade notionals do not alter this series.")
+        st.caption("Starting balance plus canonical after-fee realised P&L; same-day closes are netted for display only.")
     if realised_series.malformed_events:
         st.warning(f"{realised_series.malformed_events} malformed realised event(s) were excluded.")
     if audit.empty or "pnl" not in audit.columns:

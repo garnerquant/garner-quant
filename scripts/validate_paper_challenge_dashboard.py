@@ -81,16 +81,31 @@ def main():
         {"close_time": "2026-01-06", "symbol": "BBB", "entry_event_id": "buy-3", "exit_event_id": "sell-2", "pnl": -4.0, "cumulative_pnl": -999},
         {"close_time": "bad", "symbol": "BAD", "entry_event_id": "", "exit_event_id": "", "pnl": 500.0, "cumulative_pnl": 500},
     ])
-    realised = build_realised_pnl_series(audit, 6.0)
-    check(float(realised.data.iloc[0]["cumulative_realised_pnl"]) == 0.0, "realised curve begins at zero", issues)
-    check(realised.event_count == 2 and list(realised.data["realised_pnl_delta"]) == [0.0, 10.0, -4.0],
+    realised = build_realised_pnl_series(
+        audit, 6.0, starting_balance=10000.0, challenge_start_date="2026-01-01"
+    )
+    check(float(realised.data.iloc[0]["realised_equity"]) == 10000.0, "realised equity begins at configured balance", issues)
+    check(realised.event_count == 2 and list(realised.data["daily_realised_pnl"]) == [0.0, 10.0, -4.0],
           "partial closes aggregate and duplicate lots do not double count", issues)
-    check(float(realised.data.iloc[-1]["cumulative_realised_pnl"]) == 6.0 and realised.reconciliation_error is None,
+    check(float(realised.data.iloc[-1]["realised_equity"]) == 10006.0 and realised.reconciliation_error is None,
           "winning/loss events reconcile to headline realised P&L", issues)
     check(realised.malformed_events == 1,
           "malformed realised events are excluded rather than counted", issues)
     check(float(realised.data.iloc[-1]["cumulative_realised_pnl"]) != audit["cumulative_pnl"].sum(),
           "already-cumulative fields are never cumulatively summed", issues)
+    loss = build_realised_pnl_series(
+        pd.DataFrame([{
+            "close_time": "2026-01-05", "entry_event_id": "loss-buy",
+            "exit_event_id": "loss-sell", "pnl": -36.34,
+        }]),
+        -36.34,
+        starting_balance=10000.0,
+        challenge_start_date="2026-01-01",
+    )
+    check(float(loss.data.iloc[-1]["realised_equity"]) == 9963.66,
+          "10000 starting balance and -36.34 realised P&L end at 9963.66", issues)
+    check(loss.data["date"].is_monotonic_increasing and not loss.data["date"].duplicated().any(),
+          "realised-equity display dates are unique and chronological", issues)
 
     holdings_history = pd.DataFrame([
         {"date": "2026-01-01", "ticker": "AAA", "market_value": 60.0},
@@ -111,11 +126,20 @@ def main():
     source = (ROOT / "web_dashboard.py").read_text(encoding="utf-8")
     check("30 Day Paper Trading Challenge" not in source and "30 Day Equity Curve" not in source,
           "dashboard titles no longer contain 30 Day", issues)
+    check(
+        'st.subheader("📈 Realised Equity Curve")' in source
+        and '"realised_equity:Q"' in source
+        and 'title="Realised equity (GBP)"' in source,
+        "realised chart title and GBP equity-axis contract are explicit",
+        issues,
+    )
     helper = ROOT / "dashboard/paper_challenge.py"
     prohibited = {"scanner_v2", "yfinance", "execution", "streamlit", "runtime"}
     check(not (import_roots(helper) & prohibited), "analytics helper has no scanner, network, UI, execution, or runtime dependency", issues)
     check(all(text not in helper.read_text(encoding="utf-8") for text in ("to_csv(", "write_text(", "unlink(", "atomic_write")),
           "analytics helper performs no writes", issues)
+    check(all(text not in helper.read_text(encoding="utf-8") for text in ("FIFO", "open_lots", "buy_cost", "sell_proceeds")),
+          "chart helper contains no FIFO or trade-accounting logic", issues)
     if issues:
         raise AssertionError("; ".join(issues))
     print("\nPaper challenge dashboard validation passed.")

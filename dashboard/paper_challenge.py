@@ -126,10 +126,28 @@ def build_realised_pnl_series(
     audit: pd.DataFrame,
     displayed_realised_pnl,
     *,
+    starting_balance,
+    challenge_start_date,
     through=None,
     tolerance: float = RECONCILIATION_TOLERANCE,
 ) -> RealisedPnlSeries:
-    columns = ["timestamp", "event_id", "realised_pnl_delta", "cumulative_realised_pnl"]
+    columns = [
+        "date", "event_id", "daily_realised_pnl", "cumulative_realised_pnl",
+        "realised_equity",
+    ]
+    starting = pd.to_numeric(starting_balance, errors="coerce")
+    start_date = pd.to_datetime(challenge_start_date, errors="coerce")
+    if pd.isna(starting) or not np.isfinite(float(starting)) or float(starting) <= 0:
+        return RealisedPnlSeries(
+            pd.DataFrame(columns=columns), 0, 0,
+            "Realised equity requires a finite positive challenge starting balance.",
+        )
+    if pd.isna(start_date):
+        return RealisedPnlSeries(
+            pd.DataFrame(columns=columns), 0, 0,
+            "Realised equity requires a valid challenge start date.",
+        )
+    start_date = pd.Timestamp(start_date).normalize()
     if audit is None or audit.empty or "close_time" not in audit or "pnl" not in audit:
         headline = pd.to_numeric(displayed_realised_pnl, errors="coerce")
         mismatch = (
@@ -167,13 +185,26 @@ def build_realised_pnl_series(
     events = events.sort_values(["timestamp", "_source_order"], kind="stable").drop_duplicates("_lot_key", keep="first")
     events = events.groupby(["timestamp", "event_id"], sort=True, as_index=False)["realised_pnl_delta"].sum()
     events = events.sort_values(["timestamp", "event_id"], kind="stable").reset_index(drop=True)
+    event_count = len(events)
+    events["date"] = events["timestamp"].dt.normalize()
+    daily = events.groupby("date", sort=True, as_index=False).agg(
+        daily_realised_pnl=("realised_pnl_delta", "sum"),
+        event_id=("event_id", lambda values: " | ".join(values.astype(str))),
+    )
+    daily = daily.sort_values("date", kind="stable").reset_index(drop=True)
+    if not daily.empty and daily.iloc[0]["date"] <= start_date:
+        return RealisedPnlSeries(
+            pd.DataFrame(columns=columns), event_count, malformed,
+            "A realised event is not later than the challenge baseline date.",
+        )
     initial = pd.DataFrame([{
-        "timestamp": events.iloc[0]["timestamp"] - pd.Timedelta(microseconds=1),
-        "event_id": "challenge-realised-baseline", "realised_pnl_delta": 0.0,
-        "cumulative_realised_pnl": 0.0,
+        "date": start_date, "event_id": "challenge-realised-baseline",
+        "daily_realised_pnl": 0.0, "cumulative_realised_pnl": 0.0,
+        "realised_equity": float(starting),
     }])
-    events["cumulative_realised_pnl"] = events["realised_pnl_delta"].cumsum()
-    result = pd.concat([initial, events], ignore_index=True)[columns]
+    daily["cumulative_realised_pnl"] = daily["daily_realised_pnl"].cumsum()
+    daily["realised_equity"] = float(starting) + daily["cumulative_realised_pnl"]
+    result = pd.concat([initial, daily], ignore_index=True)[columns]
     mismatch = None
     headline = pd.to_numeric(displayed_realised_pnl, errors="coerce")
     if pd.notna(headline) and abs(float(result.iloc[-1]["cumulative_realised_pnl"]) - float(headline)) > tolerance:
@@ -181,7 +212,7 @@ def build_realised_pnl_series(
             f"Realised events total {float(result.iloc[-1]['cumulative_realised_pnl']):.2f} "
             f"but the headline is {float(headline):.2f}."
         )
-    return RealisedPnlSeries(result.copy(deep=True), len(events), malformed, mismatch)
+    return RealisedPnlSeries(result.copy(deep=True), event_count, malformed, mismatch)
 
 
 def build_day_over_day_attribution(
