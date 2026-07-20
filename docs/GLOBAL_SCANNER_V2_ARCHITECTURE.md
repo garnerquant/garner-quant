@@ -157,3 +157,202 @@ fixtures preserve legacy indicators, weights, thresholds, score and tie-breaking
 
 Dry-run builds and prints the plan without downloads or canonical writes. Live
 network smoke testing is optional and is not part of required validation.
+
+## Phase 4: Read-Only Dashboard Consumer
+
+The dashboard consumes only the active immutable feature generation through
+`dashboard/scanner_reader.py`. The reader resolves
+`data/global_scanner/feature_store/current_generation.json`, requires the pointer
+to reference an existing generation, and validates the completion manifest before
+returning any data.
+
+The active generation layout is:
+
+```text
+data/global_scanner/feature_store/
+  current_generation.json
+  generations/<generation_id>/
+    scanner_features.csv
+    latest_rankings.csv
+    selected_candidates.csv
+    rejected_assets.csv
+    ranking_movement.csv
+    scanner_generation_manifest.json
+```
+
+The reader verifies pointer/manifest identity, `status == "complete"`, all five
+CSV artifacts, their manifest-declared SHA-256 hashes, required columns, feature
+terminal-state reconciliation, and manifest row counts. Missing pointers,
+missing generations or artifacts, malformed manifests, incomplete generations,
+hash failures, schema failures, and valid empty candidate sets remain distinct
+consumer states. Validation failures are visible in the UI and are never
+converted silently into empty frames.
+
+The dashboard may format, filter, sort, paginate, aggregate displayed rows, and
+reload the already-published pointer from disk. It must not download market data,
+invoke a scanner, calculate indicators or scores, rank or select assets, infer
+movement, read raw universe files, use file modification time as scanner
+freshness, repair artifacts, or write scanner state. Portfolio-fit calculations
+were removed from the scanner presentation until an equivalent result is
+published by an upstream canonical producer.
+
+Produce data outside Streamlit:
+
+```text
+python -m research.scanner_v2.acquire --all-enabled
+python -m research.scanner_v2.features --generation current
+```
+
+The dashboard's **Reload published generation** button only rereads the active
+immutable generation. Phase 4 removed the legacy flat-file reads, history-folder
+reconstruction, automatic stale-output scan, manual producer button, legacy
+`research.global_scanner` import, and raw-universe enrichment from the dashboard.
+
+## Phase 5: Canonical Investment Intelligence
+
+Scanner v2 owns deterministic asset and portfolio-context intelligence. The
+dashboard owns formatting and rendering; Research Lab, Strategy Engine, APIs and
+other consumers read the same immutable artifacts. Consumers must not reproduce
+Scanner labels, percentiles, peer ranks or portfolio-fit rules.
+
+### Generation bundle
+
+`research.scanner_v2.generation.ScannerGeneration` treats publication as one
+bundle rather than unrelated files:
+
+```text
+Generation
+  Manifest and metadata
+  scanner_features.csv
+  latest_rankings.csv
+  selected_candidates.csv
+  rejected_assets.csv
+  ranking_movement.csv
+  portfolio_fit.csv
+```
+
+All six CSVs are staged beneath one generation directory, included in the
+manifest hash map, validated as one contract, and made visible by the existing
+single pointer swap. Existing manifest fields and count semantics are unchanged.
+Additive fields are `intelligence_schema_version` and `portfolio_fit_assets`.
+The scoring version remains `legacy-scanner-score-v1`; Phase 5 does not change
+the scanner score, sort keys, candidate cutoff, persistence or movement rules.
+
+### Canonical intelligence schema
+
+The feature schema is additive and versioned as `scanner-features-v2` with
+`scanner-intelligence-v1` intelligence semantics.
+
+| Group | Published fields | Deterministic rule |
+|---|---|---|
+| Returns | `return_20d_pct`, `return_60d_pct`, `return_252d_pct` | Point-to-point adjusted-close returns when sufficient bars exist |
+| Price range | `high_52w`, `low_52w`, `percentile_52w`, distances from high/low | Final 252 observations; breakout compares latest close with the prior window |
+| Trend | EMA distances, `moving_average_alignment`, `trend_regime`, `trend_strength_pct`, bullish/bearish flags | Bullish when close > EMA20 > EMA50; bearish for the inverse; otherwise mixed |
+| Momentum | `momentum_regime` | 20-day return: high at >=10%, positive above 0%, low at <=-10%, otherwise negative |
+| Breakout/mean reversion | `breakout_state`, `mean_reversion_state` | Prior 52-week bounds; EMA20 extension at +/-5% |
+| Volatility | `volatility_regime`, `rolling_volatility_percentile`, `atr_percentile` | Stable below 20%, moderate below 45%, otherwise volatile; percentiles among scored assets |
+| Liquidity | average volume, volume percentile, native traded value, currency, liquidity percentile/bucket, tradability | Traded-value percentiles are within listing currency; high >=75th percentile, medium >=25th, otherwise low |
+| Quality | `quality_bucket` | Confidence >=0.85 high, >=0.65 medium, otherwise low |
+| Relative strength | `relative_strength_percentile` | Cross-sectional percentile of 60-day return among scored assets |
+| Peer intelligence | sector/country ranks and percentiles, sector candidate rank/count, sector average score | Stable global score/liquidity/ticker order within canonical metadata groups |
+
+`average_daily_traded_value_60d` is in the asset's listing currency and
+`traded_value_currency` identifies that unit. `average_dollar_volume_60d` and
+`spread_estimate` remain null because Scanner v2 has neither canonical FX rates
+nor bid/ask data. Growth/defensive labels are not published because the current
+inputs do not support them without fabrication. Country intelligence is available
+from canonical universe metadata; missing values form an explicit `Unknown` group.
+
+### Portfolio intelligence producer
+
+`research/scanner_v2/portfolio_intelligence.py` consumes published candidates,
+canonical feature metadata, and an optional valued holdings snapshot. It emits
+one `portfolio_fit.csv` row per candidate with held status, sector/country/
+currency/asset-type overlap percentages, concentration impact, a bounded
+diversification score, status and explanation text. The deterministic rules are
+the former dashboard rules, now centralized upstream.
+
+If holdings are absent, malformed, or have no positive market value, every
+candidate receives `portfolio_fit_status=unavailable`, null overlap/score fields,
+and an explanation. The producer never reads raw universe files and never invents
+portfolio context. Supply an optional snapshot explicitly:
+
+```text
+python -m research.scanner_v2.features --generation current --holdings holdings_report.csv
+```
+
+Research and strategy consumers may immediately read the generation CSVs or use
+the validated bundle contract. The Phase 5 intelligence and generation modules
+import no dashboard, runtime, accounting, ledger, Supabase or deployment code.
+
+## Phase 6: Scanner Generation Research
+
+Research is a one-way, read-only consumer of completed `ScannerGeneration`
+bundles. Scanner never imports Research; Dashboard and Execution do not calculate
+research results. The Phase 6 backend deliberately has no dashboard, execution,
+runtime, accounting, Streamlit, yfinance, or network dependency.
+
+```text
+ScannerGeneration history
+  -> ScannerResearchReader
+  -> historical_dataset.csv
+  -> pinned forward-return outcomes
+  -> deterministic analytics
+  -> immutable research report generation
+```
+
+`research/scanner_generation_reader.py` loads the active generation, explicit
+generation IDs, the complete generation history, or an inclusive manifest-time
+range. Every load validates completion, identity, the six canonical artifact
+hashes, counts, and the `ScannerGeneration` schema. A malformed historical
+generation is reported rather than silently skipped.
+
+`research/scanner_history.py` creates one observation per
+`generation_id`/`ticker`/`as_of_date`. It joins only fields already published in
+features, rankings, movement, candidate membership, persistence, and portfolio
+fit; it does not reconstruct Scanner intelligence. Manifest counts and source
+generation metadata remain attached to each observation.
+
+`research/scanner_forward_returns.py` adds 5, 20, 60, 120 and 252-observation
+forward returns from an explicitly pinned immutable bar generation. The base is
+the first canonical close on or after the feature `as_of_date`; the target is
+exactly N later observations. Missing future history stays null. Features are
+never backfilled or recalculated, preventing outcome data from leaking into the
+point-in-time feature record.
+
+The analytics layer reports return distributions by rank decile, sector,
+country, liquidity and quality bucket, volatility/trend/momentum regime,
+persistence bucket, and published candidate status. Metrics are observation and
+outcome counts, mean/median return, hit/win/loss rates, average gain/loss,
+annualized Sharpe and maximum drawdown. Maximum drawdown is the drawdown of the
+cumulative return path in deterministic observation order; it is a grouped
+research diagnostic, not a simulated portfolio equity curve.
+
+Numeric factors use Spearman rank correlation with forward return. Categorical
+factors use eta-squared across their published groups. Both are descriptive,
+deterministic statistics; Phase 6 introduces no machine learning, optimized
+weights, trading rules, or feedback into Scanner ranking.
+
+Each report run is an immutable directory and refuses overwrite:
+
+```text
+research_reports/generations/<report_id>/
+  historical_dataset.csv
+  factor_report.csv
+  sector_report.csv
+  country_report.csv
+  bucket_report.csv
+  regime_report.csv
+  candidate_report.csv
+  ranking_report.csv
+  research_summary.json
+  research_manifest.json
+```
+
+The research manifest pins all source Scanner generation IDs and the outcome bar
+generation, records table counts, and declares SHA-256 hashes for every report
+artifact. Reports may be built through
+`research.scanner_research_reports.run_scanner_research`; callers supply isolated
+feature-store, bar-store and report roots plus optional generation IDs or date
+bounds. Report publication writes only to the supplied research-report root and
+never changes Scanner artifacts or pointers.

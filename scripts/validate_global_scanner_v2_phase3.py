@@ -17,6 +17,7 @@ from research.scanner_v2.bar_store import ScannerBarStore
 from research.scanner_v2.features import (COMPARISON_FIELDS, FeatureGenerationStore,
     FeaturePolicy, calculate_ticker_features, produce_feature_generation,
     ranking_movement)
+from research.scanner_v2.generation import GENERATION_ARTIFACTS
 
 
 def check(value, message, issues):
@@ -92,7 +93,7 @@ def main():
                 except RuntimeError: rollback = True
                 check(rollback and pointer_before == (feature_root / "current_generation.json").read_bytes() and FeatureGenerationStore(feature_root).current_generation() == "good", "failed generation preserves the previous active generation", issues)
                 manifest = json.loads((Path(published["path"]) / "scanner_generation_manifest.json").read_text())
-                check(manifest["eligible_assets"] == manifest["scored_assets"] + manifest["rejected_assets"] + manifest["failed_assets"] and len(manifest["hashes"]) == 5, "manifest terminal states and artifact hashes reconcile", issues)
+                check(manifest["eligible_assets"] == manifest["scored_assets"] + manifest["rejected_assets"] + manifest["failed_assets"] and set(manifest["hashes"]) == set(GENERATION_ARTIFACTS), "manifest terminal states and artifact hashes reconcile", issues)
                 rankings = pd.read_csv(Path(published["path"]) / "latest_rankings.csv")
                 candidates = pd.read_csv(Path(published["path"]) / "selected_candidates.csv")
                 check(list(rankings.columns) == list(candidates.columns) and COMPARISON_FIELDS.issubset(rankings.columns), "candidate schema matches rankings and canonical features drive comparison", issues)

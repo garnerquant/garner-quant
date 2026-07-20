@@ -277,9 +277,9 @@ def validate_entrypoint_order(issues):
         ROOT / "web_dashboard.py": "broker = load_home_table(",
         ROOT / "pages" / "04_trade_audit.py": "st.title(",
         ROOT / "pages" / "96_backtest_analytics.py": "analytics = load_backtest_analytics(",
-        ROOT / "pages" / "97_research_intelligence.py": "insights = generate_research_insights(",
-        ROOT / "pages" / "98_research_lab.py": "data = {}",
-        ROOT / "pages" / "99_admin_health.py": "data = {}",
+        ROOT / "pages" / "97_research_intelligence.py": "bundle = ResearchReportReader(",
+        ROOT / "pages" / "98_research_lab.py": "st.title(\"Research Lab\")",
+        ROOT / "pages" / "99_admin_health.py": "runtime = load_runtime_status()",
     }
 
     for path, marker in entrypoints.items():

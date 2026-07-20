@@ -2,12 +2,8 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
+from config import PAPER_TRADING_CHALLENGE_DAYS, STARTING_CASH
 from execution.atomic_io import atomic_write_csv_frames
-
-try:
-    from config import STARTING_CASH
-except Exception:
-    STARTING_CASH = None
 
 
 TRACKER_FILE = "paper_30_day_tracker.csv"
@@ -91,16 +87,20 @@ def calculate_30_day_performance(tracker):
     if len(tracker) == 0:
         return {}
 
-    tracker["date"] = pd.to_datetime(tracker["date"])
-    tracker = tracker.sort_values("date")
+    tracker = tracker.copy(deep=True)
+    tracker["date"] = pd.to_datetime(tracker["date"], errors="coerce")
+    tracker = tracker.dropna(subset=["date"]).sort_values("date", kind="stable")
+    if tracker.empty:
+        return {}
 
     start_value = challenge_initial_capital(tracker)
     current_value = tracker["portfolio_value"].iloc[-1]
 
     total_return = (current_value / start_value) - 1 if start_value > 0 else 0
-    days_tracked = tracker["date"].dt.date.nunique()
-
-    days_remaining = max(30 - days_tracked, 0)
+    baseline_date = tracker["date"].iloc[0].normalize() - pd.Timedelta(days=1)
+    elapsed_days = int((tracker["date"].iloc[-1].normalize() - baseline_date).days)
+    days_tracked = min(max(elapsed_days, 0), PAPER_TRADING_CHALLENGE_DAYS)
+    days_remaining = max(PAPER_TRADING_CHALLENGE_DAYS - days_tracked, 0)
 
     return {
         "start_date": tracker["date"].iloc[0].date(),
@@ -119,10 +119,10 @@ def print_30_day_performance(performance):
     if not performance:
         return
 
-    print("\n===== 30 DAY PAPER TRADING PERFORMANCE =====")
+    print(f"\n===== {PAPER_TRADING_CHALLENGE_DAYS} DAY PAPER TRADING PERFORMANCE =====")
     print(f"Start Date: {performance['start_date']}")
     print(f"Current Date: {performance['current_date']}")
-    print(f"Days Tracked: {performance['days_tracked']}/30")
+    print(f"Days Tracked: {performance['days_tracked']}/{PAPER_TRADING_CHALLENGE_DAYS}")
     print(f"Days Remaining: {performance['days_remaining']}")
     print(f"Start Value: £{performance['start_value']:,.2f}")
     print(f"Current Value: £{performance['current_value']:,.2f}")

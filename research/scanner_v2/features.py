@@ -15,15 +15,24 @@ import pandas as pd
 
 from config import CRYPTO_MA_THRESHOLD, DEFAULT_MA_THRESHOLD, ETF_MA_THRESHOLD, STOCK_MA_THRESHOLD
 from research.scanner_v2.bar_store import ScannerBarStore
+from research.scanner_v2.generation import ScannerGeneration
+from research.scanner_v2.intelligence import (
+    INTELLIGENCE_SCHEMA_VERSION,
+    add_peer_intelligence,
+    calculate_bar_intelligence,
+    enrich_feature_intelligence,
+)
+from research.scanner_v2.portfolio_intelligence import build_portfolio_fit
 from research.scanner_v2.universe import load_canonical_universe
 
 
-FEATURE_SCHEMA_VERSION = "scanner-features-v1"
+FEATURE_SCHEMA_VERSION = "scanner-features-v2"
 SCORING_VERSION = "legacy-scanner-score-v1"
 TERMINAL_STATES = {"scored", "rejected", "failed"}
 OUTPUT_NAMES = (
     "scanner_features.csv", "latest_rankings.csv", "selected_candidates.csv",
-    "rejected_assets.csv", "ranking_movement.csv", "scanner_generation_manifest.json",
+    "rejected_assets.csv", "ranking_movement.csv", "portfolio_fit.csv",
+    "scanner_generation_manifest.json",
 )
 COMPARISON_FIELDS = {
     "ticker", "display_name", "sector", "industry", "country", "currency",
@@ -167,6 +176,7 @@ def calculate_ticker_features(ticker, bars, metadata, memberships, reference_dat
            "scanner_score": score, "global_score": score, "exclusion_state": bool(reasons),
            "rejection_reason": "|".join(sorted(reasons)), "terminal_state": "rejected" if reasons else "scored"}
     row.update(tech or {key: np.nan for key in ["ema20", "ema50", "rsi14", "macd", "macd_signal", "technical_score"]})
+    row.update(calculate_bar_intelligence(frame))
     if tech is None:
         row.update({key: False for key in ["price_above_ema20", "ema20_above_ema50", "rsi_in_range", "macd_above_signal", "volume_above_20d_average"]})
     return row
@@ -183,6 +193,7 @@ def rank_features(features, memberships, top_n=15):
     expanded["universe_rank"] = expanded.groupby("universe_name", dropna=False).cumcount() + 1
     per_ticker = expanded.groupby("ticker", sort=False)["universe_rank"].apply(lambda s: "|".join(map(str, s))).to_dict()
     scored["universe_ranks"] = scored["ticker"].map(per_ticker)
+    scored = add_peer_intelligence(scored)
     return scored, scored[scored["selected_for_research"]].copy()
 
 
@@ -301,7 +312,7 @@ class FeatureGenerationStore:
             raise
 
 
-def produce_feature_generation(bar_store_dir="data/global_scanner/bar_store", feature_store_dir="data/global_scanner/feature_store", universe_dir="data/universes", generation="current", dry_run=False, policy=FeaturePolicy(), generation_id=None, failure_hook=None):
+def produce_feature_generation(bar_store_dir="data/global_scanner/bar_store", feature_store_dir="data/global_scanner/feature_store", universe_dir="data/universes", generation="current", dry_run=False, policy=FeaturePolicy(), generation_id=None, failure_hook=None, holdings_snapshot=None):
     started_clock, started = time.perf_counter(), pd.Timestamp.now(tz="UTC")
     bar_store = ScannerBarStore(bar_store_dir)
     acquisition_id = bar_store.current_generation() if generation == "current" else generation
@@ -332,6 +343,7 @@ def produce_feature_generation(bar_store_dir="data/global_scanner/bar_store", fe
         rows.append(row)
     features = pd.DataFrame(rows).sort_values("ticker", kind="stable").reset_index(drop=True)
     if features["ticker"].duplicated().any() or not set(features["terminal_state"]).issubset(TERMINAL_STATES): raise ValueError("Invalid terminal-state reconciliation")
+    features = enrich_feature_intelligence(features)
     rankings, candidates = rank_features(features, memberships, policy.top_n)
     store = FeatureGenerationStore(feature_store_dir)
     rankings = add_persistence(rankings, store.ranking_history(), policy.top_n)
@@ -343,6 +355,7 @@ def produce_feature_generation(bar_store_dir="data/global_scanner/bar_store", fe
     rankings["new_entry"] = rankings["movement_state"].eq("new")
     candidates = rankings[rankings["selected_for_research"]].copy()
     rejected = features[features["terminal_state"].ne("scored")].copy()
+    portfolio_fit = build_portfolio_fit(candidates, features, holdings_snapshot)
     if not COMPARISON_FIELDS.issubset(rankings.columns): raise ValueError(f"Comparison fields missing: {sorted(COMPARISON_FIELDS - set(rankings))}")
     ended = pd.Timestamp.now(tz="UTC")
     states = features["terminal_state"].value_counts().to_dict()
@@ -352,15 +365,18 @@ def produce_feature_generation(bar_store_dir="data/global_scanner/bar_store", fe
                 "scored_assets": int(states.get("scored", 0)), "rejected_assets": int(states.get("rejected", 0)),
                 "failed_assets": int(states.get("failed", 0)), "candidates": len(candidates),
                 "universe_counts": memberships[memberships["ticker"].isin(set(enabled["ticker"]))]["universe_name"].value_counts().sort_index().to_dict(),
-                "feature_schema_version": FEATURE_SCHEMA_VERSION, "scoring_version": SCORING_VERSION}
+                "feature_schema_version": FEATURE_SCHEMA_VERSION, "scoring_version": SCORING_VERSION,
+                "intelligence_schema_version": INTELLIGENCE_SCHEMA_VERSION,
+                "portfolio_fit_assets": len(portfolio_fit)}
     if manifest["eligible_assets"] != manifest["scored_assets"] + manifest["rejected_assets"] + manifest["failed_assets"]: raise ValueError("Manifest terminal counts do not reconcile")
     if dry_run:
-        return {"dry_run": True, "writes": 0, "manifest": manifest, "features": features, "rankings": rankings, "candidates": candidates, "rejected": rejected, "movement": movement}
+        return {"dry_run": True, "writes": 0, "manifest": manifest, "features": features, "rankings": rankings, "candidates": candidates, "rejected": rejected, "movement": movement, "portfolio_fit": portfolio_fit}
     manifest_id = manifest["generation_id"]
-    final = store.publish({"scanner_features.csv": features, "latest_rankings.csv": rankings,
-                           "selected_candidates.csv": candidates, "rejected_assets.csv": rejected,
-                           "ranking_movement.csv": movement}, manifest, manifest_id, failure_hook)
-    return {"dry_run": False, "writes": 6, "path": str(final), "manifest": manifest}
+    bundle = ScannerGeneration(manifest_id, manifest, features, rankings, candidates,
+                               rejected, movement, portfolio_fit)
+    bundle.validate()
+    final = store.publish(bundle.frames(), manifest, manifest_id, failure_hook)
+    return {"dry_run": False, "writes": 7, "path": str(final), "manifest": manifest}
 
 
 def parser():
@@ -371,13 +387,16 @@ def parser():
     command.add_argument("--feature-store-dir", default="data/global_scanner/feature_store")
     command.add_argument("--universe-dir", default="data/universes")
     command.add_argument("--top-n", type=int, default=15)
+    command.add_argument("--holdings", help="Optional valued holdings CSV for portfolio-fit intelligence")
     return command
 
 
 def main(argv=None):
     args = parser().parse_args(argv)
+    holdings = pd.read_csv(args.holdings) if args.holdings else None
     result = produce_feature_generation(args.bar_store_dir, args.feature_store_dir, args.universe_dir,
-                                        args.generation, args.dry_run, FeaturePolicy(top_n=args.top_n))
+                                        args.generation, args.dry_run, FeaturePolicy(top_n=args.top_n),
+                                        holdings_snapshot=holdings)
     print(json.dumps(result["manifest"], indent=2, default=str))
     print(f"dry_run={str(args.dry_run).lower()} writes={result['writes']}")
     return 0
