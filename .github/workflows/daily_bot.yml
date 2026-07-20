@@ -35,3 +35,4 @@ jobs:
           python scripts/validate_artifact_hygiene.py
           python scripts/validate_runtime_bootstrap.py
           python scripts/validate_atomic_trade_state.py
+          python scripts/validate_execution_input_guards.py
