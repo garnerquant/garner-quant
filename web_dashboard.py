@@ -1,5 +1,6 @@
 import html
 import json
+import logging
 import os
 from pathlib import Path
 from urllib.parse import quote
@@ -14,9 +15,15 @@ from supabase import create_client
 from dashboard.data_loader import load_csv
 from dashboard.equity_chart import build_equity_curve_layers
 from dashboard.metrics import unrealised_pnl_from_holdings
+from dashboard.paper_challenge import (
+    build_day_over_day_attribution,
+    build_paper_challenge_series,
+    build_realised_pnl_series,
+)
+from dashboard.scanner_reader import ScannerDashboardReader, ScannerReaderError
+from config import PAPER_TRADING_CHALLENGE_DAYS
 from execution.trade_audit import build_authoritative_trade_audit
 from reporting.paper_performance import challenge_initial_capital
-from reporting.challenge_equity import prepare_challenge_equity_curve
 from ui.auth import require_dashboard_login
 from ui.responsive import (
     apply_responsive_styles,
@@ -26,15 +33,8 @@ from ui.responsive import (
 from ui.runtime_status import load_runtime_status, runtime_freshness, runtime_state
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-SCANNER_OUTPUT_DIR = PROJECT_ROOT / "data" / "global_scanner"
-SCANNER_UNIVERSE_DIR = PROJECT_ROOT / "data" / "universes"
-SCANNER_HISTORY_DIR = SCANNER_OUTPUT_DIR / "history"
-SCANNER_REQUIRED_OUTPUTS = [
-    "universe_validated.csv",
-    "latest_rankings.csv",
-    "selected_candidates.csv",
-]
-SCANNER_STALE_AFTER = pd.Timedelta(hours=6)
+LOGGER = logging.getLogger(__name__)
+SCANNER_FEATURE_STORE_DIR = PROJECT_ROOT / "data" / "global_scanner" / "feature_store"
 SCANNER_DISPLAY_TIMEZONE = "Europe/London"
 SCANNER_TIMESTAMP_FORMAT = "%d/%m/%Y %H:%M %Z"
 
@@ -878,10 +878,6 @@ def load_json_file(path):
         return {}
 
 
-def load_scanner_csv(filename):
-    return load_csv(SCANNER_OUTPUT_DIR / filename)
-
-
 def scanner_utc_timestamp(value):
     if value is None or value == "":
         return None
@@ -897,17 +893,6 @@ def scanner_utc_timestamp(value):
     return timestamp
 
 
-def scanner_file_modified_timestamp(filename):
-    path = SCANNER_OUTPUT_DIR / filename
-    if not path.exists():
-        return None
-
-    try:
-        return pd.to_datetime(path.stat().st_mtime, unit="s", utc=True)
-    except Exception:
-        return None
-
-
 def format_scanner_timestamp(value, fallback="Unknown"):
     timestamp = scanner_utc_timestamp(value)
     if timestamp is None:
@@ -921,192 +906,12 @@ def format_scanner_timestamp(value, fallback="Unknown"):
         return fallback
 
 
-def scanner_file_modified_label(filename):
-    path = SCANNER_OUTPUT_DIR / filename
-    if not path.exists():
-        return "Missing"
-
-    return format_scanner_timestamp(
-        scanner_file_modified_timestamp(filename),
-        "Unknown",
-    )
-
-
-def scanner_history_timestamp_value(path, frame):
-    if "scanner_run_timestamp" in frame.columns and not frame.empty:
-        value = frame["scanner_run_timestamp"].dropna()
-        if not value.empty:
-            timestamp = scanner_utc_timestamp(value.iloc[0])
-            if timestamp is not None:
-                return timestamp
-
-    stem = path.name.replace("_rankings.csv", "")
-    parsed = scanner_utc_timestamp(stem.replace("_", " ", 1))
-    if parsed is None:
-        parsed = scanner_utc_timestamp(
-            pd.to_datetime(stem, format="%Y-%m-%d_%H%M%S_%f", errors="coerce")
-        )
-    if parsed is not None:
-        return parsed
-
-    try:
-        return pd.to_datetime(path.stat().st_mtime, unit="s", utc=True)
-    except Exception:
-        return None
-
-
-def scanner_output_state():
-    files = {
-        filename: SCANNER_OUTPUT_DIR / filename
-        for filename in SCANNER_REQUIRED_OUTPUTS
-    }
-    missing = [
-        filename
-        for filename, path in files.items()
-        if not path.exists()
-    ]
-    latest_rankings = files["latest_rankings.csv"]
-    modified = None
-    age = None
-    stale = False
-
-    if latest_rankings.exists():
-        try:
-            modified = scanner_file_modified_timestamp("latest_rankings.csv")
-            age = pd.Timestamp.now(tz="UTC") - modified
-            stale = bool(age > SCANNER_STALE_AFTER)
-        except Exception:
-            stale = True
-
-    return {
-        "missing": missing,
-        "modified": modified,
-        "age": age,
-        "stale": stale if not missing else False,
-        "fresh": not missing and not stale,
-    }
-
-
-def scanner_state_label(state):
-    if state["missing"]:
-        return "missing"
-    if state["stale"]:
-        return "stale"
-    return "fresh"
-
-
-def render_scanner_auto_refresh_status(show_messages=True):
-    state = scanner_output_state()
-    label = scanner_state_label(state)
-
-    if label == "fresh":
-        modified = state.get("modified")
-        if show_messages:
-            if modified is not None:
-                st.success(
-                    "Scanner output is fresh. "
-                    f"Last refreshed {format_scanner_timestamp(modified)}."
-                )
-            else:
-                st.success("Scanner output is fresh.")
-        return scanner_output_state()
-
-    session_key = f"global_scanner_auto_refresh_attempted_{label}"
-    if st.session_state.get(session_key):
-        if show_messages:
-            if label == "missing":
-                st.warning(
-                    "Scanner outputs are missing. Automatic refresh was already "
-                    "attempted in this session."
-                )
-            else:
-                st.warning(
-                    "Scanner outputs are stale. Automatic refresh was already "
-                    "attempted in this session."
-                )
-        return scanner_output_state()
-
-    st.session_state[session_key] = True
-    reason = "missing" if label == "missing" else "older than 6 hours"
-
-    try:
-        if show_messages:
-            with st.spinner(f"Refreshing research scanner because outputs are {reason}..."):
-                result = run_research_scanner_from_dashboard()
-        else:
-            result = run_research_scanner_from_dashboard()
-        if show_messages:
-            st.success(
-                "Scanner refreshed automatically: "
-                f"{result.get('validated_rows', 0)} validated, "
-                f"{result.get('selected_rows', 0)} selected, "
-                f"{result.get('quality_failures', 0)} failed."
-            )
-    except Exception as exc:
-        if show_messages:
-            st.error(f"Scanner refresh failed: {exc}")
-
-    return scanner_output_state()
-
-
 def scanner_bool_series(frame, column):
     if frame.empty or column not in frame.columns:
         return pd.Series(dtype=bool)
 
     return frame[column].astype(str).str.strip().str.lower().isin(
         {"1", "true", "yes", "y"}
-    )
-
-
-def load_scanner_history():
-    if not SCANNER_HISTORY_DIR.exists():
-        return []
-
-    snapshots = []
-    for path in sorted(SCANNER_HISTORY_DIR.glob("*_rankings.csv")):
-        try:
-            frame = pd.read_csv(path)
-        except Exception:
-            continue
-
-        timestamp_value = scanner_history_timestamp_value(path, frame)
-        timestamp = format_scanner_timestamp(timestamp_value)
-        snapshots.append(
-            {
-                "path": path,
-                "timestamp": timestamp,
-                "sort_timestamp": timestamp_value,
-                "frame": frame,
-            }
-        )
-
-    return sorted(
-        snapshots,
-        key=lambda snapshot: snapshot["sort_timestamp"] or pd.Timestamp.min.tz_localize("UTC"),
-    )
-
-
-def scanner_history_timestamp(path, frame):
-    return format_scanner_timestamp(scanner_history_timestamp_value(path, frame))
-
-
-def scanner_selected_rows(frame):
-    if frame.empty:
-        return frame.copy()
-
-    if "selected_for_research" not in frame.columns:
-        return frame.head(15).copy()
-
-    selected_mask = scanner_bool_series(frame, "selected_for_research")
-    return frame.loc[selected_mask].copy()
-
-
-def run_research_scanner_from_dashboard():
-    from research.global_scanner import run_global_scanner
-
-    return run_global_scanner(
-        universe_dir=SCANNER_UNIVERSE_DIR,
-        output_dir=SCANNER_OUTPUT_DIR,
     )
 
 
@@ -2045,10 +1850,11 @@ def scanner_bar_pct(value, max_value):
 
 
 def scanner_rank_movement(row):
-    if scanner_yes(row, "new_entry"):
+    state = scanner_display_value(row, "movement_state", "").lower()
+    if state == "new":
         return "NEW", "scanner-move-new"
 
-    change = scanner_number(row, "rank_change")
+    change = scanner_number(row, "rank_delta")
     if change is None:
         return "UNCHANGED", "scanner-move-flat"
 
@@ -2061,7 +1867,7 @@ def scanner_rank_movement(row):
 
 
 def scanner_research_summary(row):
-    region = scanner_display_value(row, "region", "")
+    region = scanner_display_value(row, "country", "")
     sector = scanner_display_value(row, "sector", "")
     technical_score = scanner_number(row, "technical_score")
     liquidity = scanner_number(row, "avg_traded_value_60d")
@@ -2133,24 +1939,12 @@ SCANNER_PERSISTENCE_COLUMNS = [
 ]
 
 
-PORTFOLIO_FIT_COLUMNS = [
-    "portfolio_fit",
-    "portfolio_fit_score",
-    "diversification_impact",
-    "exposure_impact",
-]
-
-
 def scanner_has_risk_profile(row):
     return all(column in row.index for column in SCANNER_RISK_COLUMNS)
 
 
 def scanner_has_persistence_profile(row):
     return all(column in row.index for column in SCANNER_PERSISTENCE_COLUMNS)
-
-
-def scanner_has_portfolio_fit(row):
-    return all(column in row.index for column in PORTFOLIO_FIT_COLUMNS)
 
 
 def scanner_percent_label(value):
@@ -2252,250 +2046,6 @@ def scanner_persistence_bullets(row):
     return bullets
 
 
-def portfolio_fit_metadata():
-    frames = []
-    for path in sorted(SCANNER_UNIVERSE_DIR.glob("*.csv")):
-        try:
-            frame = pd.read_csv(path)
-        except Exception:
-            continue
-        if "yahoo_ticker" in frame.columns:
-            frames.append(frame)
-
-    if not frames:
-        return pd.DataFrame()
-
-    metadata = pd.concat(frames, ignore_index=True)
-    metadata["yahoo_ticker"] = metadata["yahoo_ticker"].astype(str)
-    return metadata.drop_duplicates("yahoo_ticker", keep="first")
-
-
-def load_portfolio_fit_context(holdings_frame=None):
-    holdings_frame = (
-        load_csv("holdings_report.csv")
-        if holdings_frame is None
-        else holdings_frame.copy()
-    )
-    if holdings_frame.empty or "ticker" not in holdings_frame.columns:
-        return None
-
-    holdings = holdings_frame.copy()
-    holdings["ticker"] = holdings["ticker"].astype(str)
-    value_column = "market_value" if "market_value" in holdings.columns else None
-    if value_column is None:
-        return None
-
-    holdings["_market_value"] = pd.to_numeric(
-        holdings[value_column],
-        errors="coerce",
-    ).fillna(0.0)
-    holdings = holdings[holdings["_market_value"] > 0].copy()
-    if holdings.empty:
-        return None
-
-    metadata = portfolio_fit_metadata()
-    if not metadata.empty:
-        metadata_columns = [
-            column
-            for column in [
-                "yahoo_ticker",
-                "sector",
-                "country",
-                "region",
-                "currency",
-                "asset_class",
-            ]
-            if column in metadata.columns
-        ]
-        holdings = holdings.merge(
-            metadata[metadata_columns],
-            left_on="ticker",
-            right_on="yahoo_ticker",
-            how="left",
-        )
-
-    total_value = float(holdings["_market_value"].sum())
-    if total_value <= 0:
-        return None
-    holdings["_weight"] = holdings["_market_value"] / total_value
-
-    dimensions = ["sector", "country", "region", "currency", "asset_class"]
-    exposure = {}
-    for dimension in dimensions:
-        if dimension not in holdings.columns:
-            exposure[dimension] = pd.Series(dtype=float)
-            continue
-        values = holdings[dimension].fillna("").astype(str).str.strip()
-        known = holdings.loc[values != ""].copy()
-        if known.empty:
-            exposure[dimension] = pd.Series(dtype=float)
-            continue
-        exposure[dimension] = known.groupby(dimension)["_weight"].sum()
-
-    return {
-        "holdings": holdings,
-        "tickers": set(holdings["ticker"].astype(str)),
-        "exposure": exposure,
-        "total_value": total_value,
-    }
-
-
-def portfolio_fit_level(score):
-    if score >= 4.5:
-        return "Excellent"
-    if score >= 3.5:
-        return "Good"
-    if score >= 2.5:
-        return "Neutral"
-    if score >= 1.5:
-        return "Weak"
-    return "Poor"
-
-
-def portfolio_fit_stars(score):
-    rounded = max(1, min(5, int(round(score))))
-    return "★" * rounded
-
-
-def portfolio_fit_dimension_label(dimension):
-    labels = {
-        "sector": "Sector",
-        "country": "Country",
-        "region": "Region",
-        "currency": "Currency",
-        "asset_class": "Asset class",
-    }
-    return labels.get(dimension, dimension.title())
-
-
-def portfolio_fit_bullet_text(dimension, value, exposure_value):
-    if dimension == "region":
-        return f"Improves {value} exposure"
-    if dimension == "currency":
-        return f"Adds {value} diversification"
-    if dimension == "sector":
-        return f"Expands {value} exposure"
-    if dimension == "asset_class":
-        return "Broadens asset allocation"
-    if dimension == "country":
-        return f"Adds {value} country diversification"
-    return f"Adds {value} diversification"
-
-
-def portfolio_concentration_text(dimension, value):
-    if dimension == "sector":
-        return f"Increases {value} concentration"
-    if dimension == "currency":
-        return f"Adds another {value} holding"
-    if dimension == "region":
-        return f"Adds to existing {value} exposure"
-    if dimension == "country":
-        return f"Adds to existing {value} country exposure"
-    if dimension == "asset_class":
-        return f"Adds to existing {value} allocation"
-    return f"Adds to existing {value} exposure"
-
-
-def portfolio_fit_for_row(row, context):
-    if context is None:
-        return None
-
-    ticker = scanner_display_value(row, "yahoo_ticker", "")
-    score = 3.0
-    positive = []
-    cautions = []
-    overlap = ticker in context["tickers"]
-    if overlap:
-        score -= 1.2
-        cautions.append("Similar exposure to existing holdings")
-
-    same_dimension_count = 0
-    dominant_dimension_count = 0
-    dimensions = ["sector", "country", "region", "currency", "asset_class"]
-    for dimension in dimensions:
-        value = scanner_display_value(row, dimension, "")
-        if not value:
-            continue
-        exposure = context["exposure"].get(dimension, pd.Series(dtype=float))
-        exposure_value = float(exposure.get(value, 0.0)) if not exposure.empty else 0.0
-
-        if exposure_value <= 0:
-            score += 0.35
-            positive.append(portfolio_fit_bullet_text(dimension, value, exposure_value))
-            continue
-
-        same_dimension_count += 1
-        if exposure_value >= 0.35:
-            score -= 0.35
-            dominant_dimension_count += 1
-            cautions.append(portfolio_concentration_text(dimension, value))
-        elif exposure_value <= 0.15:
-            score += 0.10
-
-    score = max(1.0, min(5.0, score))
-    if overlap or dominant_dimension_count >= 3:
-        diversification_impact = "Negative"
-    elif len(positive) >= 2 and dominant_dimension_count == 0:
-        diversification_impact = "Positive"
-    else:
-        diversification_impact = "Neutral"
-
-    if overlap or dominant_dimension_count >= 3:
-        exposure_impact = "High"
-    elif same_dimension_count >= 3 or dominant_dimension_count >= 1:
-        exposure_impact = "Moderate"
-    else:
-        exposure_impact = "Low"
-
-    bullets = positive[:3] + cautions[:3]
-    if not bullets and same_dimension_count:
-        bullets.append("Similar exposure to existing holdings")
-
-    level = portfolio_fit_level(score)
-    return {
-        "portfolio_fit": f"{portfolio_fit_stars(score)} {level}",
-        "portfolio_fit_score": score,
-        "portfolio_fit_level": level,
-        "diversification_impact": diversification_impact,
-        "exposure_impact": exposure_impact,
-        "portfolio_fit_bullets": bullets,
-    }
-
-
-def apply_portfolio_fit(frame, context):
-    if context is None or frame.empty:
-        return frame
-
-    enriched = frame.copy()
-    results = [portfolio_fit_for_row(row, context) for _, row in enriched.iterrows()]
-    if not any(results):
-        return frame
-
-    for column in [
-        "portfolio_fit",
-        "portfolio_fit_score",
-        "portfolio_fit_level",
-        "diversification_impact",
-        "exposure_impact",
-        "portfolio_fit_bullets",
-    ]:
-        enriched[column] = [
-            result.get(column) if result else pd.NA
-            for result in results
-        ]
-    return enriched
-
-
-def scanner_portfolio_fit_bullets(row):
-    if "portfolio_fit_bullets" not in row.index:
-        return []
-
-    bullets = row.get("portfolio_fit_bullets")
-    if isinstance(bullets, list):
-        return bullets
-    return []
-
-
 def scanner_add_unique_takeaway(items, text):
     if not text:
         return
@@ -2507,11 +2057,6 @@ def scanner_add_unique_takeaway(items, text):
 
 def scanner_key_takeaways(row):
     takeaways = []
-
-    for bullet in scanner_portfolio_fit_bullets(row):
-        scanner_add_unique_takeaway(takeaways, bullet)
-        if len(takeaways) >= 2:
-            break
 
     risk_level = scanner_display_value(row, "risk_level", "")
     volatility = scanner_number(row, "volatility_60d")
@@ -2639,30 +2184,6 @@ def scanner_persistence_profile_html(row):
     """
 
 
-def scanner_portfolio_fit_html(row):
-    if not scanner_has_portfolio_fit(row):
-        return ""
-
-    fit = html.escape(scanner_display_value(row, "portfolio_fit", "Unavailable"))
-    diversification = html.escape(
-        scanner_display_value(row, "diversification_impact", "Unavailable")
-    )
-    exposure = html.escape(
-        scanner_display_value(row, "exposure_impact", "Unavailable")
-    )
-
-    return f"""
-        <div class="scanner-risk-profile">
-            <div class="scanner-risk-title">Portfolio Fit</div>
-            <div class="scanner-risk-grid">
-                <div><span class="scanner-fact-label">Fit</span><br><span class="scanner-risk-value">{fit}</span></div>
-                <div><span class="scanner-fact-label">Diversification Impact</span><br><span class="scanner-risk-value">{diversification}</span></div>
-                <div><span class="scanner-fact-label">Exposure Impact</span><br><span class="scanner-risk-value">{exposure}</span></div>
-            </div>
-        </div>
-    """
-
-
 def scanner_bullet_list_html(bullets):
     if not bullets:
         return ""
@@ -2676,21 +2197,9 @@ def scanner_bullet_list_html(bullets):
     return f'<div class="scanner-bullet-list">{items}</div>'
 
 
-def scanner_first_available_column(frame, columns):
-    for column in columns:
-        if column in frame.columns:
-            return column
-    return None
-
-
 def scanner_compare_label(row):
-    ticker = scanner_display_value(row, "yahoo_ticker", "")
-    if not ticker:
-        ticker = scanner_display_value(row, "ticker", "")
-    if not ticker:
-        ticker = scanner_display_value(row, "symbol", "Unknown")
-
-    name = scanner_display_value(row, "name", "")
+    ticker = scanner_display_value(row, "ticker", "Unknown")
+    name = scanner_display_value(row, "display_name", "")
     if name and name != ticker:
         return f"{ticker} - {name}"
     return ticker
@@ -2804,10 +2313,6 @@ def scanner_compare_indicator(value, metric, values):
 
 
 def scanner_comparison_metrics(frame):
-    confidence_column = scanner_first_available_column(
-        frame,
-        ["confidence", "confidence_score", "scanner_confidence"],
-    )
     metrics = [
         {
             "label": "Opportunity Score",
@@ -2816,22 +2321,10 @@ def scanner_comparison_metrics(frame):
             "compare": "higher",
         },
         {
-            "label": "Portfolio Fit",
-            "column": "portfolio_fit",
-            "kind": "text",
-            "compare": "none",
-        },
-        {
-            "label": "Diversification Impact",
-            "column": "diversification_impact",
-            "kind": "text",
-            "compare": "none",
-        },
-        {
-            "label": "Exposure Impact",
-            "column": "exposure_impact",
-            "kind": "text",
-            "compare": "none",
+            "label": "Data Quality Confidence",
+            "column": "data_quality_confidence",
+            "kind": "score",
+            "compare": "higher",
         },
         {
             "label": "Persistence Level",
@@ -2898,17 +2391,6 @@ def scanner_comparison_metrics(frame):
         {"label": "Sector", "column": "sector", "kind": "text", "compare": "none"},
         {"label": "Currency", "column": "currency", "kind": "text", "compare": "none"},
     ]
-
-    if confidence_column:
-        metrics.insert(
-            1,
-            {
-                "label": "Confidence",
-                "column": confidence_column,
-                "kind": "score",
-                "compare": "higher",
-            },
-        )
 
     return [
         metric
@@ -3167,311 +2649,6 @@ def render_opportunity_comparison(selected):
         st.info("No comparable scanner fields are available in this output.")
 
 
-def scanner_change_cards(selected, history):
-    if len(history) < 2 or selected.empty:
-        return None
-
-    previous_selected = scanner_selected_rows(history[-2]["frame"])
-    if previous_selected.empty:
-        return None
-
-    current = selected.copy()
-    if "rank_change" not in current.columns:
-        return None
-
-    current["rank_change_numeric"] = pd.to_numeric(
-        current["rank_change"],
-        errors="coerce",
-    )
-    current_new = scanner_bool_series(current, "new_entry")
-    previous_tickers = set(previous_selected["yahoo_ticker"].astype(str))
-    current_tickers = set(current["yahoo_ticker"].astype(str))
-    dropped = previous_selected[
-        ~previous_selected["yahoo_ticker"].astype(str).isin(current_tickers)
-    ].copy()
-
-    risers = current[current["rank_change_numeric"] > 0].sort_values(
-        "rank_change_numeric",
-        ascending=False,
-    )
-    fallers = current[current["rank_change_numeric"] < 0].sort_values(
-        "rank_change_numeric",
-        ascending=True,
-    )
-    new_entries = current[current_new].copy()
-
-    cards = []
-    if not risers.empty:
-        row = risers.iloc[0]
-        cards.append(
-            {
-                "label": "▲ Biggest Risers",
-                "main": scanner_display_value(row, "yahoo_ticker", "Unknown"),
-                "detail": (
-                    f"{scanner_rank_label(row.get('previous_rank'))} → "
-                    f"{scanner_rank_label(row.get('current_rank'))} | "
-                    f"▲ +{int(row['rank_change_numeric'])}"
-                ),
-            }
-        )
-    else:
-        cards.append(
-            {
-                "label": "▲ Biggest Risers",
-                "main": "None",
-                "detail": "No selected candidates improved rank.",
-            }
-        )
-
-    if not fallers.empty:
-        row = fallers.iloc[0]
-        cards.append(
-            {
-                "label": "▼ Biggest Fallers",
-                "main": scanner_display_value(row, "yahoo_ticker", "Unknown"),
-                "detail": (
-                    f"{scanner_rank_label(row.get('previous_rank'))} → "
-                    f"{scanner_rank_label(row.get('current_rank'))} | "
-                    f"▼ {int(row['rank_change_numeric'])}"
-                ),
-            }
-        )
-    else:
-        cards.append(
-            {
-                "label": "▼ Biggest Fallers",
-                "main": "None",
-                "detail": "No selected candidates declined rank.",
-            }
-        )
-
-    if not new_entries.empty:
-        row = new_entries.iloc[0]
-        cards.append(
-            {
-                "label": "New Opportunities",
-                "main": scanner_display_value(row, "yahoo_ticker", "Unknown"),
-                "detail": f"NEW | Entered Top {len(current)}",
-            }
-        )
-    else:
-        cards.append(
-            {
-                "label": "New Opportunities",
-                "main": "None",
-                "detail": "No new selected candidates.",
-            }
-        )
-
-    if not dropped.empty:
-        row = dropped.iloc[0]
-        cards.append(
-            {
-                "label": "Dropped Out",
-                "main": scanner_display_value(row, "yahoo_ticker", "Unknown"),
-                "detail": f"{scanner_rank_label(row.get('rank'))} → OUT",
-            }
-        )
-    else:
-        cards.append(
-            {
-                "label": "Dropped Out",
-                "main": "None",
-                "detail": "No previous selected candidates dropped out.",
-            }
-        )
-
-    return cards
-
-
-def scanner_summary_bullets(validated, selected, history):
-    bullets = [
-        f"{len(validated)} companies scanned",
-        f"{len(selected)} selected",
-    ]
-
-    if len(history) >= 2 and not selected.empty:
-        new_entries = int(scanner_bool_series(selected, "new_entry").sum())
-        previous_selected = scanner_selected_rows(history[-2]["frame"])
-        dropped_count = 0
-        if not previous_selected.empty and "yahoo_ticker" in previous_selected.columns:
-            current_tickers = set(selected["yahoo_ticker"].astype(str))
-            dropped_count = int(
-                (~previous_selected["yahoo_ticker"].astype(str).isin(current_tickers)).sum()
-            )
-        bullets.append(f"{new_entries} new opportunities entered the Top {len(selected)}")
-        bullets.append(f"{dropped_count} candidates dropped out")
-
-    if not selected.empty and "sector" in selected.columns:
-        sectors = selected["sector"].dropna().astype(str)
-        if not sectors.empty:
-            bullets.append(
-                f"{sectors.value_counts().idxmax()} is the strongest represented sector"
-            )
-
-    if len(history) >= 2 and "region" in selected.columns:
-        previous_selected = scanner_selected_rows(history[-2]["frame"])
-        if "region" in previous_selected.columns:
-            current_counts = selected["region"].dropna().astype(str).value_counts()
-            previous_counts = previous_selected["region"].dropna().astype(str).value_counts()
-            deltas = current_counts.subtract(previous_counts, fill_value=0)
-            positive = deltas[deltas > 0]
-            if not positive.empty:
-                bullets.append(
-                    f"{positive.idxmax()} gained the most high-ranking candidates"
-                )
-
-    return bullets
-
-
-def scanner_history_table(history):
-    rows = []
-    for index, snapshot in enumerate(history):
-        frame = snapshot["frame"]
-        selected = scanner_selected_rows(frame)
-        previous_selected = (
-            scanner_selected_rows(history[index - 1]["frame"])
-            if index > 0
-            else pd.DataFrame()
-        )
-
-        top_candidate = (
-            scanner_display_value(selected.iloc[0], "yahoo_ticker", "None")
-            if not selected.empty
-            else "None"
-        )
-        new_entries = 0
-        largest_rise = ""
-        largest_fall = ""
-
-        if index > 0 and not selected.empty:
-            previous_ranks = (
-                previous_selected.set_index("yahoo_ticker")["rank"].to_dict()
-                if not previous_selected.empty
-                else {}
-            )
-            current = selected.copy()
-            previous_values = current["yahoo_ticker"].map(previous_ranks)
-            rank_change = previous_values - current["rank"]
-            new_entries = int(previous_values.isna().sum())
-
-            if rank_change.notna().any():
-                max_change = rank_change.max()
-                min_change = rank_change.min()
-                if pd.notna(max_change) and max_change > 0:
-                    row = current.loc[rank_change.idxmax()]
-                    largest_rise = (
-                        f"{row['yahoo_ticker']} ▲ +{int(max_change)}"
-                    )
-                if pd.notna(min_change) and min_change < 0:
-                    row = current.loc[rank_change.idxmin()]
-                    largest_fall = (
-                        f"{row['yahoo_ticker']} ▼ {int(min_change)}"
-                    )
-
-        rows.append(
-            {
-                "timestamp": snapshot["timestamp"],
-                "sort_timestamp": snapshot.get("sort_timestamp"),
-                "top candidate": top_candidate,
-                "number selected": len(selected),
-                "new entries": new_entries,
-                "largest rise": largest_rise,
-                "largest fall": largest_fall,
-            }
-        )
-
-    columns = [
-        "timestamp",
-        "top candidate",
-        "number selected",
-        "new entries",
-        "largest rise",
-        "largest fall",
-    ]
-    if not rows:
-        return pd.DataFrame(columns=columns)
-
-    table = pd.DataFrame(rows).sort_values("sort_timestamp", ascending=False)
-    return table.drop(columns=["sort_timestamp"], errors="ignore")[columns]
-
-
-def render_scanner_research_overview(validated, selected, history):
-    st.divider()
-    st.subheader("Research Overview")
-
-    st.markdown("**Today's Scanner Summary**")
-    for bullet in scanner_summary_bullets(validated, selected, history):
-        st.markdown(f"- {bullet}")
-
-    if len(history) < 2:
-        st.info("Historical comparisons will appear after the next scanner run.")
-    else:
-        cards = scanner_change_cards(selected, history)
-        if cards:
-            card_html = []
-            for card in cards:
-                card_html.append(
-                    (
-                        '<div class="scanner-change-card">'
-                        f'<div class="scanner-change-label">{html.escape(card["label"])}</div>'
-                        f'<div class="scanner-change-main">{html.escape(card["main"])}</div>'
-                        f'<div class="scanner-change-detail">{html.escape(card["detail"])}</div>'
-                        "</div>"
-                    )
-                )
-            st.markdown(
-                f'<div class="scanner-change-grid">{"".join(card_html)}</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.info("No rank changes are available for the latest scanner run.")
-
-
-def render_scanner_history_section(history):
-    with st.expander("Scanner History", expanded=False):
-        table = scanner_history_table(history)
-        if table.empty:
-            st.info("No scanner history snapshots found.")
-        else:
-            responsive_table(table, hide_index=True)
-
-
-def scanner_health_status(state, failed):
-    if state.get("missing"):
-        return "Error", False
-    if state.get("stale") or not failed.empty:
-        return "Warning", False
-    return "Healthy", True
-
-
-def render_scanner_status_mission_control(validated, selected, failed, state):
-    st.subheader("Scanner Status")
-    st.info(
-        "Research only: scanner refreshes update local research outputs and do not place or modify trades."
-    )
-
-    health_label, health_ok = scanner_health_status(state, failed)
-    cols = responsive_columns(5)
-    with cols[0]:
-        metric_card("Scanner Health", health_label, health_ok)
-    with cols[1]:
-        metric_card(
-            "Last Scan",
-            scanner_file_modified_label("latest_rankings.csv"),
-            state.get("fresh"),
-        )
-    with cols[2]:
-        metric_card("Universe Size", len(validated))
-    with cols[3]:
-        metric_card("Selected Candidates", len(selected), len(selected) > 0)
-    with cols[4]:
-        metric_card("Failed Tickers", len(failed), len(failed) == 0)
-
-    refresh_clicked = st.button("Refresh Scanner Now", type="primary")
-    return refresh_clicked
-
-
 def scanner_why_selected(row):
     bullets = []
 
@@ -3535,7 +2712,6 @@ def scanner_why_selected(row):
             else:
                 bullets.append("Caution: recent volume data is weak")
 
-        bullets.extend(scanner_portfolio_fit_bullets(row))
         bullets.extend(scanner_persistence_bullets(row))
         bullets.extend(scanner_risk_bullets(row))
         return bullets
@@ -3564,7 +2740,7 @@ def scanner_why_selected(row):
     ):
         bullets.append("Clean recent price data")
 
-    region = scanner_display_value(row, "region", "")
+    region = scanner_display_value(row, "country", "")
     if region:
         bullets.append(f"Leading opportunity from {region}")
 
@@ -3572,7 +2748,6 @@ def scanner_why_selected(row):
     if sector:
         bullets.append(f"Strong candidate within the {sector} sector")
 
-    bullets.extend(scanner_portfolio_fit_bullets(row))
     bullets.extend(scanner_persistence_bullets(row))
     bullets.extend(scanner_risk_bullets(row))
     return bullets[:5]
@@ -3590,8 +2765,7 @@ def render_opportunity_intelligence(selected):
         return
 
     cards = selected.copy()
-    if "rank" in cards.columns:
-        cards = cards.sort_values("rank", ascending=True)
+    cards = cards.sort_values("global_rank", ascending=True)
     cards = cards.head(5)
     liquidity_max = (
         pd.to_numeric(
@@ -3606,11 +2780,11 @@ def render_opportunity_intelligence(selected):
 
     columns = responsive_columns(min(3, max(1, len(cards))))
     for index, (_, row) in enumerate(cards.iterrows()):
-        rank = scanner_display_value(row, "rank", "?")
+        rank = scanner_display_value(row, "global_rank", "?")
         movement_label, movement_class = scanner_rank_movement(row)
-        ticker = html.escape(scanner_display_value(row, "yahoo_ticker", "UNKNOWN"))
-        name = html.escape(scanner_display_value(row, "name", "Unnamed candidate"))
-        region_raw = scanner_display_value(row, "region", "Unknown region")
+        ticker = html.escape(scanner_display_value(row, "ticker", "UNKNOWN"))
+        name = html.escape(scanner_display_value(row, "display_name", "Unnamed candidate"))
+        region_raw = scanner_display_value(row, "country", "Unknown country")
         sector_raw = scanner_display_value(row, "sector", "Unknown sector")
         region = html.escape(region_raw)
         sector = html.escape(scanner_sector_label(sector_raw))
@@ -3641,7 +2815,6 @@ def render_opportunity_intelligence(selected):
                 f"{takeaway_html}"
             )
         diagnostics_html = scanner_diagnostics_html(row)
-        portfolio_fit_html = scanner_portfolio_fit_html(row)
         persistence_profile_html = scanner_persistence_profile_html(row)
         risk_profile_html = scanner_risk_profile_html(row)
         summary = html.escape(scanner_research_summary(row))
@@ -3690,7 +2863,6 @@ def render_opportunity_intelligence(selected):
                     <div><span class="scanner-fact-label">Latest close</span><br>{html.escape(close_label)}</div>
                     <div><span class="scanner-fact-label">Liquidity proxy</span><br>{html.escape(liquidity_label)}</div>
                 </div>
-                {portfolio_fit_html}
                 {risk_profile_html}
                 {persistence_profile_html}
                 {takeaway_html}
@@ -3704,105 +2876,80 @@ def render_opportunity_intelligence(selected):
 
 def render_global_scanner_page():
     st.subheader("Global Scanner")
-    render_scanner_auto_refresh_status(show_messages=False)
+    st.caption("Read-only view of the currently published Scanner v2 generation.")
+    if st.button("Reload published generation", key="reload_scanner_generation"):
+        st.rerun()
 
-    validated = load_scanner_csv("universe_validated.csv")
-    rankings = load_scanner_csv("latest_rankings.csv")
-    selected = load_scanner_csv("selected_candidates.csv")
-    history = load_scanner_history()
-    portfolio_fit_context = load_portfolio_fit_context()
-    selected_for_display = apply_portfolio_fit(selected, portfolio_fit_context)
-
-    if validated.empty and rankings.empty and selected.empty:
-        st.warning("No scanner outputs found yet.")
-        st.caption(
-            "Use the Refresh Scanner Now button above to generate local "
-            "research outputs for this dashboard session."
-        )
+    try:
+        bundle = ScannerDashboardReader(SCANNER_FEATURE_STORE_DIR).load_bundle()
+    except ScannerReaderError as exc:
+        messages = {
+            "no_active_generation": "No completed Scanner v2 generation is currently published.",
+            "missing_generation": "The active Scanner v2 pointer references a missing generation.",
+            "incomplete_generation": "The active Scanner v2 generation is incomplete and was not loaded.",
+            "missing_artifact": "The active Scanner v2 generation is missing a required artifact.",
+            "malformed_pointer": "The Scanner v2 active-generation pointer is invalid.",
+            "malformed_manifest": "The Scanner v2 generation manifest is invalid.",
+        }
+        st.error(messages.get(
+            exc.code,
+            "Scanner output contract validation failed. Run the Scanner v2 producer outside the dashboard.",
+        ))
+        st.caption("Run Scanner v2 acquisition and feature generation outside Streamlit, then reload this page.")
         return
 
-    validated_pass = scanner_bool_series(validated, "data_quality_pass")
-    selected_flag = scanner_bool_series(rankings, "selected_for_research")
-    failed = (
-        validated.loc[~validated_pass].copy()
-        if not validated.empty and len(validated_pass) == len(validated)
-        else pd.DataFrame()
+    metadata = bundle.metadata
+    features = bundle.features
+    rankings = bundle.rankings
+    selected = bundle.candidates
+    rejected = bundle.rejections
+    movement = bundle.movement
+
+    st.success("Completed Scanner v2 generation loaded successfully.")
+    metadata_columns = responsive_columns(4)
+    metadata_columns[0].metric("Generation", metadata.generation_id[:12])
+    metadata_columns[1].metric("Scored assets", metadata.scored_assets)
+    metadata_columns[2].metric("Candidates", metadata.candidate_count)
+    metadata_columns[3].metric("Rejected / failed", metadata.rejected_assets + metadata.failed_assets)
+    st.caption(
+        f"Completed {format_scanner_timestamp(metadata.ended_at)} · "
+        f"Acquisition {metadata.acquisition_generation} · "
+        f"Schema {metadata.feature_schema_version} · Scoring {metadata.scoring_version}"
     )
 
-    refresh_clicked = render_scanner_status_mission_control(
-        validated,
-        selected,
-        failed,
-        scanner_output_state(),
-    )
-    if refresh_clicked:
-        with st.spinner("Running research scanner..."):
-            try:
-                result = run_research_scanner_from_dashboard()
-                st.success(
-                    "Scanner refreshed: "
-                    f"{result.get('validated_rows', 0)} validated, "
-                    f"{result.get('selected_rows', 0)} selected, "
-                    f"{result.get('quality_failures', 0)} failed."
-                )
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Scanner failed: {exc}")
-
-    render_scanner_research_overview(validated, selected, history)
-
-    st.divider()
-    st.subheader("Research Analysis")
-    render_opportunity_intelligence(selected_for_display)
-    render_opportunity_comparison(selected_for_display)
-
-    st.divider()
-    st.subheader("Region Breakdown")
-    if "region" in validated.columns:
-        region_breakdown = (
-            validated.assign(_valid=validated_pass)
-            .groupby("region", dropna=False)
-            .agg(
-                tickers=("yahoo_ticker", "count"),
-                validated=("_valid", "sum"),
-            )
-            .reset_index()
-            .sort_values("tickers", ascending=False)
-        )
-        responsive_table(region_breakdown, hide_index=True)
+    if selected.empty:
+        st.info("The completed Scanner v2 generation contains zero selected candidates.")
     else:
-        st.info("No region column available in scanner output.")
+        st.subheader("Selected Candidates")
+        render_opportunity_intelligence(selected)
+        render_opportunity_comparison(selected)
 
-    if "sector" in validated.columns:
+    st.info(
+        "Portfolio-fit and diversification scoring is unavailable in this view "
+        "until it is published as a canonical producer output."
+    )
+
+    st.divider()
+    if "sector" in features.columns:
         st.subheader("Sector Breakdown")
         sector_breakdown = (
-            validated.groupby("sector", dropna=False)
+            features.groupby("sector", dropna=False)
             .size()
             .reset_index(name="tickers")
             .sort_values("tickers", ascending=False)
         )
         responsive_table(sector_breakdown, hide_index=True)
 
-    render_scanner_history_section(history)
-
     with st.expander("Scanner Output Tables", expanded=False):
         st.subheader("Top Ranked Opportunities")
-        if not rankings.empty and len(selected_flag) == len(rankings):
-            ranked_display = rankings.copy()
-            ranked_display["selected"] = selected_flag.map(
-                {True: "Selected", False: ""}
-            )
-        else:
-            ranked_display = rankings
-
         render_scanner_table(
-            ranked_display.head(25),
+            rankings.head(25),
             [
-                "rank",
-                "selected",
-                "yahoo_ticker",
-                "name",
-                "region",
+                "global_rank",
+                "selected_for_research",
+                "ticker",
+                "display_name",
+                "country",
                 "exchange",
                 "currency",
                 "sector",
@@ -3817,10 +2964,10 @@ def render_global_scanner_page():
         render_scanner_table(
             selected,
             [
-                "rank",
-                "yahoo_ticker",
-                "name",
-                "region",
+                "global_rank",
+                "ticker",
+                "display_name",
+                "country",
                 "exchange",
                 "currency",
                 "sector",
@@ -3830,21 +2977,29 @@ def render_global_scanner_page():
             ],
         )
 
-        st.subheader("Failed / Invalid Tickers")
-        if failed.empty:
-            st.success("No failed scanner tickers in the latest validation output.")
+        st.subheader("Rejected / Failed Assets")
+        if rejected.empty:
+            st.success("No rejected or failed assets in this generation.")
         else:
             render_scanner_table(
-                failed,
+                rejected,
                 [
-                    "yahoo_ticker",
-                    "name",
-                    "region",
-                    "latest_close_present",
-                    "valid_bar_count",
-                    "missing_close_pct",
-                    "stale_latest_price",
-                    "volume_present",
+                    "ticker",
+                    "display_name",
+                    "terminal_state",
+                    "rejection_reason",
+                ],
+            )
+
+        st.subheader("Ranking Movement")
+        if movement.empty:
+            st.info("No ranking movement rows were published for this generation.")
+        else:
+            render_scanner_table(
+                movement,
+                [
+                    "ticker", "previous_rank", "current_rank", "rank_delta",
+                    "previous_score", "current_score", "score_delta", "movement_state",
                 ],
             )
 
@@ -3910,7 +3065,7 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
         "Equity chart view",
         ["Return from start (%)", "Zoomed GBP equity"],
         horizontal=True,
-        key="thirty_day_equity_chart_view",
+        key="paper_challenge_equity_chart_view",
     )
 
     if "return_pct" not in plot_data.columns:
@@ -3940,7 +3095,7 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
         )
         caption = (
             "Return view shows cumulative percentage change from the "
-            "30 Day Challenge initial capital."
+            f"{PAPER_TRADING_CHALLENGE_DAYS} Day Challenge initial capital."
         )
     else:
         y_domain = equity_curve_y_domain(
@@ -3976,10 +3131,10 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
 
     shared_encoding = {
         "x": alt.X(
-            "challenge_day:O",
+            "challenge_day:Q",
             title="Challenge day",
             axis=alt.Axis(labelExpr="'Day ' + datum.value"),
-            sort=None,
+            scale=alt.Scale(domain=[0, PAPER_TRADING_CHALLENGE_DAYS]),
         ),
         "y": alt.Y(
             y_field,
@@ -4010,9 +3165,7 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
     st.altair_chart(chart, width="stretch")
     if caption:
         st.caption(caption)
-    st.caption(
-        "Missing calendar days are shown using the last recorded portfolio value."
-    )
+    st.caption("Only recorded valuation days are plotted; missing days are not converted to zero or forward-filled.")
 
 
 st.set_page_config(
@@ -4124,11 +3277,10 @@ def local_home_accounting_reconciled(tolerance=0.01):
     cash = numeric_value(broker_row.get("cash"))
     positions_value = numeric_value(broker_row.get("positions_value"))
     portfolio_value = numeric_value(broker_row.get("portfolio_value"))
-    holdings_value = numeric_value(
-        pd.to_numeric(holdings.get("market_value"), errors="coerce")
-        .fillna(0)
-        .sum()
-    )
+    holding_values = pd.to_numeric(holdings.get("market_value"), errors="coerce")
+    if holding_values.isna().any():
+        return False
+    holdings_value = numeric_value(holding_values.sum())
 
     if abs(holdings_value - positions_value) > tolerance:
         return False
@@ -4170,11 +3322,21 @@ def load_home_table(table_name, fallback_csv=None, order_col=None):
     local_ts = frame_latest_timestamp(local, table_name) or csv_modified_at(fallback_csv)
     remote_ts = frame_latest_timestamp(remote, table_name)
 
-    use_local = (
+    accounting_projection = table_name in {
+        "broker_account",
+        "paper_30_day_tracker",
+        "holdings",
+    }
+    use_local = bool(
         fallback_csv
         and not local.empty
         and local_reconciled
-        and (remote.empty or remote_ts is None or (local_ts is not None and local_ts >= remote_ts))
+        and (
+            accounting_projection
+            or remote.empty
+            or remote_ts is None
+            or (local_ts is not None and local_ts >= remote_ts)
+        )
     )
 
     if use_local:
@@ -4216,14 +3378,7 @@ def home_source_summary():
 
 
 def load_trade_audit(journal):
-    local_audit = load_csv("trade_audit_trail.csv")
-    if not local_audit.empty:
-        return local_audit
-
-    if journal is not None and not journal.empty:
-        return build_authoritative_trade_audit(journal)
-
-    return pd.DataFrame()
+    return build_authoritative_trade_audit(journal)
 
 
 broker = load_home_table("broker_account", "broker_account.csv")
@@ -4237,7 +3392,6 @@ history = load_supabase_table("holdings_history", None, "date")
 signals = load_supabase_table("signals", "signal_report_v2.csv")
 trades = load_home_table("trade_journal", "trade_journal_v3.csv")
 
-portfolio = load_csv("portfolio_v2.csv")
 analytics = load_csv("trade_analytics_v3.csv")
 snapshots = load_csv("trade_snapshots.csv")
 
@@ -4257,10 +3411,29 @@ if paper_30.empty:
     start_balance = 0
     current_balance = broker_row.get("portfolio_value", 0)
     total_return = 0
+    challenge_result = None
 else:
-    paper_row = paper_30.iloc[-1]
     start_balance = challenge_initial_capital(paper_30)
-    current_balance = paper_row["portfolio_value"]
+    challenge_result = build_paper_challenge_series(
+        paper_30,
+        start_balance,
+        PAPER_TRADING_CHALLENGE_DAYS,
+        today=pd.Timestamp.now().date(),
+    )
+    valid_tracker = paper_30.copy()
+    valid_tracker["_timestamp"] = pd.to_datetime(valid_tracker["date"], errors="coerce")
+    valid_tracker = valid_tracker.dropna(subset=["_timestamp"]).sort_values("_timestamp", kind="stable")
+    if not valid_tracker.empty and not challenge_result.data.empty:
+        endpoint_timestamp = challenge_result.data.iloc[-1]["timestamp"]
+        challenge_tracker = valid_tracker[valid_tracker["_timestamp"].le(endpoint_timestamp)]
+        paper_row = challenge_tracker.iloc[-1] if not challenge_tracker.empty else valid_tracker.iloc[-1]
+    else:
+        paper_row = broker_row
+    current_balance = (
+        float(challenge_result.data.iloc[-1]["total_equity"])
+        if not challenge_result.data.empty
+        else float(paper_row["portfolio_value"])
+    )
     total_return = (
         (current_balance / start_balance) - 1
         if start_balance > 0
@@ -4303,36 +3476,32 @@ with home_tab:
 
     st.divider()
 
-    st.subheader("🚀 30 Day Paper Trading Challenge")
+    st.subheader(f"🚀 {PAPER_TRADING_CHALLENGE_DAYS} Day Paper Trading Challenge")
 
-    if paper_30.empty:
-        st.info("30 day tracker has not started yet.")
+    if paper_30.empty or challenge_result is None or challenge_result.data.empty:
+        if paper_30.empty:
+            st.info(f"{PAPER_TRADING_CHALLENGE_DAYS} day tracker has not started yet.")
+        else:
+            st.warning("Equity history exists, but it contains no valid total-equity observations.")
         start_balance = 0
         current_balance = 0
         total_return = 0
 
     else:
-        paper_row = paper_30.iloc[-1]
-
         start_balance = challenge_initial_capital(paper_30)
-        current_balance = paper_row["portfolio_value"]
+        chart_data = challenge_result.data.copy(deep=True)
+        current_challenge_day = challenge_result.current_day
+        current_balance = float(chart_data.iloc[-1]["total_equity"])
         total_return = (
             (current_balance / start_balance) - 1
             if start_balance > 0
             else 0
         )
 
-        today = pd.Timestamp.now().date()
-        chart_data, current_challenge_day = prepare_challenge_equity_curve(
-            paper_30,
-            start_balance,
-            today=today,
-        )
-
         col1, col2 = responsive_columns(2)
 
         with col1:
-            metric_card("Day", f"{current_challenge_day}/30", True)
+            metric_card("Day", f"{current_challenge_day}/{PAPER_TRADING_CHALLENGE_DAYS}", True)
             metric_card("Return", f"{total_return:.2%}", True)
             metric_card(
                 "Realised PnL",
@@ -4349,7 +3518,17 @@ with home_tab:
                 True,
             )
 
-        st.subheader("📈 30 Day Equity Curve")
+        if challenge_result.completed:
+            st.success(f"The {PAPER_TRADING_CHALLENGE_DAYS}-day challenge is complete.")
+        if challenge_result.malformed_observations:
+            st.warning(f"{challenge_result.malformed_observations} malformed equity observation(s) were excluded.")
+        if challenge_result.incomplete_valuations:
+            st.warning(f"{challenge_result.incomplete_valuations} valuation observation(s) lack a usable cash balance.")
+        if challenge_result.reconciliation_error:
+            LOGGER.warning("Paper challenge reconciliation: %s", challenge_result.reconciliation_error)
+            st.warning("The latest equity observation does not reconcile to the displayed account balance.")
+
+        st.subheader(f"📈 {PAPER_TRADING_CHALLENGE_DAYS} Day Equity Curve")
 
         render_equity_curve(chart_data, current_balance, start_balance)
 
@@ -4426,22 +3605,15 @@ with home_tab:
 
     st.divider()
 
-    if not paper_30.empty and len(paper_30) > 1:
-        portfolio_values = pd.to_numeric(
-            paper_30["portfolio_value"],
-            errors="coerce",
-        )
-        performance_values = portfolio_values[
-            np.isfinite(portfolio_values) & (portfolio_values > 0)
-        ]
+    if challenge_result is not None and len(challenge_result.data) > 1:
+        performance_values = challenge_result.data["total_equity"]
         if len(performance_values) > 1:
             daily_return = performance_values.pct_change().dropna()
 
             best_day = daily_return.max()
             worst_day = daily_return.min()
 
-            rolling_peak = performance_values.cummax()
-            drawdown = (performance_values / rolling_peak) - 1
+            drawdown = challenge_result.data["drawdown_pct"] / 100
             max_drawdown = drawdown.min()
 
             col1, col2, col3 = responsive_columns(3)
@@ -4462,79 +3634,68 @@ with home_tab:
 
     st.subheader("Day-over-Day Attribution")
 
-    if history.empty:
-        st.info("No holdings history available yet.")
+    attribution_result = build_day_over_day_attribution(history, paper_30)
+    if attribution_result.status == "available":
+        attribution = attribution_result.data.rename(columns={
+            "component": "Component",
+            "beginning_value": "Beginning Value",
+            "ending_value": "Ending Value",
+            "attribution": "Equity Change",
+        }).sort_values("Equity Change", ascending=False, kind="stable")
 
+        st.caption(
+            f"Comparing {attribution_result.beginning_date.date()} → "
+            f"{attribution_result.ending_date.date()}; components reconcile to "
+            f"£{attribution_result.equity_change:,.2f}. Cash includes flows, realised activity, and fees because the current snapshot contract does not separate them."
+        )
+        responsive_table(
+            attribution.style.format({
+                "Beginning Value": "£{:,.2f}",
+                "Ending Value": "£{:,.2f}",
+                "Equity Change": "£{:,.2f}",
+            }),
+            hide_index=True,
+        )
+    elif attribution_result.status == "mismatch":
+        LOGGER.warning("Paper attribution reconciliation: %s", attribution_result.message)
+        st.warning("Holdings snapshots are present, but attribution does not reconcile to account equity and was not presented as valid.")
+    elif attribution_result.status == "malformed":
+        st.warning("Holdings history exists but does not satisfy the attribution data contract.")
     else:
-        history["date"] = pd.to_datetime(history["date"])
-        dates = sorted(history["date"].dt.date.unique())
-
-        if len(dates) < 2:
-            st.info("Need at least 2 days of holdings history for attribution.")
-
-        else:
-            yesterday = dates[-2]
-            today = dates[-1]
-
-            yesterday_holdings = history[
-                history["date"].dt.date == yesterday
-            ][["ticker", "market_value"]].rename(
-                columns={"market_value": "Yesterday Value"}
-            )
-
-            today_holdings = history[
-                history["date"].dt.date == today
-            ][["ticker", "market_value"]].rename(
-                columns={"market_value": "Today Value"}
-            )
-
-            attribution = today_holdings.merge(
-                yesterday_holdings,
-                on="ticker",
-                how="outer",
-            ).fillna(0)
-
-            attribution["Daily PnL"] = (
-                attribution["Today Value"]
-                - attribution["Yesterday Value"]
-            )
-
-            total_yesterday = attribution["Yesterday Value"].sum()
-
-            if total_yesterday > 0:
-                attribution["Contribution %"] = (
-                    attribution["Daily PnL"]
-                    / total_yesterday
-                    * 100
-                )
-            else:
-                attribution["Contribution %"] = 0
-
-            attribution = attribution.sort_values(
-                "Daily PnL",
-                ascending=False,
-            )
-
-            st.caption(f"Comparing {yesterday} → {today}")
-
-            responsive_table(
-                attribution.style.format(
-                    {
-                        "Yesterday Value": "£{:,.2f}",
-                        "Today Value": "£{:,.2f}",
-                        "Daily PnL": "£{:,.2f}",
-                        "Contribution %": "{:.2f}%",
-                    }
-                ),
-                hide_index=True,
-            )
+        st.info("Attribution is unavailable until two comparable canonical holdings and account snapshots exist. Current holdings are never used to reconstruct history.")
 
     st.subheader("Drawdown")
 
-    if portfolio.empty or "drawdown" not in portfolio.columns:
-        st.info("No drawdown data available.")
+    if challenge_result is None or challenge_result.data.empty:
+        st.info("No valid total-equity history is available for drawdown.")
+    elif len(challenge_result.data) == 1:
+        st.info("Only the starting equity observation is available; drawdown is 0.00%.")
     else:
-        st.line_chart(portfolio["drawdown"])
+        drawdown_data = challenge_result.data[
+            ["timestamp", "challenge_day", "total_equity", "running_peak", "drawdown_pct"]
+        ].copy()
+        drawdown_chart = (
+            alt.Chart(drawdown_data)
+            .mark_line(point=True, color="#DC2626")
+            .encode(
+                x=alt.X(
+                    "challenge_day:Q",
+                    title="Challenge day",
+                    scale=alt.Scale(domain=[0, PAPER_TRADING_CHALLENGE_DAYS]),
+                ),
+                y=alt.Y("drawdown_pct:Q", title="Drawdown (%)", scale=alt.Scale(zero=True)),
+                tooltip=[
+                    alt.Tooltip("timestamp:T", title="Date", format="%Y-%m-%d"),
+                    alt.Tooltip("challenge_day:Q", title="Challenge day"),
+                    alt.Tooltip("total_equity:Q", title="Total equity", format=",.2f"),
+                    alt.Tooltip("running_peak:Q", title="Running peak", format=",.2f"),
+                    alt.Tooltip("drawdown_pct:Q", title="Drawdown", format=".2f"),
+                ],
+            )
+            .properties(height=300)
+        )
+        st.altair_chart(drawdown_chart, width="stretch")
+        st.caption("Drawdown is calculated only from the same recorded total-equity observations shown in the challenge curve.")
 
     st.divider()
 
@@ -4790,26 +3951,41 @@ with home_tab:
 
     st.divider()
     
-    if audit.empty or "close_time" not in audit.columns or "pnl" not in audit.columns:
-        st.info("No completed trade equity curve available yet.")
+    realised_series = build_realised_pnl_series(
+        audit,
+        paper_row.get("realised_pnl"),
+        through=(
+            challenge_result.data.iloc[-1]["timestamp"]
+            if challenge_result is not None and not challenge_result.data.empty
+            else None
+        ),
+    )
+    if realised_series.reconciliation_error:
+        LOGGER.warning("Paper realised P&L reconciliation: %s", realised_series.reconciliation_error)
+        st.warning("Realised trade events do not reconcile to the headline Realised P&L, so the curve was not displayed as valid.")
+    elif realised_series.event_count == 0:
+        st.info("No canonical realised trade events are available yet; realised P&L remains £0.00 until the first close.")
     else:
         st.subheader("📈 Realised Equity Curve")
-
-        equity = audit.copy()
-        equity["close_time"] = pd.to_datetime(
-            equity["close_time"],
-            format="mixed",
-            errors="coerce"
+        realised_chart = (
+            alt.Chart(realised_series.data)
+            .mark_line(interpolate="step-after", point=True, color="#2563EB")
+            .encode(
+                x=alt.X("timestamp:T", title="Realisation timestamp"),
+                y=alt.Y("cumulative_realised_pnl:Q", title="Cumulative realised P&L (GBP)"),
+                tooltip=[
+                    alt.Tooltip("timestamp:T", title="Timestamp"),
+                    alt.Tooltip("event_id:N", title="Ledger event"),
+                    alt.Tooltip("realised_pnl_delta:Q", title="Event P&L", format=",.2f"),
+                    alt.Tooltip("cumulative_realised_pnl:Q", title="Cumulative P&L", format=",.2f"),
+                ],
+            )
+            .properties(height=300)
         )
-
-        equity = equity.dropna(subset=["close_time"])
-        equity = equity.sort_values("close_time")
-        equity["Cumulative PnL"] = equity["pnl"].cumsum()
-
-        st.line_chart(
-            equity.set_index("close_time")["Cumulative PnL"],
-            width="stretch",
-        )
+        st.altair_chart(realised_chart, width="stretch")
+        st.caption("Canonical after-fee close events only; buys, deposits, and trade notionals do not alter this series.")
+    if realised_series.malformed_events:
+        st.warning(f"{realised_series.malformed_events} malformed realised event(s) were excluded.")
     if audit.empty or "pnl" not in audit.columns:
         st.info("No trade statistics available yet.")
     else:

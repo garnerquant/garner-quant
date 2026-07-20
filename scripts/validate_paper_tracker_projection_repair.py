@@ -124,13 +124,26 @@ def main():
         check(run(base, apply=True) == 0 and file_hash(base / "paper_30_day_tracker.csv") == first_hash, "repeat apply is idempotent", issues)
 
         write_fixture(base, duplicate_current=True)
+        intraday_before = pd.read_csv(base / "paper_30_day_tracker.csv")
+        intraday_repaired, intraday_details = build_repair(base)
+        target_index = intraday_details["target_row_index"]
+        check(
+            intraday_details["target_timestamp"] == "2026-07-16 13:25:19"
+            and intraday_repaired.drop(index=target_index).equals(intraday_before.drop(index=target_index)),
+            "multiple intraday rows repair only the unique latest timestamp",
+            issues,
+        )
+
+        duplicate_timestamp = intraday_before.copy()
+        duplicate_timestamp.loc[len(duplicate_timestamp)] = duplicate_timestamp.iloc[-1]
+        duplicate_timestamp.to_csv(base / "paper_30_day_tracker.csv", index=False)
         duplicate_before = (base / "paper_30_day_tracker.csv").read_bytes()
         try:
             run(base, apply=True)
             duplicate_refused = False
         except TrackerRepairError as exc:
-            duplicate_refused = "ambiguous" in str(exc)
-        check(duplicate_refused and (base / "paper_30_day_tracker.csv").read_bytes() == duplicate_before, "ambiguous duplicate current-day rows are refused before mutation", issues)
+            duplicate_refused = "duplicate timestamps" in str(exc)
+        check(duplicate_refused and (base / "paper_30_day_tracker.csv").read_bytes() == duplicate_before, "exact duplicate tracker timestamps are refused before mutation", issues)
 
         write_fixture(base, healthy=False)
         unhealthy_before = (base / "paper_30_day_tracker.csv").read_bytes()

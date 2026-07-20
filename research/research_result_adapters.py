@@ -328,12 +328,45 @@ def load_canonical_results(base_path):
     return results
 
 
+def _is_self_comparison(result):
+    return (
+        str(result.get("candidate_strategy") or "").strip()
+        == str(result.get("baseline_strategy") or "").strip()
+    )
+
+
+def _prefer_actionable_results(results):
+    values = list(results)
+    actionable = [
+        item
+        for item in values
+        if item.get("title") != "Baseline self-check" and not _is_self_comparison(item)
+    ]
+    if actionable:
+        real_results = [
+            item
+            for item in actionable
+            if "dry-run metrics" not in set(item.get("risk_flags") or [])
+        ]
+        return real_results or actionable
+    return [
+        item
+        for item in values
+        if item.get("title") != "Baseline self-check"
+    ] or values
+
+
+def _sort_results(results):
+    return sorted(results, key=lambda item: item.get("created_at") or "", reverse=True)
+
+
 def load_research_results(base_path="."):
     base_path = Path(base_path)
-    results = {}
+    canonical_results = load_canonical_results(base_path)
+    if canonical_results:
+        return _sort_results(_prefer_actionable_results(canonical_results))
 
-    for result in load_canonical_results(base_path):
-        results[result["id"]] = result
+    results = {}
 
     registry = load_registry(base_path / "experiments" / "registry.json")
     for entry in registry.get("experiments", []):
@@ -357,20 +390,7 @@ def load_research_results(base_path="."):
             result = adapt_legacy_jsonl(entry)
             results.setdefault(result["id"], result)
 
-    values = list(results.values())
-    real_values = [
-        item
-        for item in values
-        if item["experiment_type"] not in {"legacy_jsonl", "framework_registry"}
-        or item["candidate_strategy"] != item["baseline_strategy"]
-    ]
-    if real_values:
-        values = [
-            item
-            for item in values
-            if item["title"] != "Baseline self-check"
-        ]
-    return sorted(values, key=lambda item: item.get("created_at") or "", reverse=True)
+    return _sort_results(_prefer_actionable_results(results.values()))
 
 
 def validate_adapted_results(results):

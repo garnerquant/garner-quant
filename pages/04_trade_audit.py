@@ -1,11 +1,7 @@
-import os
-
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
-from supabase import create_client
 
-from dashboard.data_loader import load_csv
+from execution.trade_audit import build_authoritative_trade_audit
 from ui.auth import require_dashboard_login
 from ui.responsive import apply_responsive_styles, responsive_table
 
@@ -23,31 +19,8 @@ st.title("🔍 Trade Audit")
 st.caption("Completed BUY -> SELL pairs derived from the authoritative trade audit")
 
 
-def load_supabase_trade_journal():
-    try:
-        load_dotenv()
-        supabase = create_client(
-            os.getenv("SUPABASE_URL"),
-            os.getenv("SUPABASE_KEY"),
-        )
-        response = supabase.table("trade_journal").select("*").execute()
-        return pd.DataFrame(response.data)
-    except Exception:
-        return pd.DataFrame()
-
-
 def load_trade_audit():
-    local_audit = load_csv("trade_audit_trail.csv")
-    if not local_audit.empty:
-        return local_audit
-
-    journal = load_supabase_trade_journal()
-    if not journal.empty:
-        from execution.trade_audit import build_authoritative_trade_audit
-
-        return build_authoritative_trade_audit(journal)
-
-    return pd.DataFrame()
+    return build_authoritative_trade_audit(ledger_path="trade_ledger_v1.csv")
 
 
 audit = load_trade_audit()

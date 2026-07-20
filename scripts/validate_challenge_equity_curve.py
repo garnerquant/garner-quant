@@ -31,13 +31,11 @@ def main():
         tracker, 10000.0, today="2026-07-16"
     )
     check(day == 25 and int(display.iloc[-1]["challenge_day"]) == 25, "final displayed day equals current challenge Day 25", issues)
-    check(len(display) == 26 and list(display["challenge_day"]) == list(range(26)), "missing calendar dates are inserted from Day 0", issues)
+    check(list(display["challenge_day"]) == [0, 1, 3, 25], "only Day 0 and recorded calendar days are retained", issues)
     day_one = display.loc[display["challenge_day"].eq(1)].iloc[0]
     check(float(day_one["portfolio_value"]) == 9960.0, "same-day duplicates use the latest timestamp", issues)
     check(bool(day_one["is_recorded"]), "actual tracker points remain marked as recorded", issues)
-    day_two = display.loc[display["challenge_day"].eq(2)].iloc[0]
-    check(float(day_two["portfolio_value"]) == 9960.0 and not bool(day_two["is_recorded"]), "missing days forward-fill the last recorded value for display only", issues)
-    check(pd.isna(day_two["recorded_point_value"]) and pd.isna(day_two["recorded_run"]), "synthetic days have no recorded-point marker or solid-line run", issues)
+    check(not display["challenge_day"].eq(2).any(), "missing days are not fabricated or converted to zero", issues)
     day_three = display.loc[display["challenge_day"].eq(3)].iloc[0]
     check(float(day_three["portfolio_value"]) == 9980.0 and bool(day_three["is_recorded"]), "recorded values are preserved on their calendar dates", issues)
     check(float(day_three["recorded_point_value"]) == 9980.0 and pd.notna(day_three["recorded_run"]), "recorded observations retain an exact point marker and solid-line run", issues)

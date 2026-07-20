@@ -8,7 +8,10 @@ from research.research_lab_v2 import (  # noqa: E402
     build_metric_delta_table,
     build_research_lab_v2_model,
 )
-from research.research_result_adapters import load_research_results  # noqa: E402
+from research.research_result_adapters import (  # noqa: E402
+    load_canonical_results,
+    load_research_results,
+)
 from research.research_result_schema import REQUIRED_FIELDS, validate_research_result  # noqa: E402
 
 
@@ -18,8 +21,14 @@ def assert_true(condition, message):
 
 
 def main():
+    raw_canonical_results = load_canonical_results(ROOT)
     canonical_results = load_research_results(ROOT)
     assert_true(canonical_results, "canonical adapter layer produced no results")
+    assert_true(raw_canonical_results, "canonical result files were not discovered")
+    assert_true(
+        len(canonical_results) <= len(raw_canonical_results),
+        "Research Lab loader added non-canonical fallback rows despite canonical files",
+    )
     for result in canonical_results:
         validate_research_result(result)
         assert_true(
@@ -59,27 +68,38 @@ def main():
         )
         assert_true(
             atr_rows,
-            "ATR leaderboard candidates were not loaded from research/report_exports/atr_exit_leaderboard.csv",
+            "ATR canonical candidates were not loaded",
         )
         assert_true(
             campaign_rows,
-            "Campaign 001 variants were not loaded from campaign report exports",
+            "Campaign 001 canonical variants were not loaded",
         )
         assert_true(
-            any("campaign_001" in str(source) for source in sources),
-            "Campaign 001 source marker missing",
+            not any(str(source).endswith("_adapter") for source in sources),
+            "legacy adapters were loaded despite canonical result files",
         )
         assert_true(
             any("ATR trailing stop" in str(title) for title in titles),
             "human-readable ATR titles missing",
         )
         assert_true(
-            {"Current binary exit", "Time exit 10 days", "Fixed stop loss 3%"}.issubset(titles),
+            {"Time exit 10 days", "Fixed stop loss 3%"}.issubset(titles),
             "human-readable Campaign 001 variant titles missing",
         )
         assert_true(
-            any("trade count" in str(item.get("reason", "")).lower() for item in campaign_rows),
-            "missing Campaign 001 trade count explanation was not surfaced",
+            any("ATR trailing stop p21 x3.5" in str(item.get("title")) for item in atr_rows),
+            "best ATR canonical title missing",
+        )
+        assert_true(
+            all(
+                item.get("candidate_strategy") != item.get("baseline_strategy")
+                for item in experiments
+            ),
+            "self-comparison rows leaked into actionable canonical results",
+        )
+        assert_true(
+            all(item.get("metrics", {}).get("trade_count") is not None for item in experiments),
+            "canonical trade counts were not preserved",
         )
 
         required = {

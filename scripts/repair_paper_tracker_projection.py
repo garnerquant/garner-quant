@@ -160,11 +160,12 @@ def build_repair(base_dir, repair_date=None):
         else parsed_dates.max().date()
     )
     candidates = tracker.index[parsed_dates.dt.date == target_date].tolist()
-    if len(candidates) != 1:
-        raise TrackerRepairError(
-            f"repair date {target_date} is ambiguous; found {len(candidates)} tracker rows"
-        )
-    target_index = candidates[0]
+    if not candidates:
+        raise TrackerRepairError(f"repair date {target_date} has no tracker rows")
+    # Tracker history is intraday, so a valid date commonly contains several
+    # observations. Repair only the chronologically latest observation on that
+    # date; exact duplicate timestamps have already been rejected above.
+    target_index = parsed_dates.loc[candidates].idxmax()
     if parsed_dates.loc[target_index] != parsed_dates.max():
         raise TrackerRepairError("repair candidate must be the latest tracker row")
     canonical = validate_healthy_accounting(base)
