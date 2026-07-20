@@ -116,24 +116,50 @@ def main():
         ],
         ignore_index=True,
     )
-    chart_spec = build_realised_equity_chart(seven_rows).to_dict(validate=True)
-    chart_dataset = next(iter(chart_spec["datasets"].values()))
+    seven_rows_before = seven_rows.copy(deep=True)
+    chart_spec = build_realised_equity_chart(
+        seven_rows, starting_balance=10000.0
+    ).to_dict(validate=True)
+    chart_dataset = next(
+        dataset for dataset in chart_spec["datasets"].values() if len(dataset) == 7
+    )
+    reference_dataset = next(
+        dataset
+        for dataset in chart_spec["datasets"].values()
+        if dataset and "starting_balance" in dataset[0]
+    )
+    reference_layer, line_layer, point_layer = chart_spec["layer"]
     check(len(seven_rows) == len(chart_dataset) == 7,
           "all seven helper rows reach the Altair chart dataset", issues)
+    check(seven_rows.equals(seven_rows_before),
+          "chart construction adds no synthetic dates or values", issues)
     check(
-        chart_spec["encoding"]["x"]["field"] == "date"
-        and chart_spec["encoding"]["y"]["field"] == "realised_equity"
+        line_layer["encoding"]["x"]["field"] == "date"
+        and line_layer["encoding"]["y"]["field"] == "realised_equity"
         and {"date", "realised_equity"}.issubset(seven_rows.columns),
         "Altair x and y fields exist and exactly match the chart dataframe",
         issues,
     )
     encoded_fields = {
-        chart_spec["encoding"]["x"]["field"],
-        chart_spec["encoding"]["y"]["field"],
-        *(item["field"] for item in chart_spec["encoding"]["tooltip"]),
+        line_layer["encoding"]["x"]["field"],
+        line_layer["encoding"]["y"]["field"],
+        *(item["field"] for item in line_layer["encoding"]["tooltip"]),
     }
     check(encoded_fields.issubset(seven_rows.columns),
           "every Altair encoded field exists in the chart dataframe", issues)
+    check(line_layer["mark"]["type"] == "line"
+          and line_layer["mark"]["interpolate"] == "linear",
+          "primary realised-equity mark uses linear interpolation", issues)
+    check(point_layer["mark"]["type"] == "point"
+          and point_layer["mark"]["shape"] == "circle"
+          and point_layer["mark"]["filled"],
+          "every actual display row has a visible circular point marker", issues)
+    check(reference_layer["mark"]["type"] == "rule"
+          and reference_dataset == [{"starting_balance": 10000.0}],
+          "chart contains a starting-balance reference rule at 10000", issues)
+    check("event_id" not in encoded_fields
+          and "cumulative_realised_pnl" in encoded_fields,
+          "daily tooltip includes cumulative P&L and excludes event IDs", issues)
     check("£,.2f" not in str(chart_spec) and "Â£" not in str(chart_spec),
           "Altair spec contains no invalid currency-prefixed number format", issues)
 
@@ -158,7 +184,7 @@ def main():
           "dashboard titles no longer contain 30 Day", issues)
     check(
         'st.subheader("📈 Realised Equity Curve")' in source
-        and "build_realised_equity_chart(realised_series.data)" in source,
+        and "build_realised_equity_chart(realised_series.data, start_balance)" in source,
         "realised chart title and GBP equity-axis contract are explicit",
         issues,
     )
@@ -169,6 +195,9 @@ def main():
           "analytics helper performs no writes", issues)
     check(all(text not in helper.read_text(encoding="utf-8") for text in ("FIFO", "open_lots", "buy_cost", "sell_proceeds")),
           "chart helper contains no FIFO or trade-accounting logic", issues)
+    chart_helper = ROOT / "dashboard/equity_chart.py"
+    check(not (import_roots(chart_helper) & {"execution", "accounting", "runtime"}),
+          "presentation chart has no accounting or runtime dependency", issues)
     if issues:
         raise AssertionError("; ".join(issues))
     print("\nPaper challenge dashboard validation passed.")

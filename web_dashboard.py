@@ -3973,7 +3973,7 @@ with home_tab:
         st.info("No canonical realised trade events are available yet; realised P&L remains £0.00 until the first close.")
     else:
         st.subheader("📈 Realised Equity Curve")
-        realised_chart = build_realised_equity_chart(realised_series.data)
+        realised_chart = build_realised_equity_chart(realised_series.data, start_balance)
         st.altair_chart(realised_chart, width="stretch")
         st.caption("Starting balance plus canonical after-fee realised P&L; same-day closes are netted for display only.")
     if realised_series.malformed_events:
