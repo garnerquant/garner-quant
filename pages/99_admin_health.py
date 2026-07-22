@@ -16,6 +16,7 @@ from dashboard.accounting_observation_reader import accounting_observation_statu
 from dashboard.opening_snapshot_reader import opening_snapshot_status
 from dashboard.opening_evidence_reader import opening_evidence_status
 from dashboard.evidence_campaign_reader import evidence_campaign_status
+from dashboard.malformed_observation_reader import malformed_equity_observation_status
 from dashboard.migration_approval_reader import migration_approval_status
 from dashboard.review_workflow_reader import review_workflow_status
 from dashboard.operations_presentation import badge_color, detail_rows, status_meta
@@ -51,6 +52,18 @@ apply_responsive_styles()
 
 st.title("System Health")
 st.caption("Read-only operational status. Validations, monitoring, notifications, and repairs run outside the dashboard.")
+
+with st.expander("Malformed Equity Observations", expanded=False):
+    malformed_equity = malformed_equity_observation_status(ROOT / "paper_30_day_tracker.csv")
+    st.caption("Read-only diagnostics derived from the current tracker. Invalid records remain excluded from calculations.")
+    malformed_cols = st.columns(3)
+    render_status_badge(malformed_cols[0], "Status", malformed_equity["status"])
+    malformed_cols[1].metric("Invalid records", malformed_equity["count"] if malformed_equity["count"] is not None else "Not available")
+    malformed_cols[2].metric("Monitoring", "Continues")
+    if malformed_equity["records"]:
+        operations_table(pd.DataFrame(malformed_equity["records"]))
+    else:
+        st.info(malformed_equity["message"])
 
 try:
     runtime = load_runtime_status()

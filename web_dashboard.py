@@ -30,6 +30,7 @@ from dashboard.operations_presentation import (
     operational_summary_html,
     status_table_html,
     trading_status_summary,
+    market_data_warning_summary,
 )
 from dashboard.scheduler_reader import load_scheduler_state
 from dashboard.metrics import unrealised_pnl_from_holdings
@@ -3749,6 +3750,8 @@ else:
         start_balance,
         PAPER_TRADING_CHALLENGE_DAYS,
         today=pd.Timestamp.now().date(),
+        source=("paper_30_day_tracker.csv (" +
+                HOME_SOURCE_DETAILS.get("paper_30_day_tracker", {}).get("source", "unknown source") + ")"),
     )
     valid_tracker = paper_30.copy()
     valid_tracker["_timestamp"] = pd.to_datetime(valid_tracker["date"], errors="coerce")
@@ -3898,7 +3901,10 @@ with home_tab:
         if challenge_result.completed:
             st.success(f"The {PAPER_TRADING_CHALLENGE_DAYS}-day challenge is complete.")
         if challenge_result.malformed_observations:
-            st.warning(f"{challenge_result.malformed_observations} malformed equity observation(s) were excluded.")
+            market_warning = market_data_warning_summary(challenge_result.malformed_observations)
+            st.warning(f"{market_warning['title']}: {market_warning['message']} {market_warning['continuity']}")
+            with st.expander("View details", expanded=False):
+                st.caption(market_warning["action"])
         if challenge_result.incomplete_valuations:
             st.warning(f"{challenge_result.incomplete_valuations} valuation observation(s) lack a usable cash balance.")
         if challenge_result.reconciliation_error:

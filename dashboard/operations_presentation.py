@@ -203,6 +203,23 @@ def trading_status_summary(rows, *, unavailable=False):
     }
 
 
+def market_data_warning_summary(count):
+    """Plain-English Home copy; no diagnostic payload is exposed here."""
+    try:
+        count = int(count)
+    except (TypeError, ValueError):
+        count = 0
+    if count <= 0:
+        return None
+    noun = "record was" if count == 1 else "records were"
+    return {
+        "title": "Market Data Warning",
+        "message": f"{count} invalid equity {noun} ignored.",
+        "continuity": "Monitoring continues.",
+        "action": "Review details in Operations.",
+    }
+
+
 def detail_rows(values, labels):
     """Turn dense mappings into a scan-friendly label/value table."""
     rows = []

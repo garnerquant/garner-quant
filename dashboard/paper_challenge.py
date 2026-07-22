@@ -9,6 +9,28 @@ import pandas as pd
 
 
 RECONCILIATION_TOLERANCE = 0.01
+MALFORMED_OBSERVATION_STATUSES = frozenset({"ACTIVE", "CLEARED", "QUARANTINED", "UNRESOLVED"})
+KNOWN_LEGACY_MISSING_VALUATIONS = frozenset({"2026-07-02 13:21:44"})
+
+
+@dataclass(frozen=True)
+class MalformedEquityObservation:
+    instrument: str
+    observation_type: str
+    source: str
+    source_record_id: str
+    timestamp: str
+    raw_fields: tuple[tuple[str, str], ...]
+    normalized_fields: tuple[tuple[str, str], ...]
+    failed_rules: tuple[str, ...]
+    failure_reason: str
+    exception_type: str | None
+    classification: str
+    first_seen: str
+    last_seen: str
+    occurrence_count: int
+    status: str
+    recommended_action: str
 
 
 @dataclass(frozen=True)
@@ -19,6 +41,47 @@ class PaperChallengeSeries:
     malformed_observations: int
     incomplete_valuations: int
     reconciliation_error: str | None = None
+    malformed_details: tuple[MalformedEquityObservation, ...] = ()
+
+
+def _safe_text(value):
+    if value is None or pd.isna(value):
+        return "Missing"
+    return str(value)[:160]
+
+
+def _malformed_details(working, valid, *, source):
+    details = []
+    for index, row in working.loc[~valid].iterrows():
+        rules = []
+        if pd.isna(row["timestamp"]):
+            rules.append("timestamp must be parseable")
+        if pd.isna(row["total_equity"]) or not np.isfinite(row["total_equity"]):
+            rules.append("portfolio_value must be finite")
+        elif row["total_equity"] <= 0:
+            rules.append("portfolio_value must be positive")
+        timestamp = _safe_text(row.get("date"))
+        legacy_nan_valuation = (
+            rules == ["portfolio_value must be finite"]
+            and pd.notna(row["timestamp"])
+            and pd.isna(pd.to_numeric(row.get("unrealised_pnl"), errors="coerce"))
+            and "paper_30_day_tracker" in str(source)
+            and timestamp in KNOWN_LEGACY_MISSING_VALUATIONS
+        )
+        classification = "STALE_LEGACY_RECORD" if legacy_nan_valuation else "SOURCE_DATA_INVALID"
+        action = (
+            "Keep excluded; retain the historical row as evidence. Current writers already reject incomplete valuations."
+            if legacy_nan_valuation else
+            "Keep excluded and inspect the named source writer before retrying or quarantining the record."
+        )
+        details.append(MalformedEquityObservation(
+            "Not recorded", "EQUITY", source, f"row-{int(index) + 2}", timestamp,
+            (("date", _safe_text(row.get("date"))), ("portfolio_value", _safe_text(row.get("portfolio_value")))),
+            (("timestamp", _safe_text(row.get("timestamp"))), ("total_equity", _safe_text(row.get("total_equity")))),
+            tuple(rules), "; ".join(rules), None, classification, timestamp, timestamp, 1,
+            "ACTIVE", action,
+        ))
+    return tuple(details)
 
 
 @dataclass(frozen=True)
@@ -46,6 +109,7 @@ def build_paper_challenge_series(
     *,
     today=None,
     displayed_current_balance=None,
+    source="paper_30_day_tracker.csv",
 ) -> PaperChallengeSeries:
     columns = [
         "timestamp", "date", "challenge_day", "challenge_day_label", "cash_balance",
@@ -75,9 +139,11 @@ def build_paper_challenge_series(
         & working["total_equity"].gt(0)
     )
     malformed = int((~valid).sum())
+    malformed_details = _malformed_details(working, valid, source=source)
     working = working.loc[valid].copy()
     if working.empty:
-        return PaperChallengeSeries(pd.DataFrame(columns=columns), 0, False, malformed, 0)
+        return PaperChallengeSeries(pd.DataFrame(columns=columns), 0, False, malformed, 0,
+                                    malformed_details=malformed_details)
     working["date"] = working["timestamp"].dt.normalize()
     working = working.sort_values(["timestamp", "_source_order"], kind="stable")
     daily = working.groupby("date", sort=True, as_index=False).tail(1).copy()
@@ -118,7 +184,7 @@ def build_paper_challenge_series(
         )
     return PaperChallengeSeries(
         series[columns].copy(deep=True), current_day, elapsed >= challenge_days,
-        malformed, incomplete, mismatch,
+        malformed, incomplete, mismatch, malformed_details,
     )
 
 
