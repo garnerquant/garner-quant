@@ -125,6 +125,7 @@ class AccountingObservationEnvelope:
     monitor_only: bool
     created_at: datetime
     instrument_metadata: dict[str, Any]
+    observation_metadata: dict[str, Any]
 
     def validate(self):
         required = (self.event_id, self.proposal_id, self.decision_id, self.strategy_id, self.strategy_version,
@@ -136,11 +137,11 @@ class AccountingObservationEnvelope:
         if self.event_type not in {item.value for item in AccountingEventType}: raise AccountingObservationError("unknown accounting event type")
         fills = {AccountingEventType.BUY_FILL.value, AccountingEventType.SELL_FILL.value}
         if self.event_type in fills:
-            if self.side not in {"BUY", "SELL"} or self.quantity <= 0:
+            if self.side not in {"BUY", "SELL"} or self.quantity <= 0 or self.native_price <= 0:
                 raise AccountingObservationError("fill side and quantity are invalid")
         elif self.side != "NONE" or self.quantity != 0:
             raise AccountingObservationError("non-fill observations require side NONE and zero quantity")
-        if self.native_price <= 0 or self.fx_rate_to_base <= 0: raise AccountingObservationError("price/amount and FX must be positive")
+        if self.native_price < 0 or self.fx_rate_to_base <= 0: raise AccountingObservationError("price/amount and FX are invalid")
         if min(self.fees_base, self.estimated_costs_base) < 0: raise AccountingObservationError("costs cannot be negative")
         for name in ("fx_timestamp", "market_data_timestamp", "valuation_timestamp", "planned_execution_timestamp", "created_at"):
             _utc(getattr(self, name), name)
@@ -158,6 +159,11 @@ class AccountingObservationEnvelope:
             raise AccountingObservationError("instrument replay metadata does not match authoritative policy")
         if self.configuration_version != load_risk_configuration().configuration_version:
             raise AccountingObservationError("unknown configuration version")
+        observation_required = {"producer_id", "producer_version", "source_system", "source_reference", "authority_method"}
+        if not observation_required.issubset(self.observation_metadata) or any(
+            not str(self.observation_metadata.get(key, "")).strip() for key in observation_required
+        ):
+            raise AccountingObservationError("observation producer authority metadata is incomplete")
         return self
 
     def to_dict(self):
@@ -214,6 +220,8 @@ def envelope_from_risk_evaluation(proposal: OrderProposal, context: RiskContext,
         exposure, decision.to_dict(), decision.configuration_version, "INACTIVE",
         {"identity": proposal.signal_id, "timestamp": proposal.source_bar_timestamp.isoformat()},
         context.runtime_mode, context.shadow_mode, _utc(created_at or decision.timestamp, "created_at"), instrument,
+        {"producer_id": "risk-monitor-fill-observer", "producer_version": "1.0", "source_system": "central-risk-engine",
+         "source_reference": decision.decision_id, "authority_method": "validated risk proposal and scheduler bar"},
     )
     return envelope.validate()
 
@@ -247,6 +255,16 @@ class AccountingObservationStore:
                    "validation_result": "FAILED", "reason": str(reason)}
         self.failure_path.parent.mkdir(parents=True, exist_ok=True)
         with acquire_runtime_write_lock(path=self.lock_path, context="accounting_observation_failure"):
+            with self.failure_path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"); handle.flush(); os.fsync(handle.fileno())
+
+    def append_invalid(self, *, source_event_id, event_type, producer_id, reason, received_timestamp):
+        payload = {"schema_version": SCHEMA_VERSION, "source_event_id": str(source_event_id),
+                   "event_type": str(event_type), "producer_id": str(producer_id),
+                   "timestamp": _utc(received_timestamp, "received_timestamp").isoformat(),
+                   "validation_result": "FAILED", "reason": str(reason)}
+        self.failure_path.parent.mkdir(parents=True, exist_ok=True)
+        with acquire_runtime_write_lock(path=self.lock_path, context="accounting_observation_invalid"):
             with self.failure_path.open("a", encoding="utf-8", newline="\n") as handle:
                 handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"); handle.flush(); os.fsync(handle.fileno())
 

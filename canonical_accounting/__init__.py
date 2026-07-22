@@ -12,6 +12,8 @@ from canonical_accounting.events import AccountingEvent, AccountingEventType
 from canonical_accounting.snapshot import CanonicalPortfolioSnapshot
 from canonical_accounting.successor import SuccessorGenerationWriter
 from canonical_accounting.observation import AccountingObservationEnvelope, AccountingObservationStore
+from canonical_accounting.non_fill_events import NonFillEventRequest, NonFillEventType
+from canonical_accounting.non_fill_producers import observe_non_fill_event
 
 __all__ = [
     "ConversionResult",
@@ -26,4 +28,7 @@ __all__ = [
     "SuccessorGenerationWriter",
     "AccountingObservationEnvelope",
     "AccountingObservationStore",
+    "NonFillEventRequest",
+    "NonFillEventType",
+    "observe_non_fill_event",
 ]

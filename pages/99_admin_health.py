@@ -12,7 +12,7 @@ from ui.runtime_status import load_runtime_status, runtime_freshness, runtime_st
 from risk_engine.diagnostics import load_risk_diagnostics
 from risk_engine.operations import activation_readiness, configuration_health, decision_history, risk_metrics
 from canonical_accounting.successor import accounting_transaction_status
-from dashboard.accounting_observation_reader import accounting_observation_status
+from dashboard.accounting_observation_reader import accounting_observation_status, non_fill_observation_status
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +60,20 @@ st.caption(
     f"{latest_risk.get('status', 'None')} | "
     f"{latest_risk.get('primary_reason_code', 'No evaluations recorded')}"
 )
+with st.expander("Non-fill accounting observation producers", expanded=False):
+    non_fill = non_fill_observation_status(ROOT / "data" / "accounting_observations" / "envelopes.jsonl",
+                                           ROOT / "data" / "accounting_observations" / "validation_failures.jsonl")
+    st.caption("Read-only. This page has no event creation controls.")
+    producer_cols = st.columns(4)
+    producer_cols[0].metric("Framework", non_fill["status"])
+    producer_cols[1].metric("Validation", non_fill["validation_health"])
+    producer_cols[2].metric("Production producers", len(non_fill["active_production_producers"]))
+    producer_cols[3].metric("Duplicate conflicts", non_fill["duplicate_conflict_count"])
+    st.write({"Supported": non_fill["supported_event_types"], "Unavailable": non_fill["unavailable_producers"],
+              "Counts": non_fill["counts_by_event_type"], "Source authority": non_fill["source_authority"],
+              "Last observation": non_fill["last_observation_timestamp"],
+              "Latest envelope": (non_fill.get("latest_non_fill") or {}).get("event_id"),
+              "Latest invalid": (non_fill.get("latest_invalid") or {}).get("reason")})
 
 st.subheader("Accounting observation envelopes")
 envelopes = accounting_observation_status(ROOT / "data" / "accounting_observations" / "envelopes.jsonl",
