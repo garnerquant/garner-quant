@@ -18,6 +18,13 @@ class DashboardAccountingBundle:
     ledger: pd.DataFrame
 
 
+@dataclass(frozen=True)
+class DashboardAccountingStatus:
+    state: str
+    bundle: DashboardAccountingBundle | None
+    reason: str | None
+
+
 def load_dashboard_accounting(state_root=Path("data/accounting_generations")) -> DashboardAccountingBundle:
     generation = load_active_generation(state_root)
     broker = generation.broker.rename(columns={
@@ -39,3 +46,21 @@ def load_dashboard_accounting(state_root=Path("data/accounting_generations")) ->
         generation.generation_id, dict(generation.manifest), broker,
         holdings, tracker, generation.ledger.copy(deep=True),
     )
+
+
+def load_dashboard_accounting_status(
+    state_root=Path("data/accounting_generations"),
+) -> DashboardAccountingStatus:
+    state_root = Path(state_root)
+    pointer = state_root / "accounting_generation.json"
+    try:
+        pointer_exists = pointer.exists()
+    except OSError:
+        pointer_exists = True
+    try:
+        bundle = load_dashboard_accounting(state_root)
+    except GenerationError as exc:
+        reason = str(exc)
+        state = "pending" if not pointer_exists else "error"
+        return DashboardAccountingStatus(state=state, bundle=None, reason=reason)
+    return DashboardAccountingStatus(state="active", bundle=bundle, reason=None)

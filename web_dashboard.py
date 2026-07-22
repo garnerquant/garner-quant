@@ -14,9 +14,8 @@ from supabase import create_client
 
 from dashboard.data_loader import load_csv
 from dashboard.equity_chart import build_equity_curve_layers
-from dashboard.accounting_reader import load_dashboard_accounting
+from dashboard.accounting_reader import load_dashboard_accounting_status
 from dashboard.scheduler_reader import load_scheduler_state
-from canonical_accounting.generation import GenerationError
 from dashboard.metrics import unrealised_pnl_from_holdings
 from dashboard.paper_challenge import (
     build_day_over_day_attribution,
@@ -1122,7 +1121,15 @@ def investor_cycle_message(runtime_event, state):
     return state.get("activity", "Runtime status unavailable.")
 
 
-def render_live_status_strip(runtime_label, freshness_label, last_scan, next_cycle_at, fallback_next):
+def render_live_status_strip(
+    runtime_label,
+    freshness_label,
+    accounting_state,
+    accounting_detail,
+    last_scan,
+    next_cycle_at,
+    fallback_next,
+):
     target_timestamp = ""
     try:
         if next_cycle_at:
@@ -1133,6 +1140,8 @@ def render_live_status_strip(runtime_label, freshness_label, last_scan, next_cyc
     payload = {
         "runtime": str(runtime_label),
         "freshness": str(freshness_label),
+        "accountingState": str(accounting_state),
+        "accountingDetail": str(accounting_detail or ""),
         "lastScan": str(last_scan),
         "nextTarget": target_timestamp,
         "fallbackNext": str(fallback_next),
@@ -1142,6 +1151,7 @@ def render_live_status_strip(runtime_label, freshness_label, last_scan, next_cyc
         <div class="status-strip">
             <span class="status-pill" id="runtime-badge"></span>
             <span class="status-pill" id="freshness-badge"></span>
+            <span id="accounting-status"></span>
             <span class="status-text" id="last-scan-label"></span>
             <span class="status-text">Next <span id="next-countdown"></span></span>
         </div>
@@ -1219,10 +1229,32 @@ def render_live_status_strip(runtime_label, freshness_label, last_scan, next_cyc
 
             const runtimeBadge = document.getElementById("runtime-badge");
             const freshnessBadge = document.getElementById("freshness-badge");
+            const accountingStatus = document.getElementById("accounting-status");
             runtimeBadge.textContent = `🟢 Runtime ${{String(data.runtime).toUpperCase()}}`;
             freshnessBadge.textContent = `Data ${{String(data.freshness).toUpperCase()}}`;
             addStatusClass(runtimeBadge, String(data.runtime).toLowerCase().includes("live") ? "status-green" : "status-grey");
             addStatusClass(freshnessBadge, freshnessClass(data.freshness));
+            const accountingState = String(data.accountingState || "error").toLowerCase();
+            const accountingLabel = accountingState === "active"
+                ? "ACCOUNTING: CANONICAL GBP ACTIVE"
+                : accountingState === "pending"
+                    ? "ACCOUNTING: CANONICAL GENERATION PENDING"
+                    : "ACCOUNTING: ERROR";
+            const accountingClass = accountingState === "active"
+                ? "status-green"
+                : accountingState === "pending" ? "status-amber" : "status-red";
+            accountingStatus.className = `status-pill ${{accountingClass}}`;
+            accountingStatus.textContent = data.accountingDetail
+                ? `${{accountingLabel}} ⓘ`
+                : accountingLabel;
+            if (data.accountingDetail) {{
+                accountingStatus.tabIndex = 0;
+                accountingStatus.title = data.accountingDetail;
+                accountingStatus.setAttribute(
+                    "aria-label",
+                    `${{accountingLabel}}. ${{data.accountingDetail}}`,
+                );
+            }}
             document.getElementById("last-scan-label").textContent = `Last Scan ${{data.lastScan}}`;
 
             const target = data.nextTarget ? new Date(data.nextTarget).getTime() : null;
@@ -1274,6 +1306,8 @@ def render_investment_brief(
     buying_power,
     open_positions,
     win_rate,
+    accounting_state,
+    accounting_detail,
 ):
     state = runtime_details["state"]
     freshness = runtime_details["freshness"]
@@ -1289,6 +1323,8 @@ def render_investment_brief(
     render_live_status_strip(
         runtime_label,
         freshness.get("label", "Unknown"),
+        accounting_state,
+        accounting_detail,
         runtime_details["last_scan"],
         runtime_details.get("next_cycle_at"),
         runtime_details["next_scan"],
@@ -3395,12 +3431,9 @@ history = load_supabase_table("holdings_history", None, "date")
 signals = load_supabase_table("signals", "signal_report_v2.csv")
 trades = load_home_table("trade_journal", "trade_journal_v3.csv")
 
-canonical_accounting = None
-try:
-    canonical_accounting = load_dashboard_accounting()
-except GenerationError:
-    pass
-else:
+accounting_status = load_dashboard_accounting_status()
+canonical_accounting = accounting_status.bundle
+if canonical_accounting is not None:
     broker = canonical_accounting.broker
     holdings = canonical_accounting.holdings
     paper_30 = canonical_accounting.tracker
@@ -3468,19 +3501,13 @@ portfolio_value = broker_row.get("portfolio_value", current_balance)
 st.title("Garner Quant")
 st.caption("Personal investment research and paper trading dashboard.")
 
-if canonical_accounting is None:
-    st.warning(
-        "Legacy nominal history — not currency-normalized and excluded from canonical GBP accounting. "
-        "No active verified accounting generation is published."
+accounting_detail = None
+if accounting_status.state == "pending":
+    accounting_detail = (
+        "Legacy history is not currency-normalized and is excluded from canonical GBP totals."
     )
-    st.caption(
-        "All account figures below are legacy nominal audit values. Currency symbols are retained "
-        "for historical presentation only and do not certify GBP-normalized performance."
-    )
-else:
-    st.success(
-        f"Canonical accounting generation {canonical_accounting.generation_id} — verified GBP."
-    )
+elif accounting_status.state == "error":
+    accounting_detail = accounting_status.reason
 
 render_investment_brief(
     runtime_details,
@@ -3491,6 +3518,8 @@ render_investment_brief(
     broker_row.get("buying_power", broker_row.get("cash", 0)),
     open_positions,
     win_rate_value,
+    accounting_status.state,
+    accounting_detail,
 )
 st.caption(home_source_summary())
 if scheduler_dashboard.error:
