@@ -17,6 +17,7 @@ from canonical_accounting.non_fill_producers import observe_non_fill_event
 from canonical_accounting.opening_snapshot import OpeningSnapshotCandidate, OpeningApprovalRecord
 from canonical_accounting.evidence_pack import OpeningSnapshotEvidencePack, build_evidence_pack
 from canonical_accounting.migration_approval import ApprovalPack, ApprovalRecord, MigrationProposal, build_migration_approval_pack
+from canonical_accounting.review_workflow import ReviewRecord, ReviewExportBundle, create_review, export_review_bundle
 
 __all__ = [
     "ConversionResult",
@@ -39,4 +40,5 @@ __all__ = [
     "OpeningSnapshotEvidencePack",
     "build_evidence_pack",
     "ApprovalPack", "ApprovalRecord", "MigrationProposal", "build_migration_approval_pack",
+    "ReviewRecord", "ReviewExportBundle", "create_review", "export_review_bundle",
 ]

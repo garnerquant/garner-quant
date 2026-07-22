@@ -16,6 +16,7 @@ from dashboard.accounting_observation_reader import accounting_observation_statu
 from dashboard.opening_snapshot_reader import opening_snapshot_status
 from dashboard.opening_evidence_reader import opening_evidence_status
 from dashboard.migration_approval_reader import migration_approval_status
+from dashboard.review_workflow_reader import review_workflow_status
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,6 +110,12 @@ with st.expander("Migration allocation and approval", expanded=False):
     migration_cols[0].metric("Migration Pack Status",migration.get("status","ERROR"));migration_cols[1].metric("Pending Proposals",migration.get("pending"))
     migration_cols[2].metric("Approved",migration.get("approved"));migration_cols[3].metric("Rejected",migration.get("rejected"))
     st.write({"Coverage %":migration.get("coverage"),"Critical Materiality":migration.get("critical"),"Readiness":migration.get("readiness","NOT_READY"),"Pack ID":migration.get("pack_id"),"Error":migration.get("error")})
+
+with st.expander("Operator migration review", expanded=False):
+    review=review_workflow_status(ROOT)
+    st.caption("Authenticated read-only review. Decisions are created explicitly through the offline governance service; this dashboard has no approval controls.")
+    review_cols=st.columns(4);review_cols[0].metric("Review Status",review.get("status","ERROR"));review_cols[1].metric("Outstanding Reviews",review.get("outstanding"));review_cols[2].metric("Critical Pending",review.get("critical_pending"));review_cols[3].metric("Approval Coverage",f"{review.get('coverage',0)}%")
+    st.write({"Evidence Version":review.get("evidence_version"),"Approval Pack Version":review.get("pack_version"),"Proposals":review.get("proposals"),"Error":review.get("error")})
 
 st.subheader("Accounting observation envelopes")
 envelopes = accounting_observation_status(ROOT / "data" / "accounting_observations" / "envelopes.jsonl",

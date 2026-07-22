@@ -1,0 +1,11 @@
+from __future__ import annotations
+import ast,hashlib,json,subprocess,sys
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT));PROTECTED=("trade_ledger_v1.csv","paper_portfolio_v3.csv","holdings_report.csv","broker_account.csv","paper_30_day_tracker.csv");FORBIDDEN=("SuccessorGenerationWriter","publish_prepared","build_candidate","freeze_inactive_candidate","submit_order","place_order","write_text(","write_bytes(","open(\"w")
+def h():return {x:hashlib.sha256((ROOT/x).read_bytes()).hexdigest() for x in PROTECTED}
+def c(v,l,i):print(("PASS"if v else"FAIL")+": "+l);i.append(l)if not v else None
+def main():
+ i=[];before=h();pointer=ROOT/"data/accounting_generations/accounting_generation.json";candidate=ROOT/"data/opening_snapshot_candidates";gens=ROOT/"data/accounting_generations/generations";g0=sorted(x.name for x in gens.iterdir())if gens.exists()else[];r=subprocess.run([sys.executable,"-m","unittest","tests.test_operator_review_workflow","-q"],cwd=ROOT);c(r.returncode==0,"operator review tests",i);source=(ROOT/"canonical_accounting/review_workflow.py").read_text();ast.parse(source);c(all(x not in source for x in FORBIDDEN),"review subsystem has no accounting, candidate, pointer, generation, execution, or persistence path",i);c(all(x in source for x in ("proposal hash changed","approval pack changed","evidence pack changed","repository version changed","review schema or state")),"all immutable dependency changes invalidate reviews",i);dashboard=(ROOT/"pages/99_admin_health.py").read_text();section=dashboard[dashboard.index('Operator migration review'):dashboard.index('Accounting observation envelopes')];c("button("not in section,"authenticated Operations review remains read-only",i);cfg=json.loads((ROOT/"runtime/live_runtime_config.json").read_text());c(cfg["mode"]=="monitor_only"and not cfg["paper_execution_enabled"],"safe runtime state retained",i);c(not pointer.exists(),"pointer absent",i);c(not candidate.exists(),"candidate absent",i);c(g0==(sorted(x.name for x in gens.iterdir())if gens.exists()else[]),"no generation created",i);c(before==h(),"protected files byte-identical",i)
+ if i:raise SystemExit("Review workflow validation failed: "+"; ".join(i))
+ print("Operator review workflow validation passed.")
+if __name__=="__main__":main()
