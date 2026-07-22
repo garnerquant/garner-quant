@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 import json
 
 from risk_engine.authorization import verify_risk_authorization
+from canonical_accounting.observation import observe_monitor_only_evaluation
 from risk_engine.configuration import load_risk_configuration
 from risk_engine.engine import PreTradeRiskEngine
 from risk_engine.integration import build_order_proposal, build_production_risk_context
@@ -662,6 +663,8 @@ def update_portfolio(
             risk_context = context_factory(proposal, **context_kwargs)
             risk_decision = central_risk.evaluate(proposal, risk_context)
             risk_decisions.append(risk_decision)
+            if shadow_mode:
+                observe_monitor_only_evaluation(proposal, risk_context, risk_decision)
             if shadow_mode and risk_decision.approved:
                 raise RuntimeError("shadow mode received an executable approval")
             if not risk_decision.approved:
@@ -860,6 +863,8 @@ def update_portfolio(
             risk_context = context_factory(proposal, **context_kwargs)
             risk_decision = central_risk.evaluate(proposal, risk_context)
             risk_decisions.append(risk_decision)
+            if shadow_mode:
+                observe_monitor_only_evaluation(proposal, risk_context, risk_decision)
             if shadow_mode and risk_decision.approved:
                 raise RuntimeError("shadow mode received an executable approval")
             if not risk_decision.approved:

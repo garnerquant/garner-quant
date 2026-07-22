@@ -12,6 +12,7 @@ from ui.runtime_status import load_runtime_status, runtime_freshness, runtime_st
 from risk_engine.diagnostics import load_risk_diagnostics
 from risk_engine.operations import activation_readiness, configuration_health, decision_history, risk_metrics
 from canonical_accounting.successor import accounting_transaction_status
+from dashboard.accounting_observation_reader import accounting_observation_status
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +59,20 @@ st.caption(
     "Latest decision: "
     f"{latest_risk.get('status', 'None')} | "
     f"{latest_risk.get('primary_reason_code', 'No evaluations recorded')}"
+)
+
+st.subheader("Accounting observation envelopes")
+envelopes = accounting_observation_status(ROOT / "data" / "accounting_observations" / "envelopes.jsonl",
+                                          ROOT / "data" / "accounting_observations" / "validation_failures.jsonl")
+envelope_cols = st.columns(4)
+envelope_cols[0].metric("Envelope health", envelopes["health"])
+envelope_cols[1].metric("Envelope version", envelopes["version"])
+envelope_cols[2].metric("Validation", envelopes["validation"])
+envelope_cols[3].metric("Observation count", envelopes["count"])
+latest_envelope = envelopes.get("latest") or {}
+st.caption(
+    f"Latest envelope: {latest_envelope.get('event_id', 'None')} | "
+    f"Missing fields: {envelopes['missing_fields']} | Observational only; no accounting or execution action."
 )
 
 try:

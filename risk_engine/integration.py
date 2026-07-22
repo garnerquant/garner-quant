@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from config import STRATEGY_VERSION
+
 from canonical_accounting.instruments import get_instrument_metadata
 from canonical_accounting.generation import load_active_generation
 from canonical_accounting.successor import load_transactional_generation
@@ -37,7 +39,9 @@ def build_order_proposal(
         order_type="MARKET", limit_price=None, stop_price=stop_price, time_in_force="DAY",
         strategy_timestamp=instant, source_bar_timestamp=source_bar_timestamp,
         expected_execution_currency=metadata.instrument_currency, reason=str(reason),
-        correlation_id=str(correlation_id), metadata={"timeframe": "1d", "reference_price": str(reference_price)},
+        correlation_id=str(correlation_id), metadata={"timeframe": "1d", "reference_price": str(reference_price),
+            "strategy_version": STRATEGY_VERSION,
+            "fx_source": "GBP identity" if metadata.instrument_currency == "GBP" else ""},
         created_at=instant,
     )
 
