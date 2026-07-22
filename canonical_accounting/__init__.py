@@ -15,6 +15,7 @@ from canonical_accounting.observation import AccountingObservationEnvelope, Acco
 from canonical_accounting.non_fill_events import NonFillEventRequest, NonFillEventType
 from canonical_accounting.non_fill_producers import observe_non_fill_event
 from canonical_accounting.opening_snapshot import OpeningSnapshotCandidate, OpeningApprovalRecord
+from canonical_accounting.evidence_pack import OpeningSnapshotEvidencePack, build_evidence_pack
 
 __all__ = [
     "ConversionResult",
@@ -34,4 +35,6 @@ __all__ = [
     "observe_non_fill_event",
     "OpeningSnapshotCandidate",
     "OpeningApprovalRecord",
+    "OpeningSnapshotEvidencePack",
+    "build_evidence_pack",
 ]

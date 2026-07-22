@@ -14,6 +14,7 @@ from risk_engine.operations import activation_readiness, configuration_health, d
 from canonical_accounting.successor import accounting_transaction_status
 from dashboard.accounting_observation_reader import accounting_observation_status, non_fill_observation_status
 from dashboard.opening_snapshot_reader import opening_snapshot_status
+from dashboard.opening_evidence_reader import opening_evidence_status
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +88,18 @@ with st.expander("Canonical opening snapshot", expanded=False):
               "Positions":opening.get("positions"),"Lots":opening.get("lots"),"Strategy attribution %":opening.get("attribution"),
               "FX evidence %":opening.get("fx"),"Unresolved exceptions":opening.get("exceptions"),"Largest difference":opening.get("largest_difference"),
               "Inactive":opening.get("inactive"),"Latest validation":opening.get("validated_at")})
+
+with st.expander("Opening snapshot evidence", expanded=False):
+    evidence = opening_evidence_status(ROOT)
+    st.caption("Read-only evidence inventory and gap analysis. This does not create a candidate, generation, lot, or pointer.")
+    evidence_cols = st.columns(4)
+    evidence_cols[0].metric("Evidence Pack Status", evidence.get("status", "ERROR"))
+    evidence_cols[1].metric("Gap Count", evidence.get("gap_count", "Unavailable"))
+    evidence_cols[2].metric("Critical Gaps", evidence.get("critical_gaps", "Unavailable"))
+    evidence_cols[3].metric("Coverage %", evidence.get("coverage", "Unavailable"))
+    st.write({"Replay Readiness": evidence.get("replay_readiness", "NOT_READY"),
+              "Opening Snapshot Readiness": evidence.get("opening_snapshot_readiness", "NOT_READY"),
+              "Evidence hash": evidence.get("pack_hash"), "Error": evidence.get("error")})
 
 st.subheader("Accounting observation envelopes")
 envelopes = accounting_observation_status(ROOT / "data" / "accounting_observations" / "envelopes.jsonl",
