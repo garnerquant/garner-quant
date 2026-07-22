@@ -13,7 +13,12 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from dashboard.data_loader import load_csv
-from dashboard.equity_chart import build_equity_curve_layers
+from dashboard.equity_chart import (
+    apply_performance_chart_layout,
+    build_drawdown_chart,
+    build_equity_curve_layers,
+    performance_x_encoding,
+)
 from dashboard.accounting_reader import load_dashboard_accounting_status
 from dashboard.scheduler_reader import load_scheduler_state
 from dashboard.metrics import unrealised_pnl_from_holdings
@@ -3169,12 +3174,7 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
     chart_data_for_plot = plot_data.dropna(subset=[active_value_column])
 
     shared_encoding = {
-        "x": alt.X(
-            "challenge_day:Q",
-            title="Challenge day",
-            axis=alt.Axis(labelExpr="'Day ' + datum.value"),
-            scale=alt.Scale(domain=[0, PAPER_TRADING_CHALLENGE_DAYS]),
-        ),
+        "x": performance_x_encoding(PAPER_TRADING_CHALLENGE_DAYS),
         "y": alt.Y(
             y_field,
             title=y_title,
@@ -3197,9 +3197,10 @@ def render_equity_curve(chart_data, current_value, initial_capital=None):
         chart_data_for_plot,
         shared_encoding,
         tooltip,
-    ).properties(height=420)
+    )
     if zero_line is not None:
         chart = zero_line + chart
+    chart = apply_performance_chart_layout(chart)
 
     st.altair_chart(chart, width="stretch")
     if caption:
@@ -3602,6 +3603,20 @@ with home_tab:
 
         render_equity_curve(chart_data, current_balance, start_balance)
 
+        st.subheader("Drawdown")
+        if len(challenge_result.data) == 1:
+            st.info("Only the starting equity observation is available; drawdown is 0.00%.")
+        else:
+            drawdown_data = challenge_result.data[
+                ["timestamp", "challenge_day", "challenge_day_label", "drawdown_pct"]
+            ].copy()
+            drawdown_chart = build_drawdown_chart(
+                drawdown_data,
+                PAPER_TRADING_CHALLENGE_DAYS,
+            )
+            st.altair_chart(drawdown_chart, width="stretch")
+            st.caption("Drawdown is calculated only from the same recorded total-equity observations shown in the challenge curve.")
+
     st.divider()
 
     st.subheader("📊 Strategy Analytics")
@@ -3733,39 +3748,6 @@ with home_tab:
         st.warning("Holdings history exists but does not satisfy the attribution data contract.")
     else:
         st.info("Attribution is unavailable until two comparable canonical holdings and account snapshots exist. Current holdings are never used to reconstruct history.")
-
-    st.subheader("Drawdown")
-
-    if challenge_result is None or challenge_result.data.empty:
-        st.info("No valid total-equity history is available for drawdown.")
-    elif len(challenge_result.data) == 1:
-        st.info("Only the starting equity observation is available; drawdown is 0.00%.")
-    else:
-        drawdown_data = challenge_result.data[
-            ["timestamp", "challenge_day", "total_equity", "running_peak", "drawdown_pct"]
-        ].copy()
-        drawdown_chart = (
-            alt.Chart(drawdown_data)
-            .mark_line(point=True, color="#DC2626")
-            .encode(
-                x=alt.X(
-                    "challenge_day:Q",
-                    title="Challenge day",
-                    scale=alt.Scale(domain=[0, PAPER_TRADING_CHALLENGE_DAYS]),
-                ),
-                y=alt.Y("drawdown_pct:Q", title="Drawdown (%)", scale=alt.Scale(zero=True)),
-                tooltip=[
-                    alt.Tooltip("timestamp:T", title="Date", format="%Y-%m-%d"),
-                    alt.Tooltip("challenge_day:Q", title="Challenge day"),
-                    alt.Tooltip("total_equity:Q", title="Total equity", format=",.2f"),
-                    alt.Tooltip("running_peak:Q", title="Running peak", format=",.2f"),
-                    alt.Tooltip("drawdown_pct:Q", title="Drawdown", format=".2f"),
-                ],
-            )
-            .properties(height=300)
-        )
-        st.altair_chart(drawdown_chart, width="stretch")
-        st.caption("Drawdown is calculated only from the same recorded total-equity observations shown in the challenge curve.")
 
     st.divider()
 

@@ -176,11 +176,11 @@ def main():
         issues,
     )
     expected_drawdown_columns = (
-        '["timestamp","challenge_day","total_equity","running_peak","drawdown_pct"]'
+        '["timestamp","challenge_day","challenge_day_label","drawdown_pct"]'
     )
     check(
         expected_drawdown_columns in compact_source
-        and "alt.Chart(drawdown_data)" in source
+        and "build_drawdown_chart(" in source
         and 'st.altair_chart(drawdown_chart, width="stretch")' in source,
         "drawdown retains its expected canonical fields, builder, and render",
         issues,
