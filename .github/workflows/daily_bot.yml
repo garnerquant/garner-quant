@@ -48,6 +48,7 @@ jobs:
           python scripts/validate_operator_review_workflow.py
           python scripts/validate_frozen_evidence_pack.py
           python scripts/validate_evidence_acquisition_reconciliation.py
+          python scripts/validate_operational_dashboard_ux.py
           python scripts/validate_accounting_reconciliation.py
           python scripts/validate_accounting_reconciliation_output.py
           python scripts/validate_per_market_bar_scheduler.py

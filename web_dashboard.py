@@ -20,6 +20,15 @@ from dashboard.equity_chart import (
     performance_x_encoding,
 )
 from dashboard.accounting_reader import load_dashboard_accounting_status
+from dashboard.opening_evidence_reader import opening_evidence_status
+from dashboard.review_workflow_reader import review_workflow_status
+from dashboard.operations_presentation import (
+    activity_cards_html,
+    home_source_rows,
+    instrument_status_rows,
+    status_table_html,
+    summary_cards_html,
+)
 from dashboard.scheduler_reader import load_scheduler_state
 from dashboard.metrics import unrealised_pnl_from_holdings
 from dashboard.paper_challenge import (
@@ -737,6 +746,125 @@ def inject_mobile_css():
             margin-bottom:8px;
         }
 
+        .ops-summary-grid {
+            display:grid;
+            grid-template-columns:repeat(5,minmax(0,1fr));
+            gap:10px;
+            margin:8px 0 14px 0;
+        }
+
+        .ops-activity-grid {
+            display:grid;
+            grid-template-columns:repeat(4,minmax(0,1fr));
+            gap:10px;
+            margin:8px 0 14px 0;
+        }
+
+        .ops-summary-card,
+        .ops-activity-card {
+            min-width:0;
+            border:1px solid rgba(148,163,184,0.20);
+            border-radius:8px;
+            background:rgba(15,23,42,0.70);
+            padding:11px 12px;
+        }
+
+        .ops-summary-card:focus {
+            outline:2px solid #60a5fa;
+            outline-offset:2px;
+        }
+
+        .ops-card-green { border-top:2px solid #22c55e; }
+        .ops-card-blue { border-top:2px solid #3b82f6; }
+        .ops-card-amber { border-top:2px solid #f59e0b; }
+        .ops-card-red { border-top:2px solid #ef4444; }
+        .ops-card-grey { border-top:2px solid #94a3b8; }
+
+        .ops-card-label,
+        .ops-activity-time {
+            color:#94a3b8;
+            font-size:12px;
+        }
+
+        .ops-card-value {
+            color:#f8fafc;
+            font-size:18px;
+            font-weight:720;
+            line-height:1.25;
+            margin-top:3px;
+            overflow-wrap:anywhere;
+        }
+
+        .ops-activity-title {
+            display:flex;
+            align-items:center;
+            gap:7px;
+            color:#f8fafc;
+            font-size:14px;
+            font-weight:700;
+        }
+
+        .ops-activity-event {
+            color:#e2e8f0;
+            font-size:14px;
+            line-height:1.35;
+            margin:8px 0 5px 0;
+            overflow-wrap:anywhere;
+        }
+
+        .ops-table-wrap {
+            width:100%;
+            overflow:hidden;
+            margin:8px 0 14px 0;
+            border:1px solid rgba(148,163,184,0.20);
+            border-radius:8px;
+            background:rgba(15,23,42,0.56);
+        }
+
+        .ops-table {
+            width:100%;
+            border-collapse:collapse;
+            table-layout:fixed;
+            color:#e2e8f0;
+            font-size:13px;
+        }
+
+        .ops-table caption {
+            padding:10px 12px 4px;
+            color:#f8fafc;
+            font-size:14px;
+            font-weight:700;
+            text-align:left;
+        }
+
+        .ops-table th,
+        .ops-table td {
+            padding:8px 12px;
+            text-align:left;
+            border-bottom:1px solid rgba(148,163,184,0.13);
+            overflow-wrap:anywhere;
+        }
+
+        .ops-table th { color:#94a3b8; font-size:12px; font-weight:650; }
+        .ops-table tr:last-child td { border-bottom:0; }
+
+        .ops-badge {
+            display:inline-flex;
+            align-items:center;
+            border:1px solid rgba(148,163,184,0.30);
+            border-radius:999px;
+            padding:2px 8px;
+            font-size:12px;
+            font-weight:650;
+            white-space:normal;
+        }
+
+        .ops-green { color:#bbf7d0; background:rgba(34,197,94,.10); border-color:rgba(34,197,94,.42); }
+        .ops-blue { color:#bfdbfe; background:rgba(59,130,246,.10); border-color:rgba(59,130,246,.42); }
+        .ops-amber { color:#fde68a; background:rgba(245,158,11,.10); border-color:rgba(245,158,11,.45); }
+        .ops-red { color:#fecaca; background:rgba(239,68,68,.10); border-color:rgba(239,68,68,.45); }
+        .ops-grey { color:#cbd5e1; background:rgba(148,163,184,.08); border-color:rgba(148,163,184,.28); }
+
         .activity-title {
             color:#f8fafc;
             font-weight:650;
@@ -843,8 +971,52 @@ def inject_mobile_css():
                 grid-template-columns:1fr;
             }
 
+            .ops-summary-grid,
+            .ops-activity-grid {
+                grid-template-columns:repeat(2,minmax(0,1fr));
+            }
+
+            .ops-table thead {
+                display:none;
+            }
+
+            .ops-table,
+            .ops-table tbody,
+            .ops-table tr,
+            .ops-table td {
+                display:block;
+                width:100%;
+            }
+
+            .ops-table tr {
+                padding:7px 10px;
+                border-bottom:1px solid rgba(148,163,184,.16);
+            }
+
+            .ops-table td {
+                display:grid;
+                grid-template-columns:minmax(88px,.8fr) minmax(0,1.4fr);
+                gap:8px;
+                padding:4px 2px;
+                border:0;
+            }
+
+            .ops-table td::before {
+                content:attr(data-label);
+                color:#94a3b8;
+                font-size:12px;
+                font-weight:650;
+            }
+
             .portfolio-main-value {
                 font-size:30px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .ops-summary-grid,
+            .ops-activity-grid {
+                grid-template-columns:1fr;
             }
         }
         </style>
@@ -1091,18 +1263,6 @@ def home_recommendation(runtime_details, latest_trade):
     return "No action required."
 
 
-def render_activity_item(title, detail):
-    st.markdown(
-        f"""
-        <div class="activity-row">
-            <div class="activity-title">{html.escape(str(title))}</div>
-            <div class="activity-detail">{html.escape(str(detail))}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def investor_cycle_message(runtime_event, state):
     raw_message = str((runtime_event or {}).get("message") or "").strip()
     raw_type = str((runtime_event or {}).get("type") or "").strip()
@@ -1111,10 +1271,7 @@ def investor_cycle_message(runtime_event, state):
     paper_trades = int(details.get("paper_trades") or details.get("trade_count") or 0)
 
     if "safety" in combined and ("blocked" in combined or "prevented" in combined):
-        return (
-            "No strategy scan was performed because a safety check prevented execution. "
-            "Your portfolio was unchanged."
-        )
+        return "Strategy scan skipped — monitor-only protection"
 
     if paper_trades > 0 or (
         "trade" in combined
@@ -1245,18 +1402,24 @@ def render_live_status_strip(
             const freshnessBadge = document.getElementById("freshness-badge");
             const accountingStatus = document.getElementById("accounting-status");
             runtimeBadge.textContent = `🟢 Runtime ${{String(data.runtime).toUpperCase()}}`;
+            runtimeBadge.title = "Monitor Mode evaluates proposals and records decisions without submitting orders.";
+            runtimeBadge.tabIndex = 0;
             freshnessBadge.textContent = `Data ${{String(data.freshness).toUpperCase()}}`;
+            freshnessBadge.title = "Data recency shows how recently the dashboard source files were refreshed.";
+            freshnessBadge.tabIndex = 0;
             addStatusClass(runtimeBadge, String(data.runtime).toLowerCase().includes("live") ? "status-green" : "status-grey");
             addStatusClass(freshnessBadge, freshnessClass(data.freshness));
             const accountingState = String(data.accountingState || "error").toLowerCase();
+            const canonicalPendingLabel = "ACCOUNTING: CANONICAL GENERATION PENDING";
             const accountingLabel = accountingState === "active"
                 ? "ACCOUNTING: CANONICAL GBP ACTIVE"
                 : accountingState === "pending"
-                    ? "ACCOUNTING: CANONICAL GENERATION PENDING"
+                    ? "ACCOUNTING: PENDING"
                     : "ACCOUNTING: ERROR";
             const accountingClass = accountingState === "active"
                 ? "status-green"
                 : accountingState === "pending" ? "status-amber" : "status-red";
+            const accountingLongLabel = accountingState === "pending" ? canonicalPendingLabel : accountingLabel;
             accountingStatus.className = `status-pill ${{accountingClass}}`;
             accountingStatus.textContent = data.accountingDetail
                 ? `${{accountingLabel}} ⓘ`
@@ -1266,7 +1429,7 @@ def render_live_status_strip(
                 accountingStatus.title = data.accountingDetail;
                 accountingStatus.setAttribute(
                     "aria-label",
-                    `${{accountingLabel}}. ${{data.accountingDetail}}`,
+                    `${{accountingLongLabel}}. ${{data.accountingDetail}}`,
                 );
             }}
             document.getElementById("last-scan-label").textContent = `Last Scan ${{data.lastScan}}`;
@@ -1322,6 +1485,8 @@ def render_investment_brief(
     win_rate,
     accounting_state,
     accounting_detail,
+    evidence_status,
+    review_status,
 ):
     state = runtime_details["state"]
     freshness = runtime_details["freshness"]
@@ -1360,7 +1525,7 @@ def render_investment_brief(
                             <div class="portfolio-small-value">{html.escape(money_label(cash))}</div>
                         </div>
                         <div class="portfolio-kpi">
-                            <div class="brief-label">Buying Power</div>
+                            <div class="brief-label" title="Buying Power is the cash currently available under the configured portfolio constraints.">Buying Power ⓘ</div>
                             <div class="portfolio-small-value">{html.escape(money_label(buying_power))}</div>
                         </div>
                         <div class="portfolio-kpi">
@@ -1386,21 +1551,27 @@ def render_investment_brief(
         unsafe_allow_html=True,
     )
 
-    st.caption("Latest Activity")
     runtime_event = runtime_details["latest_event"]
-    activity_cols = responsive_columns(3)
-    with activity_cols[0]:
-        render_activity_item("Trade", f"{latest_trade['label']} | {latest_trade['detail']}")
-    with activity_cols[1]:
-        render_activity_item(
-            "Cycle",
-            investor_cycle_message(runtime_event, state),
-        )
-    with activity_cols[2]:
-        render_activity_item(
-            "Research",
-            f"{research['label']} | {research['detail']}",
-        )
+    pending = review_status.get("outstanding")
+    accounting_label = "Active" if accounting_state == "active" else "Problem" if accounting_state == "error" else "Pending"
+    evidence_label = "Incomplete" if evidence_status.get("status") in {"NOT_FROZEN", "GAPS_IDENTIFIED"} else str(evidence_status.get("status", "Unknown")).replace("_", " ").title()
+    st.markdown("#### Accounting Status")
+    coverage_value = evidence_status.get("coverage")
+    st.markdown(summary_cards_html([
+        {"label": "Accounting", "value": accounting_label, "tone": "green" if accounting_state == "active" else "red" if accounting_state == "error" else "amber", "help": "Canonical Accounting is the verified GBP-normalized accounting source when active."},
+        {"label": "Opening Evidence", "value": evidence_label, "tone": "amber" if evidence_label in {"Incomplete", "Not Frozen"} else "green", "help": "Opening Snapshot evidence supports a future canonical starting position but does not activate it."},
+        {"label": "Evidence Coverage", "value": f"{coverage_value}%" if coverage_value is not None else "Unavailable", "tone": "blue", "help": "Evidence Coverage is the share of required historical evidence currently verified."},
+        {"label": "Critical Gaps", "value": evidence_status.get("critical_gaps") if evidence_status.get("critical_gaps") is not None else "Unavailable", "tone": "red", "help": "Critical gaps block opening-snapshot readiness until authoritative evidence resolves them."},
+        {"label": "Pending Reviews", "value": pending if pending is not None else "Unavailable", "tone": "amber", "help": "Risk Approval and migration reviews require an explicit authenticated operator decision."},
+    ], aria_label="Accounting status summary"), unsafe_allow_html=True)
+
+    st.markdown("#### Latest Activity")
+    st.markdown(activity_cards_html([
+        {"icon": "↕", "title": "Trading", "event": latest_trade["label"], "timestamp": latest_trade["detail"]},
+        {"icon": "●", "title": "Runtime", "event": investor_cycle_message(runtime_event, state), "timestamp": runtime_details["last_scan"]},
+        {"icon": "◫", "title": "Research", "event": research["label"], "timestamp": research["detail"]},
+        {"icon": "◉", "title": "Notifications", "event": notification["label"], "timestamp": notification["detail"]},
+    ]), unsafe_allow_html=True)
 
 
 def format_last_updated():
@@ -3411,21 +3582,6 @@ def load_home_table(table_name, fallback_csv=None, order_col=None):
     return frame
 
 
-def home_source_summary():
-    labels = []
-    for table_name in ["broker_account", "paper_30_day_tracker", "holdings", "trade_journal"]:
-        detail = HOME_SOURCE_DETAILS.get(table_name, {})
-        source = detail.get("source", "unknown")
-        if table_name == "paper_30_day_tracker":
-            label = "tracker"
-        elif table_name == "trade_journal":
-            label = "trades"
-        else:
-            label = table_name.replace("_account", "").replace("_", " ")
-        labels.append(f"{label}: {source}")
-    return "Home data sources | " + " | ".join(labels)
-
-
 def load_trade_audit(journal):
     return build_authoritative_trade_audit(journal)
 
@@ -3530,21 +3686,30 @@ render_investment_brief(
     win_rate_value,
     accounting_status.state,
     accounting_detail,
+    opening_evidence_status(PROJECT_ROOT / "data" / "frozen_evidence_packs"),
+    review_workflow_status(PROJECT_ROOT / "data" / "frozen_evidence_packs"),
 )
-st.caption(home_source_summary())
+st.markdown(
+    status_table_html(
+        home_source_rows(HOME_SOURCE_DETAILS),
+        ("Source", "Status", "Last Refresh"),
+        caption="Home data sources",
+    ),
+    unsafe_allow_html=True,
+)
 if scheduler_dashboard.error:
     st.warning(f"Strategy scheduler state unavailable: {scheduler_dashboard.error}")
 elif scheduler_dashboard.instruments:
-    scheduler_labels = []
-    for symbol, record in sorted(scheduler_dashboard.instruments.items()):
-        identity = record.get("identity", {})
-        scheduler_labels.append(
-            f"{symbol}: {record.get('status', 'UNKNOWN')} "
-            f"({identity.get('bar_close_utc', 'no bar')})"
-        )
-    st.caption("Per-instrument completed bars | " + " | ".join(scheduler_labels))
+    st.markdown(
+        status_table_html(
+            instrument_status_rows(scheduler_dashboard.instruments),
+            ("Instrument", "Status", "Reason", "Last Bar"),
+            caption="Per-instrument status",
+        ),
+        unsafe_allow_html=True,
+    )
 else:
-    st.caption("Per-instrument scheduler | No completed strategy bars recorded yet.")
+    st.info("Per-instrument status is unavailable until the first completed strategy bar.")
 
 home_tab, scanner_tab = st.tabs(["Home", "Global Scanner"])
 
