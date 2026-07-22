@@ -205,5 +205,12 @@ def trading_status_summary(rows, *, unavailable=False):
 
 def detail_rows(values, labels):
     """Turn dense mappings into a scan-friendly label/value table."""
-    return [{"Item": label, "Value": values.get(key) if values.get(key) not in (None, "", "Unavailable") else "Not available"}
-            for key, label in labels]
+    rows = []
+    for key, label in labels:
+        value = values.get(key)
+        if value in (None, "", "Unavailable"):
+            value = "Not available"
+        elif not isinstance(value, str):
+            value = str(value)
+        rows.append({"Item": label, "Value": value})
+    return rows

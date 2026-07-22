@@ -15,6 +15,7 @@ from canonical_accounting.successor import accounting_transaction_status
 from dashboard.accounting_observation_reader import accounting_observation_status, non_fill_observation_status
 from dashboard.opening_snapshot_reader import opening_snapshot_status
 from dashboard.opening_evidence_reader import opening_evidence_status
+from dashboard.evidence_campaign_reader import evidence_campaign_status
 from dashboard.migration_approval_reader import migration_approval_status
 from dashboard.review_workflow_reader import review_workflow_status
 from dashboard.operations_presentation import badge_color, detail_rows, status_meta
@@ -126,6 +127,34 @@ with st.expander("Opening snapshot evidence", expanded=False):
         ("replay_readiness", "Replay Readiness"), ("opening_snapshot_readiness", "Opening Snapshot Readiness"),
         ("pack_hash", "Evidence hash"), ("error", "Diagnostic"),
     ))))
+
+with st.expander("Evidence Campaign", expanded=False):
+    campaign = evidence_campaign_status(frozen_evidence_root)
+    st.caption("Read-only campaign workspace. Unknown evidence stays unknown; no accounting artifacts can be created or changed here.")
+    campaign_cols = st.columns(4)
+    render_status_badge(campaign_cols[0], "Current Campaign", campaign.get("status", "NOT_AVAILABLE"))
+    campaign_cols[1].metric("Completion %", campaign.get("coverage") if campaign.get("coverage") is not None else "Not available")
+    campaign_cols[2].metric("Critical blockers", campaign.get("critical_blockers") if campaign.get("critical_blockers") is not None else "Not available")
+    render_status_badge(campaign_cols[3], "Opening Snapshot", campaign.get("readiness", "NOT_READY"))
+    operations_table(pd.DataFrame(detail_rows(campaign, (
+        ("campaign_id", "Campaign ID"), ("title", "Title"), ("cutoff", "Cut-off Date"),
+        ("owner", "Owner"), ("priority", "Priority"), ("coverage_trend", "Coverage Trend"),
+        ("recently_imported", "Recently Imported Documents"), ("outstanding_conflicts", "Outstanding Conflicts"),
+        ("resolved_this_campaign", "Resolved This Campaign"), ("estimated_remaining_work", "Estimated Remaining Work"),
+        ("readiness_reasons", "Readiness Explanation"), ("bundle_hash", "Bundle Hash"), ("error", "Diagnostic"),
+    ))))
+    if campaign.get("requirements"):
+        st.markdown("**Required evidence**")
+        operations_table(pd.DataFrame(campaign["requirements"]))
+    if campaign.get("positions"):
+        st.markdown("**Open positions**")
+        operations_table(pd.DataFrame(campaign["positions"]))
+    if campaign.get("cash"):
+        st.markdown("**Cash evidence**")
+        operations_table(pd.DataFrame(campaign["cash"]))
+    if campaign.get("priorities"):
+        st.markdown("**Outstanding work, highest priority first**")
+        operations_table(pd.DataFrame(campaign["priorities"]))
 
 with st.expander("Migration allocation and approval", expanded=False):
     migration = migration_approval_status(frozen_evidence_root)
