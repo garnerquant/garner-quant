@@ -4,9 +4,9 @@ import unittest
 from datetime import datetime, timezone
 
 from dashboard.operations_presentation import (
-    activity_cards_html, compact_date, compact_time, detail_rows,
+    activity_cards_html, badge_color, compact_date, compact_time, detail_rows,
     home_source_rows, instrument_status_rows, status_table_html,
-    summary_cards_html,
+    status_meta, summary_cards_html,
 )
 
 
@@ -20,7 +20,7 @@ class OperationalDashboardPresentationTests(unittest.TestCase):
             "paper_30_day_tracker": {"source": "unavailable"},
         })
         self.assertEqual([row["Source"] for row in rows], ["Broker", "Trades", "Holdings", "Tracker"])
-        self.assertEqual([row["Status"] for row in rows], ["Reconciled", "Remote", "Fallback", "Unavailable"])
+        self.assertEqual([row["Status"] for row in rows], ["Reconciled", "Remote", "Fallback", "Not available"])
         self.assertEqual([row["Tone"] for row in rows], ["green", "blue", "amber", "red"])
 
     def test_instrument_status_preserves_outcome_and_reason(self):
@@ -30,38 +30,64 @@ class OperationalDashboardPresentationTests(unittest.TestCase):
             "BAD": {"status": "FAILED_FINAL", "failure_reason": "missing_metadata", "identity": {}},
         })
         by_symbol = {row["Instrument"]: row for row in rows}
-        self.assertEqual(by_symbol["AAPL"]["Status"], "Execution Disabled")
+        self.assertEqual(by_symbol["AAPL"]["Status"], "Execution disabled")
+        self.assertEqual(by_symbol["AAPL"]["Tone"], "grey")
         self.assertEqual(by_symbol["AAPL"]["Reason"], "Monitor-only mode")
         self.assertEqual(by_symbol["VWRL.L"]["Reason"], "Strategy conditions")
         self.assertEqual(by_symbol["BAD"]["Reason"], "Missing metadata")
         self.assertEqual(by_symbol["AAPL"]["Last Bar"], "20 Jul")
 
     def test_time_formatting_fails_closed(self):
-        self.assertEqual(compact_date("invalid"), "Unavailable")
-        self.assertEqual(compact_time(datetime(2026, 7, 22, 16, 1)), "Unavailable")
+        self.assertEqual(compact_date("invalid"), "Not available")
+        self.assertEqual(compact_time(datetime(2026, 7, 22, 16, 1)), "Not available")
 
     def test_status_table_is_accessible_responsive_and_escaped(self):
-        markup = status_table_html([{"Source": "<Broker>", "Status": "Reconciled", "Tone": "green", "Last Refresh": "17:01"}],
+        markup = status_table_html([{"Source": "<Broker>", "Status": "Reconciled", "Tone": "green", "Tooltip": "This source agrees with the authoritative local report.", "Last Refresh": "17:01"}],
                                    ("Source", "Status", "Last Refresh"), caption="Home data sources")
         self.assertIn('<th scope="col">Status</th>', markup)
         self.assertIn('data-label="Last Refresh"', markup)
-        self.assertIn('aria-label="Status: Reconciled"', markup)
+        self.assertIn('aria-label="Status: Reconciled.', markup)
+        self.assertIn('tabindex="0"', markup); self.assertIn('title="This source agrees', markup)
         self.assertIn("&lt;Broker&gt;", markup); self.assertNotIn("<Broker>", markup)
 
     def test_summary_cards_include_text_labels_and_tooltips(self):
-        markup = summary_cards_html([{"label": "Evidence Coverage", "value": "0%", "tone": "amber", "help": "Verified evidence only."}], aria_label="Accounting status summary")
+        markup = summary_cards_html([{"label": "Evidence Coverage", "value": "0%", "context": "Verified history", "tone": "amber", "help": "Verified evidence only."}], aria_label="Accounting status summary")
         self.assertIn("Evidence Coverage", markup); self.assertIn("0%", markup)
         self.assertIn('title="Verified evidence only."', markup); self.assertIn('tabindex="0"', markup)
         self.assertIn("ops-card-amber", markup)
+        self.assertIn("Verified history", markup)
+
+    def test_summary_cards_preserve_numeric_zero_and_fail_closed_when_absent(self):
+        markup = summary_cards_html([
+            {"label": "Critical Gaps", "value": 0, "tone": "green"},
+            {"label": "Pending Reviews", "value": None, "tone": "grey"},
+        ], aria_label="Accounting status summary")
+        self.assertIn(">0<", markup)
+        self.assertIn("Not available", markup)
+        self.assertNotIn("Unavailable", markup)
+
+    def test_semantic_status_colours_distinguish_inactive_and_faults(self):
+        self.assertEqual(status_meta("EXECUTION_BLOCKED")[:2], ("Execution disabled", "grey"))
+        self.assertEqual(status_meta("CONFLICT")[:2], ("Conflict", "red"))
+        self.assertEqual(status_meta("ERROR")[:2], ("Problem", "red"))
+        self.assertEqual(status_meta("NO_ACTION")[:2], ("No action", "blue"))
+        self.assertEqual(badge_color("amber"), "orange")
 
     def test_activity_cards_preserve_event_and_timestamp(self):
-        markup = activity_cards_html([{"icon": "●", "title": "Runtime", "event": "Strategy scan skipped", "timestamp": "Today at 17:01"}])
+        markup = activity_cards_html([{"icon": "●", "title": "Runtime", "event": "Strategy scan skipped", "context": "Monitor-only protection", "timestamp": "Today at 17:01", "tone": "grey"}])
         self.assertIn("Runtime", markup); self.assertIn("Strategy scan skipped", markup)
         self.assertIn("Today at 17:01", markup); self.assertIn("aria-hidden", markup)
+        self.assertIn("Monitor-only protection", markup); self.assertIn("ops-card-grey", markup)
 
     def test_detail_rows_preserve_information_without_dense_mapping(self):
         self.assertEqual(detail_rows({"status": "ACTIVE", "error": None}, (("status", "Status"), ("error", "Diagnostic"))),
-                         [{"Item": "Status", "Value": "ACTIVE"}, {"Item": "Diagnostic", "Value": "Unavailable"}])
+                         [{"Item": "Status", "Value": "ACTIVE"}, {"Item": "Diagnostic", "Value": "Not available"}])
+
+    def test_raw_scheduler_code_is_not_exposed_in_rendered_table(self):
+        rows = instrument_status_rows({"AAPL": {"status": "EXECUTION_BLOCKED", "failure_reason": "mode is monitor_only", "identity": {}}})
+        markup = status_table_html(rows, ("Instrument", "Status", "Reason", "Last Bar"), caption="Per-instrument status")
+        self.assertNotIn("EXECUTION_BLOCKED", markup)
+        self.assertIn("Execution disabled", markup); self.assertIn("Monitor-only mode", markup)
 
 
 if __name__ == "__main__": unittest.main()

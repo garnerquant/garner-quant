@@ -10,16 +10,35 @@ STATUS_META = {
     "reconciled": ("Reconciled", "green", "Reconciled"),
     "active": ("Active", "green", "Active"),
     "complete": ("Complete", "green", "Complete"),
+    "approved": ("Approved", "green", "Approved"),
     "information": ("Information", "blue", "Information"),
-    "no_action": ("No Action", "blue", "No action"),
+    "recent": ("Recent", "blue", "Recent"),
+    "observing": ("Observing", "blue", "Observing"),
+    "no_action": ("No action", "blue", "No action"),
     "pending": ("Pending", "amber", "Pending"),
+    "pending_review": ("Pending review", "amber", "Pending review"),
+    "not_ready": ("Not ready", "amber", "Not ready"),
+    "stale": ("Stale", "amber", "Stale"),
+    "awaiting": ("Awaiting", "amber", "Awaiting"),
     "not_frozen": ("Not Frozen", "amber", "Not frozen"),
     "gaps_identified": ("Incomplete", "amber", "Incomplete"),
     "conflict": ("Conflict", "red", "Conflict"),
+    "rejected": ("Rejected", "red", "Rejected"),
+    "critical": ("Critical", "red", "Critical"),
     "error": ("Problem", "red", "Problem"),
     "failed": ("Problem", "red", "Problem"),
+    "failed_final": ("Failed", "red", "Failed"),
+    "failed_retryable": ("Failed", "red", "Failed"),
+    "executed": ("Executed", "green", "Executed"),
     "inactive": ("Inactive", "grey", "Inactive"),
-    "execution_blocked": ("Execution Disabled", "grey", "Execution disabled"),
+    "disabled": ("Disabled", "grey", "Disabled"),
+    "monitor_only": ("Monitor-only", "grey", "Monitor-only"),
+    "unsupported": ("Unsupported", "grey", "Unsupported"),
+    "not_configured": ("Not configured", "grey", "Not configured"),
+    "absent": ("Absent", "grey", "Absent"),
+    "valid": ("Valid", "green", "Valid"),
+    "live": ("Live", "green", "Live"),
+    "execution_blocked": ("Execution disabled", "grey", "Execution disabled"),
     "unknown": ("Unknown", "grey", "Unknown"),
 }
 
@@ -32,7 +51,11 @@ def status_meta(value):
     return STATUS_META.get(_key(value), (str(value or "Unknown").replace("_", " ").title(), "grey", str(value or "Unknown")))
 
 
-def compact_time(value, fallback="Unavailable"):
+def badge_color(tone):
+    return {"green": "green", "blue": "blue", "amber": "orange", "red": "red", "grey": "gray"}.get(str(tone), "gray")
+
+
+def compact_time(value, fallback="Not available"):
     if value is None or str(value).strip() in {"", "None", "nan"}: return fallback
     try:
         timestamp = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
@@ -43,7 +66,7 @@ def compact_time(value, fallback="Unavailable"):
         return fallback
 
 
-def compact_date(value, fallback="Unavailable"):
+def compact_date(value, fallback="Not available"):
     if value is None or str(value).strip() in {"", "None", "nan"}: return fallback
     try:
         timestamp = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
@@ -59,13 +82,13 @@ def home_source_rows(details):
     for key in ("broker_account", "trade_journal", "holdings", "paper_30_day_tracker"):
         detail = details.get(key, {}); source = str(detail.get("source", "unknown"))
         lowered = source.lower()
-        if "reconciled" in lowered: status, tone = "Reconciled", "green"
-        elif source == "Supabase": status, tone = "Remote", "blue"
-        elif "fallback" in lowered: status, tone = "Fallback", "amber"
-        elif "unavailable" in lowered: status, tone = "Unavailable", "red"
-        else: status, tone = "Unknown", "grey"
+        if "reconciled" in lowered: status, tone, tooltip = "Reconciled", "green", "This source agrees with the authoritative local report."
+        elif source == "Supabase": status, tone, tooltip = "Remote", "blue", "This source is currently read from the remote data service."
+        elif "fallback" in lowered: status, tone, tooltip = "Fallback", "amber", "The primary source is unavailable and the local fallback is displayed."
+        elif "unavailable" in lowered: status, tone, tooltip = "Not available", "red", "No readable source is currently available."
+        else: status, tone, tooltip = "Unknown", "grey", "The source status is not configured."
         timestamp = detail.get("remote_timestamp") if source == "Supabase" else detail.get("local_timestamp")
-        rows.append({"Source": labels[key], "Status": status, "Tone": tone, "Last Refresh": compact_time(timestamp)})
+        rows.append({"Source": labels[key], "Status": status, "Tone": tone, "Tooltip": tooltip, "Last Refresh": compact_time(timestamp)})
     return rows
 
 
@@ -74,12 +97,16 @@ def instrument_status_rows(instruments):
     for symbol, record in sorted(instruments.items()):
         raw = str(record.get("status", "UNKNOWN")); display, tone, _ = status_meta(raw)
         failure = str(record.get("failure_reason") or "").strip().lower()
-        if raw == "EXECUTION_BLOCKED" and "monitor_only" in failure: reason = "Monitor-only mode"
+        if raw == "EXECUTION_BLOCKED" and "monitor_only" in failure:
+            reason = "Monitor-only mode"
+            tooltip = "Execution is disabled because monitor-only mode evaluates without submitting orders."
         elif raw == "NO_ACTION": reason = "Strategy conditions"
         elif failure: reason = failure.replace("_", " ").capitalize()
         else: reason = "Completed"
+        if not (raw == "EXECUTION_BLOCKED" and "monitor_only" in failure):
+            tooltip = "The status reflects the recorded scheduler outcome for this completed bar."
         identity = record.get("identity") or {}
-        rows.append({"Instrument": symbol, "Status": display, "Tone": tone, "Reason": reason,
+        rows.append({"Instrument": symbol, "Status": display, "Tone": tone, "Tooltip": tooltip, "Reason": reason,
                      "Last Bar": compact_date(identity.get("bar_close_utc"))})
     return rows
 
@@ -90,10 +117,13 @@ def status_table_html(rows, columns, *, caption):
     for row in rows:
         cells = []
         for column in columns:
-            value = html.escape(str(row.get(column, "Unavailable")))
+            raw_value = row.get(column)
+            value = html.escape("Not available" if raw_value in (None, "", "Unavailable") else str(raw_value))
             if column == "Status":
                 tone = html.escape(str(row.get("Tone", "grey")))
-                value = f'<span class="ops-badge ops-{tone}" aria-label="Status: {value}">{value}</span>'
+                tooltip = html.escape(str(row.get("Tooltip", "")))
+                tooltip_attributes = f' tabindex="0" title="{tooltip}" aria-label="Status: {value}. {tooltip}"' if tooltip else f' aria-label="Status: {value}"'
+                value = f'<span class="ops-badge ops-{tone}"{tooltip_attributes}>{value}</span>'
             cells.append(f'<td data-label="{html.escape(column)}">{value}</td>')
         body.append("<tr>" + "".join(cells) + "</tr>")
     return (f'<div class="ops-table-wrap"><table class="ops-table"><caption>{html.escape(caption)}</caption>'
@@ -103,10 +133,13 @@ def status_table_html(rows, columns, *, caption):
 def summary_cards_html(cards, *, aria_label):
     values = []
     for card in cards:
-        label = html.escape(str(card["label"])); value = html.escape(str(card.get("value", "Unavailable")))
+        label = html.escape(str(card["label"])); raw_value = card.get("value")
+        value = html.escape("Not available" if raw_value in (None, "", "Unavailable") else str(raw_value))
         tone = html.escape(str(card.get("tone", "grey"))); help_text = html.escape(str(card.get("help", "")))
+        context = html.escape(str(card.get("context", "")))
         tooltip = f' title="{help_text}" aria-label="{label}: {value}. {help_text}"' if help_text else f' aria-label="{label}: {value}"'
-        values.append(f'<div class="ops-summary-card ops-card-{tone}" tabindex="0"{tooltip}><div class="ops-card-label">{label}</div><div class="ops-card-value">{value}</div></div>')
+        context_markup = f'<div class="ops-card-context">{context}</div>' if context else ""
+        values.append(f'<div class="ops-summary-card ops-card-{tone}" tabindex="0"{tooltip}><div class="ops-card-label">{label}</div><div class="ops-card-value">{value}</div>{context_markup}</div>')
     return f'<div class="ops-summary-grid" role="group" aria-label="{html.escape(aria_label)}">{"".join(values)}</div>'
 
 
@@ -114,12 +147,15 @@ def activity_cards_html(cards):
     values = []
     for card in cards:
         icon = html.escape(str(card.get("icon", "•"))); title = html.escape(str(card["title"]))
-        event = html.escape(str(card.get("event", "No activity"))); timestamp = html.escape(str(card.get("timestamp", "Unavailable")))
-        values.append(f'<article class="ops-activity-card" aria-label="{title} activity"><div class="ops-activity-title"><span aria-hidden="true">{icon}</span>{title}</div><div class="ops-activity-event">{event}</div><time class="ops-activity-time">{timestamp}</time></article>')
+        event = html.escape(str(card.get("event", "No activity"))); context = html.escape(str(card.get("context", "")))
+        timestamp = html.escape("Not available" if card.get("timestamp") in (None, "", "Unavailable") else str(card.get("timestamp")))
+        tone = html.escape(str(card.get("tone", "grey")))
+        context_markup = f'<div class="ops-activity-context">{context}</div>' if context else ""
+        values.append(f'<article class="ops-activity-card ops-card-{tone}" aria-label="{title} activity"><div class="ops-activity-title"><span aria-hidden="true">{icon}</span>{title}</div><div class="ops-activity-event">{event}</div>{context_markup}<time class="ops-activity-time">{timestamp}</time></article>')
     return '<div class="ops-activity-grid">' + "".join(values) + "</div>"
 
 
 def detail_rows(values, labels):
     """Turn dense mappings into a scan-friendly label/value table."""
-    return [{"Item": label, "Value": values.get(key) if values.get(key) not in (None, "") else "Unavailable"}
+    return [{"Item": label, "Value": values.get(key) if values.get(key) not in (None, "", "Unavailable") else "Not available"}
             for key, label in labels]

@@ -750,14 +750,14 @@ def inject_mobile_css():
             display:grid;
             grid-template-columns:repeat(5,minmax(0,1fr));
             gap:10px;
-            margin:8px 0 14px 0;
+            margin:6px 0 10px 0;
         }
 
         .ops-activity-grid {
             display:grid;
             grid-template-columns:repeat(4,minmax(0,1fr));
             gap:10px;
-            margin:8px 0 14px 0;
+            margin:6px 0 10px 0;
         }
 
         .ops-summary-card,
@@ -766,7 +766,8 @@ def inject_mobile_css():
             border:1px solid rgba(148,163,184,0.20);
             border-radius:8px;
             background:rgba(15,23,42,0.70);
-            padding:11px 12px;
+            padding:9px 11px;
+            min-height:82px;
         }
 
         .ops-summary-card:focus {
@@ -783,14 +784,24 @@ def inject_mobile_css():
         .ops-card-label,
         .ops-activity-time {
             color:#94a3b8;
-            font-size:12px;
+            font-size:11px;
+            line-height:1.25;
         }
 
         .ops-card-value {
             color:#f8fafc;
-            font-size:18px;
-            font-weight:720;
+            font-size:20px;
+            font-weight:750;
             line-height:1.25;
+            margin-top:3px;
+            overflow-wrap:anywhere;
+        }
+
+        .ops-card-context,
+        .ops-activity-context {
+            color:#94a3b8;
+            font-size:12px;
+            line-height:1.3;
             margin-top:3px;
             overflow-wrap:anywhere;
         }
@@ -804,18 +815,29 @@ def inject_mobile_css():
             font-weight:700;
         }
 
+        .ops-activity-card {
+            display:flex;
+            flex-direction:column;
+        }
+
         .ops-activity-event {
             color:#e2e8f0;
             font-size:14px;
             line-height:1.35;
-            margin:8px 0 5px 0;
+            margin:6px 0 2px 0;
             overflow-wrap:anywhere;
+        }
+
+        .ops-activity-time {
+            display:block;
+            margin-top:auto;
+            padding-top:6px;
         }
 
         .ops-table-wrap {
             width:100%;
             overflow:hidden;
-            margin:8px 0 14px 0;
+            margin:6px 0 10px 0;
             border:1px solid rgba(148,163,184,0.20);
             border-radius:8px;
             background:rgba(15,23,42,0.56);
@@ -830,7 +852,7 @@ def inject_mobile_css():
         }
 
         .ops-table caption {
-            padding:10px 12px 4px;
+            padding:8px 10px 3px;
             color:#f8fafc;
             font-size:14px;
             font-weight:700;
@@ -839,7 +861,7 @@ def inject_mobile_css():
 
         .ops-table th,
         .ops-table td {
-            padding:8px 12px;
+            padding:6px 10px;
             text-align:left;
             border-bottom:1px solid rgba(148,163,184,0.13);
             overflow-wrap:anywhere;
@@ -880,8 +902,8 @@ def inject_mobile_css():
             background:#0b1220;
             border:1px solid rgba(148,163,184,0.22);
             border-radius:8px;
-            padding:14px;
-            margin:6px 0 10px 0;
+            padding:12px;
+            margin:4px 0 8px 0;
         }
 
         .portfolio-hero-grid {
@@ -895,18 +917,36 @@ def inject_mobile_css():
             border:1px solid rgba(148,163,184,0.18);
             border-radius:6px;
             background:rgba(15,23,42,0.70);
-            padding:10px 12px;
+            padding:10px 11px;
+            display:flex;
+            flex-direction:column;
+            justify-content:center;
         }
 
         .portfolio-kpi-grid {
             display:grid;
             grid-template-columns:repeat(2,minmax(0,1fr));
             gap:8px;
+            align-content:center;
+            height:100%;
         }
 
         .portfolio-kpi {
             border-bottom:1px solid rgba(148,163,184,0.13);
             padding:0 0 7px 0;
+        }
+
+        .portfolio-kpi:nth-child(even) {
+            border-left:1px solid rgba(148,163,184,0.13);
+            padding-left:8px;
+        }
+
+        .ops-section-heading {
+            color:#f8fafc;
+            font-size:15px;
+            font-weight:700;
+            line-height:1.25;
+            margin:8px 0 4px 0;
         }
 
         .portfolio-main-value {
@@ -971,6 +1011,11 @@ def inject_mobile_css():
                 grid-template-columns:1fr;
             }
 
+            .portfolio-kpi:nth-child(even) {
+                border-left:0;
+                padding-left:0;
+            }
+
             .ops-summary-grid,
             .ops-activity-grid {
                 grid-template-columns:repeat(2,minmax(0,1fr));
@@ -989,7 +1034,7 @@ def inject_mobile_css():
             }
 
             .ops-table tr {
-                padding:7px 10px;
+                padding:6px 9px;
                 border-bottom:1px solid rgba(148,163,184,.16);
             }
 
@@ -1263,7 +1308,7 @@ def home_recommendation(runtime_details, latest_trade):
     return "No action required."
 
 
-def investor_cycle_message(runtime_event, state):
+def investor_cycle_details(runtime_event, state):
     raw_message = str((runtime_event or {}).get("message") or "").strip()
     raw_type = str((runtime_event or {}).get("type") or "").strip()
     details = (runtime_event or {}).get("details") or {}
@@ -1271,25 +1316,25 @@ def investor_cycle_message(runtime_event, state):
     paper_trades = int(details.get("paper_trades") or details.get("trade_count") or 0)
 
     if "safety" in combined and ("blocked" in combined or "prevented" in combined):
-        return "Strategy scan skipped — monitor-only protection"
+        return "Strategy scan skipped", "Monitor-only protection"
 
     if paper_trades > 0 or (
         "trade" in combined
         and any(word in combined for word in ["executed", "recorded", "placed"])
         and "no trade" not in combined
     ):
-        return "Strategy completed and executed new trades."
+        return "Trades recorded", "Strategy cycle completed"
 
     if any(phrase in combined for phrase in ["no trade", "0 trades", "no new paper trades"]):
-        return "Strategy completed. No new trading opportunities were found."
+        return "No trading opportunities", "Strategy scan completed"
 
     if "paper strategy pipeline completed" in combined or "strategy completed" in combined:
-        return "Strategy scan completed successfully."
+        return "Strategy scan completed", "No action required"
 
     if raw_message:
-        return raw_message
+        return raw_message, "Runtime event"
 
-    return state.get("activity", "Runtime status unavailable.")
+    return state.get("activity", "Runtime status unavailable."), "Runtime status"
 
 
 def render_live_status_strip(
@@ -1496,7 +1541,8 @@ def render_investment_brief(
         if state.get("running") and state.get("healthy")
         else state.get("health", "Check")
     )
-    return_label = "UP" if numeric_value(total_return) >= 0 else "DOWN"
+    return_value = numeric_value(total_return)
+    return_label = "No change" if return_value == 0 else "▲" if return_value > 0 else "▼"
     notification = latest_notification_details()
 
     render_live_status_strip(
@@ -1516,7 +1562,7 @@ def render_investment_brief(
                 <div class="portfolio-panel">
                     <div class="brief-label">Portfolio Value</div>
                     <div class="portfolio-main-value">{html.escape(money_label(portfolio_value))}</div>
-                    <div class="activity-detail">{html.escape(return_label)} {html.escape(percent_label(total_return))}</div>
+                    <div class="activity-detail">{html.escape(return_label)}{'' if return_label == 'No change' else ' ' + html.escape(percent_label(total_return))}</div>
                 </div>
                 <div class="portfolio-panel">
                     <div class="portfolio-kpi-grid">
@@ -1525,7 +1571,7 @@ def render_investment_brief(
                             <div class="portfolio-small-value">{html.escape(money_label(cash))}</div>
                         </div>
                         <div class="portfolio-kpi">
-                            <div class="brief-label" title="Buying Power is the cash currently available under the configured portfolio constraints.">Buying Power ⓘ</div>
+                            <div class="brief-label" tabindex="0" title="Buying power is the cash currently available under portfolio constraints." aria-label="Buying Power. Buying power is the cash currently available under portfolio constraints.">Buying Power ⓘ</div>
                             <div class="portfolio-small-value">{html.escape(money_label(buying_power))}</div>
                         </div>
                         <div class="portfolio-kpi">
@@ -1552,25 +1598,28 @@ def render_investment_brief(
     )
 
     runtime_event = runtime_details["latest_event"]
+    runtime_event_label, runtime_event_context = investor_cycle_details(runtime_event, state)
     pending = review_status.get("outstanding")
     accounting_label = "Active" if accounting_state == "active" else "Problem" if accounting_state == "error" else "Pending"
     evidence_label = "Incomplete" if evidence_status.get("status") in {"NOT_FROZEN", "GAPS_IDENTIFIED"} else str(evidence_status.get("status", "Unknown")).replace("_", " ").title()
-    st.markdown("#### Accounting Status")
+    st.markdown('<div class="ops-section-heading">Accounting Status</div>', unsafe_allow_html=True)
     coverage_value = evidence_status.get("coverage")
+    critical_gaps = evidence_status.get("critical_gaps")
+    evidence_status_name = evidence_status.get("status")
     st.markdown(summary_cards_html([
-        {"label": "Accounting", "value": accounting_label, "tone": "green" if accounting_state == "active" else "red" if accounting_state == "error" else "amber", "help": "Canonical Accounting is the verified GBP-normalized accounting source when active."},
-        {"label": "Opening Evidence", "value": evidence_label, "tone": "amber" if evidence_label in {"Incomplete", "Not Frozen"} else "green", "help": "Opening Snapshot evidence supports a future canonical starting position but does not activate it."},
-        {"label": "Evidence Coverage", "value": f"{coverage_value}%" if coverage_value is not None else "Unavailable", "tone": "blue", "help": "Evidence Coverage is the share of required historical evidence currently verified."},
-        {"label": "Critical Gaps", "value": evidence_status.get("critical_gaps") if evidence_status.get("critical_gaps") is not None else "Unavailable", "tone": "red", "help": "Critical gaps block opening-snapshot readiness until authoritative evidence resolves them."},
-        {"label": "Pending Reviews", "value": pending if pending is not None else "Unavailable", "tone": "amber", "help": "Risk Approval and migration reviews require an explicit authenticated operator decision."},
+        {"label": "Accounting", "value": accounting_label, "context": "Canonical generation inactive" if accounting_state == "pending" else "Verified GBP source" if accounting_state == "active" else "Authoritative status error", "tone": "green" if accounting_state == "active" else "red" if accounting_state == "error" else "amber", "help": "Accounting status shows whether verified canonical GBP accounting is active."},
+        {"label": "Opening Evidence", "value": evidence_label, "context": "No frozen pack published" if evidence_status_name == "NOT_FROZEN" else "Evidence gaps remain" if evidence_label == "Incomplete" else "Evidence status", "tone": "amber" if evidence_label in {"Incomplete", "Not Frozen"} else "green", "help": "Opening evidence supports a future canonical starting snapshot without activating it."},
+        {"label": "Evidence Coverage", "value": f"{coverage_value}%" if coverage_value is not None else None, "context": "No frozen pack published" if coverage_value is None else "Verified historical evidence", "tone": "amber" if coverage_value is None or evidence_label == "Incomplete" else "green", "help": "Evidence coverage is the verified share of required historical records."},
+        {"label": "Critical Gaps", "value": critical_gaps, "context": "No frozen pack published" if critical_gaps is None else "Blocking evidence gaps", "tone": "grey" if critical_gaps is None else "green" if critical_gaps == 0 else "red", "help": "Critical gaps are unresolved evidence issues that block snapshot readiness."},
+        {"label": "Pending Reviews", "value": pending, "context": "No review pack available" if pending is None else "Awaiting operator review" if pending else "No reviews outstanding", "tone": "grey" if pending is None else "green" if pending == 0 else "amber", "help": "Pending reviews are governance decisions awaiting an authenticated operator."},
     ], aria_label="Accounting status summary"), unsafe_allow_html=True)
 
-    st.markdown("#### Latest Activity")
+    st.markdown('<div class="ops-section-heading">Latest Activity</div>', unsafe_allow_html=True)
     st.markdown(activity_cards_html([
-        {"icon": "↕", "title": "Trading", "event": latest_trade["label"], "timestamp": latest_trade["detail"]},
-        {"icon": "●", "title": "Runtime", "event": investor_cycle_message(runtime_event, state), "timestamp": runtime_details["last_scan"]},
-        {"icon": "◫", "title": "Research", "event": research["label"], "timestamp": research["detail"]},
-        {"icon": "◉", "title": "Notifications", "event": notification["label"], "timestamp": notification["detail"]},
+        {"icon": "↕", "title": "Trading", "event": latest_trade["label"], "context": "Latest journal entry", "timestamp": latest_trade["detail"], "tone": "blue"},
+        {"icon": "●", "title": "Runtime", "event": runtime_event_label, "context": runtime_event_context, "timestamp": runtime_details["last_scan"], "tone": "grey" if runtime_event_context == "Monitor-only protection" else "green"},
+        {"icon": "◫", "title": "Research", "event": research["label"], "context": "Latest campaign report", "timestamp": research["detail"], "tone": "blue"},
+        {"icon": "◉", "title": "Notifications", "event": notification["label"], "context": "Latest notification event", "timestamp": notification["detail"], "tone": "blue"},
     ]), unsafe_allow_html=True)
 
 

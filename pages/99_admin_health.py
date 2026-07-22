@@ -17,10 +17,21 @@ from dashboard.opening_snapshot_reader import opening_snapshot_status
 from dashboard.opening_evidence_reader import opening_evidence_status
 from dashboard.migration_approval_reader import migration_approval_status
 from dashboard.review_workflow_reader import review_workflow_status
-from dashboard.operations_presentation import detail_rows
+from dashboard.operations_presentation import badge_color, detail_rows, status_meta
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def render_status_badge(column, label, value, *, tone=None, help_text=None):
+    display, inferred_tone, _ = status_meta(value)
+    with column:
+        st.caption(label)
+        st.badge(display, color=badge_color(tone or inferred_tone), help=help_text)
+
+
+def operations_table(data):
+    return responsive_table(data, row_height=36)
 
 
 def read_json(path: Path) -> tuple[dict | None, str | None]:
@@ -45,19 +56,19 @@ try:
     state = runtime_state(runtime)
     freshness = runtime_freshness(runtime)
     cols = st.columns(4)
-    cols[0].metric("Runtime", str(state.get("health", state.get("title", "Unknown"))))
-    cols[1].metric("Freshness", str(freshness.get("label", "Unknown")))
-    cols[2].metric("Last cycle", str(runtime.get("last_cycle_at", "Unavailable")))
-    cols[3].metric("Cycle count", runtime.get("cycle_count", "Unavailable"))
+    render_status_badge(cols[0], "Runtime", str(state.get("health", state.get("title", "Unknown"))), help_text="Runtime status shows whether the monitoring process is healthy.")
+    render_status_badge(cols[1], "Freshness", str(freshness.get("label", "Unknown")), help_text="Data recency shows how recently runtime status was refreshed.")
+    cols[2].metric("Last cycle", str(runtime.get("last_cycle_at") or "Not available"))
+    cols[3].metric("Cycle count", runtime.get("cycle_count") if runtime.get("cycle_count") is not None else "Not available")
 except Exception:
     st.error("Runtime status could not be read safely.")
 
 st.subheader("Pre-trade risk")
 risk = load_risk_diagnostics()
 risk_cols = st.columns(4)
-risk_cols[0].metric("Risk", risk["engine_status"])
-risk_cols[1].metric("Kill switch", "ACTIVE" if risk["kill_switch_active"] else "INACTIVE")
-risk_cols[2].metric("Trading", "ENABLED" if risk["trading_enabled"] else "DISABLED")
+render_status_badge(risk_cols[0], "Risk", risk["engine_status"], tone="red" if risk["engine_status"] in {"BLOCKED", "ERROR"} else "green")
+render_status_badge(risk_cols[1], "Kill switch", "ACTIVE" if risk["kill_switch_active"] else "INACTIVE", tone="red" if risk["kill_switch_active"] else "grey")
+render_status_badge(risk_cols[2], "Trading", "ENABLED" if risk["trading_enabled"] else "DISABLED", tone="green" if risk["trading_enabled"] else "grey", help_text="Disabled trading is expected while monitor-only mode is active.")
 risk_cols[3].metric("Configuration", risk.get("configuration_version") or "ERROR")
 latest_risk = risk.get("latest_decision") or {}
 st.caption(
@@ -70,14 +81,14 @@ with st.expander("Non-fill accounting observation producers", expanded=False):
                                            ROOT / "data" / "accounting_observations" / "validation_failures.jsonl")
     st.caption("Read-only. This page has no event creation controls.")
     producer_cols = st.columns(4)
-    producer_cols[0].metric("Framework", non_fill["status"])
-    producer_cols[1].metric("Validation", non_fill["validation_health"])
+    render_status_badge(producer_cols[0], "Framework", non_fill["status"])
+    render_status_badge(producer_cols[1], "Validation", non_fill["validation_health"])
     producer_cols[2].metric("Production producers", len(non_fill["active_production_producers"]))
     producer_cols[3].metric("Duplicate conflicts", non_fill["duplicate_conflict_count"])
     non_fill_details = {**non_fill,
                         "latest_envelope": (non_fill.get("latest_non_fill") or {}).get("event_id"),
                         "latest_invalid_reason": (non_fill.get("latest_invalid") or {}).get("reason")}
-    responsive_table(pd.DataFrame(detail_rows(non_fill_details, (
+    operations_table(pd.DataFrame(detail_rows(non_fill_details, (
         ("supported_event_types", "Supported event types"), ("unavailable_producers", "Unavailable producers"),
         ("counts_by_event_type", "Observations by type"), ("source_authority", "Source authority"),
         ("last_observation_timestamp", "Last observation"), ("latest_envelope", "Latest envelope"),
@@ -88,9 +99,9 @@ with st.expander("Canonical opening snapshot", expanded=False):
     opening = opening_snapshot_status(ROOT / "data" / "opening_snapshot_candidates")
     st.caption("Read-only inactive candidate review. Validation and approval cannot activate accounting.")
     opening_cols=st.columns(4)
-    opening_cols[0].metric("Candidate",opening.get("status","ERROR"));opening_cols[1].metric("Readiness",opening.get("readiness","NOT_READY"))
-    opening_cols[2].metric("Approval",opening.get("approval","UNAPPROVED"));opening_cols[3].metric("Pointer",opening.get("pointer","UNKNOWN"))
-    responsive_table(pd.DataFrame(detail_rows(opening, (
+    render_status_badge(opening_cols[0], "Candidate", opening.get("status", "ERROR")); render_status_badge(opening_cols[1], "Readiness", opening.get("readiness", "NOT_READY"))
+    render_status_badge(opening_cols[2], "Approval", opening.get("approval", "UNAPPROVED")); render_status_badge(opening_cols[3], "Pointer", opening.get("pointer", "UNKNOWN"))
+    operations_table(pd.DataFrame(detail_rows(opening, (
         ("candidate_id", "Candidate ID"), ("candidate_hash", "Candidate hash"), ("cut_off", "Cut-off"),
         ("manifest", "Source manifest"), ("completeness", "Completeness"), ("cash", "Cash"),
         ("positions", "Positions"), ("lots", "Lots"), ("attribution", "Strategy attribution %"),
@@ -103,11 +114,11 @@ with st.expander("Opening snapshot evidence", expanded=False):
     evidence = opening_evidence_status(frozen_evidence_root)
     st.caption("Read-only frozen evidence inventory and gap analysis. Dashboard reads never regenerate evidence.")
     evidence_cols = st.columns(4)
-    evidence_cols[0].metric("Evidence Pack Status", evidence.get("status", "ERROR"), help="A Frozen Evidence Pack is the immutable evidence basis for migration review.")
-    evidence_cols[1].metric("Gap Count", evidence.get("gap_count", "Unavailable"))
-    evidence_cols[2].metric("Critical Gaps", evidence.get("critical_gaps", "Unavailable"))
-    evidence_cols[3].metric("Coverage %", evidence.get("coverage", "Unavailable"), help="Evidence Coverage measures verified historical support without filling unknowns.")
-    responsive_table(pd.DataFrame(detail_rows(evidence, (
+    render_status_badge(evidence_cols[0], "Evidence Pack Status", evidence.get("status", "ERROR"), help_text="A Frozen Evidence Pack is the immutable evidence basis for migration review.")
+    evidence_cols[1].metric("Gap Count", evidence.get("gap_count") if evidence.get("gap_count") is not None else "Not available")
+    evidence_cols[2].metric("Critical Gaps", evidence.get("critical_gaps") if evidence.get("critical_gaps") is not None else "Not available")
+    evidence_cols[3].metric("Coverage %", evidence.get("coverage") if evidence.get("coverage") is not None else "Not available", help="Evidence Coverage measures verified historical support without filling unknowns.")
+    operations_table(pd.DataFrame(detail_rows(evidence, (
         ("pack_id", "Current Frozen Pack"), ("previous_pack_id", "Previous Frozen Pack"), ("pack_version", "Pack Version"),
         ("cutoff", "Cut-off Date"), ("coverage_metrics", "Coverage Metrics"), ("coverage_improvement", "Coverage Improvement"),
         ("resolved_gaps", "Resolved Gaps"), ("outstanding_gaps", "Outstanding Gaps"), ("conflict_count", "Conflict Count"),
@@ -120,31 +131,31 @@ with st.expander("Migration allocation and approval", expanded=False):
     migration = migration_approval_status(frozen_evidence_root)
     st.caption("Read-only governance proposals. No proposal creates accounting state, lots, candidates, generations, or pointers.")
     migration_cols=st.columns(4)
-    migration_cols[0].metric("Migration Pack Status",migration.get("status","ERROR"));migration_cols[1].metric("Pending Proposals",migration.get("pending"))
+    render_status_badge(migration_cols[0], "Migration Pack Status", migration.get("status", "ERROR"));migration_cols[1].metric("Pending Proposals",migration.get("pending"))
     migration_cols[2].metric("Approved",migration.get("approved"));migration_cols[3].metric("Rejected",migration.get("rejected"))
-    responsive_table(pd.DataFrame(detail_rows(migration, (("coverage", "Coverage %"), ("critical", "Critical Materiality"),
+    operations_table(pd.DataFrame(detail_rows(migration, (("coverage", "Coverage %"), ("critical", "Critical Materiality"),
         ("readiness", "Readiness"), ("pack_id", "Pack ID"), ("error", "Diagnostic")))))
 
 with st.expander("Operator migration review", expanded=False):
     review=review_workflow_status(frozen_evidence_root)
     st.caption("Authenticated read-only review. Decisions are created explicitly through the offline governance service; this dashboard has no approval controls.")
-    review_cols=st.columns(4);review_cols[0].metric("Review Status",review.get("status","ERROR"));review_cols[1].metric("Outstanding Reviews",review.get("outstanding"));review_cols[2].metric("Critical Pending",review.get("critical_pending"));review_cols[3].metric("Approval Coverage",f"{review.get('coverage',0)}%")
-    responsive_table(pd.DataFrame(detail_rows(review, (("evidence_version", "Evidence Version"),
+    review_cols=st.columns(4);render_status_badge(review_cols[0], "Review Status", review.get("status", "ERROR"));review_cols[1].metric("Outstanding Reviews",review.get("outstanding"));review_cols[2].metric("Critical Pending",review.get("critical_pending"));review_cols[3].metric("Approval Coverage",f"{review.get('coverage',0)}%")
+    operations_table(pd.DataFrame(detail_rows(review, (("evidence_version", "Evidence Version"),
         ("pack_version", "Approval Pack Version"), ("error", "Diagnostic")))))
     proposals = review.get("proposals") or []
     if proposals:
-        responsive_table(pd.DataFrame(proposals))
+        operations_table(pd.DataFrame(proposals))
 
 st.subheader("Accounting observation envelopes")
 envelopes = accounting_observation_status(ROOT / "data" / "accounting_observations" / "envelopes.jsonl",
                                           ROOT / "data" / "accounting_observations" / "validation_failures.jsonl")
 envelope_cols = st.columns(4)
-envelope_cols[0].metric("Envelope health", envelopes["health"])
+render_status_badge(envelope_cols[0], "Envelope health", envelopes["health"])
 envelope_cols[1].metric("Envelope version", envelopes["version"])
-envelope_cols[2].metric("Validation", envelopes["validation"])
+render_status_badge(envelope_cols[2], "Validation", envelopes["validation"])
 envelope_cols[3].metric("Observation count", envelopes["count"])
 latest_envelope = envelopes.get("latest") or {}
-responsive_table(pd.DataFrame([
+operations_table(pd.DataFrame([
     {"Item": "Latest envelope", "Value": latest_envelope.get("event_id", "None")},
     {"Item": "Missing fields", "Value": envelopes["missing_fields"]},
     {"Item": "Effect", "Value": "Observational only — no accounting or execution action"},
@@ -157,13 +168,13 @@ try:
     latest_history = history[-1] if history else {}
     accounting_label = "ACTIVE" if not any(item["description"] == "Accounting inactive" for item in readiness["blockers"]) else "PENDING"
     ops = st.columns(4)
-    ops[0].metric("Accounting", accounting_label)
+    render_status_badge(ops[0], "Accounting", accounting_label)
     ops[1].metric("Approvals today", metrics["APPROVED"])
     ops[2].metric("Rejections today", metrics["REJECTED"])
     ops[3].metric("Blocked / monitor", f"{metrics['BLOCKED']} / {metrics['MONITOR_ONLY']}")
-    responsive_table(pd.DataFrame([
+    operations_table(pd.DataFrame([
         {"Item": "Last evaluation", "Value": metrics["last_evaluation_timestamp"] or "None"},
-        {"Item": "Average latency", "Value": f"{metrics['average_latency_ms']} ms" if metrics["average_latency_ms"] is not None else "Unavailable"},
+        {"Item": "Average latency", "Value": f"{metrics['average_latency_ms']} ms" if metrics["average_latency_ms"] is not None else "Not available"},
         {"Item": "Readiness", "Value": "Ready" if readiness["ready"] else "Not Ready"},
         {"Item": "Latest proposal", "Value": f"{latest_history.get('strategy', 'None')} / {latest_history.get('symbol', 'None')} {latest_history.get('side', '')} {latest_history.get('quantity', '')}"},
         {"Item": "Latest decision", "Value": latest_history.get("decision", "None")},
@@ -187,25 +198,25 @@ try:
             reason=None if reason_filter == "All" else reason_filter,
             date=date_filter or None,
         )
-        st.dataframe(pd.DataFrame(filtered), width="stretch", hide_index=True)
+        operations_table(pd.DataFrame(filtered))
         st.markdown("**Rolling risk metrics**")
         st.json(metrics)
         st.markdown("**Activation readiness — paper execution must remain disabled**")
-        st.dataframe(pd.DataFrame(readiness["blockers"]), width="stretch", hide_index=True)
+        operations_table(pd.DataFrame(readiness["blockers"]))
         config_health = configuration_health()
         st.markdown("**Configuration health**")
-        st.dataframe(pd.DataFrame(config_health.get("fields", [])), width="stretch", hide_index=True)
+        operations_table(pd.DataFrame(config_health.get("fields", [])))
 except Exception as exc:
     st.error(f"Risk operations history could not be read safely: {exc}")
 
 st.subheader("Canonical accounting transactions")
 accounting_transactions = accounting_transaction_status(ROOT / "data" / "accounting_generations")
 accounting_cols = st.columns(4)
-accounting_cols[0].metric("Pointer", accounting_transactions["pointer_status"])
-accounting_cols[1].metric("Generation", accounting_transactions["current_generation"] or "INACTIVE")
-accounting_cols[2].metric("Lineage", accounting_transactions["lineage_health"])
-accounting_cols[3].metric("Snapshot", accounting_transactions["snapshot_health"])
-responsive_table(pd.DataFrame(detail_rows(accounting_transactions, (
+render_status_badge(accounting_cols[0], "Pointer", accounting_transactions["pointer_status"])
+render_status_badge(accounting_cols[1], "Generation", accounting_transactions["current_generation"] or "INACTIVE")
+render_status_badge(accounting_cols[2], "Lineage", accounting_transactions["lineage_health"])
+render_status_badge(accounting_cols[3], "Snapshot", accounting_transactions["snapshot_health"])
+operations_table(pd.DataFrame(detail_rows(accounting_transactions, (
     ("parent_generation", "Parent generation"), ("manifest_validation", "Manifest validation"),
     ("pending_activation", "Pending activation"), ("generation_age_seconds", "Generation age (seconds)"),
     ("last_accounting_event", "Last accounting event"), ("strategy_count", "Strategies"),
@@ -227,7 +238,7 @@ for relative in (
             if payload.get(key):
                 timestamp = payload[key]
                 break
-    rows.append({"Artifact": relative, "Status": "Valid" if payload else error, "Timestamp": timestamp or "Unavailable"})
-st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    rows.append({"Artifact": relative, "Status": "Valid" if payload else error, "Timestamp": timestamp or "Not available"})
+operations_table(pd.DataFrame(rows))
 
 st.info("Use the command-line validation and monitoring tools for operational actions. No control on this page writes runtime or accounting state.")
