@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 
 from dashboard.operations_presentation import (
     activity_cards_html, badge_color, compact_date, compact_time, detail_rows,
-    home_source_rows, instrument_status_rows, status_table_html,
-    status_meta, summary_cards_html,
+    data_health_summary, home_source_rows, instrument_status_rows,
+    operational_summary_html, status_table_html, status_meta,
+    summary_cards_html, trading_status_summary,
 )
 
 
@@ -88,6 +89,32 @@ class OperationalDashboardPresentationTests(unittest.TestCase):
         markup = status_table_html(rows, ("Instrument", "Status", "Reason", "Last Bar"), caption="Per-instrument status")
         self.assertNotIn("EXECUTION_BLOCKED", markup)
         self.assertIn("Execution disabled", markup); self.assertIn("Monitor-only mode", markup)
+
+    def test_home_summary_answers_status_and_action_accessibly(self):
+        markup = operational_summary_html(
+            "System Status", "Healthy", "Runtime running, data current, and monitoring only.",
+            (("Trading", "Monitoring only"), ("Action", "No action required")),
+            tone="green", help_text="System health summary.",
+        )
+        self.assertIn("System Status", markup); self.assertIn("Healthy", markup)
+        self.assertIn("No action required", markup); self.assertIn("ops-card-green", markup)
+        self.assertIn('tabindex="0"', markup); self.assertIn('aria-label="System Status: Healthy.', markup)
+
+    def test_data_health_summary_uses_existing_source_rows(self):
+        rows = [{"Status": "Reconciled", "Last Refresh": "18:01"}, {"Status": "Reconciled", "Last Refresh": "18:03"}]
+        summary = data_health_summary(rows)
+        self.assertEqual(summary["status"], "All sources reconciled")
+        self.assertEqual(summary["healthy"], "2 / 2 healthy")
+        self.assertEqual(summary["last_updated"], "18:03")
+
+    def test_trading_summary_counts_existing_presentation_statuses(self):
+        summary = trading_status_summary([
+            {"Status": "Execution disabled", "Tone": "grey"},
+            {"Status": "Execution disabled", "Tone": "grey"},
+            {"Status": "No action", "Tone": "blue"},
+            {"Status": "Failed", "Tone": "red"},
+        ])
+        self.assertEqual(summary, {"status": "Monitor-only", "tone": "red", "monitored": 4, "waiting": 2, "no_action": 1, "errors": 1})
 
 
 if __name__ == "__main__": unittest.main()

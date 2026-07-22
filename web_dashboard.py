@@ -26,8 +26,10 @@ from dashboard.operations_presentation import (
     activity_cards_html,
     home_source_rows,
     instrument_status_rows,
+    data_health_summary,
+    operational_summary_html,
     status_table_html,
-    summary_cards_html,
+    trading_status_summary,
 )
 from dashboard.scheduler_reader import load_scheduler_state
 from dashboard.metrics import unrealised_pnl_from_holdings
@@ -758,6 +760,62 @@ def inject_mobile_css():
             grid-template-columns:repeat(4,minmax(0,1fr));
             gap:10px;
             margin:6px 0 10px 0;
+        }
+
+        .ops-home-summary {
+            border:1px solid rgba(148,163,184,0.20);
+            border-left-width:4px;
+            border-radius:8px;
+            background:rgba(15,23,42,0.70);
+            padding:11px 13px;
+            margin:6px 0 10px 0;
+        }
+
+        .ops-home-summary:focus {
+            outline:2px solid #60a5fa;
+            outline-offset:2px;
+        }
+
+        .ops-home-summary-heading {
+            color:#94a3b8;
+            font-size:11px;
+            font-weight:700;
+            letter-spacing:.04em;
+            text-transform:uppercase;
+        }
+
+        .ops-home-summary-status {
+            color:#f8fafc;
+            font-size:22px;
+            font-weight:750;
+            line-height:1.2;
+            margin-top:3px;
+        }
+
+        .ops-home-summary p {
+            color:#cbd5e1;
+            font-size:13px;
+            line-height:1.4;
+            margin:5px 0 8px 0;
+        }
+
+        .ops-summary-details {
+            display:flex;
+            flex-wrap:wrap;
+            gap:6px 18px;
+        }
+
+        .ops-summary-detail {
+            display:flex;
+            gap:6px;
+            align-items:baseline;
+            color:#94a3b8;
+            font-size:12px;
+        }
+
+        .ops-summary-detail strong {
+            color:#e2e8f0;
+            font-weight:650;
         }
 
         .ops-summary-card,
@@ -1555,6 +1613,20 @@ def render_investment_brief(
         runtime_details["next_scan"],
     )
 
+    freshness_attention = freshness.get("level") in {"stale", "very-stale", "missing"}
+    system_healthy = bool(state.get("running") and state.get("healthy") and not freshness_attention)
+    st.markdown(
+        operational_summary_html(
+            "System Status",
+            "Healthy" if system_healthy else "Attention required",
+            "Runtime running, data current, and monitoring only." if system_healthy else "Review runtime or data freshness before relying on the dashboard.",
+            (("Trading", "Monitoring only"), ("Action", "No action required" if system_healthy else "Review Operations")),
+            tone="green" if system_healthy else "red",
+            help_text="System status summarizes runtime health and data recency without enabling trading.",
+        ),
+        unsafe_allow_html=True,
+    )
+
     st.markdown(
         f"""
         <div class="portfolio-hero">
@@ -1599,26 +1671,23 @@ def render_investment_brief(
 
     runtime_event = runtime_details["latest_event"]
     runtime_event_label, runtime_event_context = investor_cycle_details(runtime_event, state)
-    pending = review_status.get("outstanding")
-    accounting_label = "Active" if accounting_state == "active" else "Problem" if accounting_state == "error" else "Pending"
-    evidence_label = "Incomplete" if evidence_status.get("status") in {"NOT_FROZEN", "GAPS_IDENTIFIED"} else str(evidence_status.get("status", "Unknown")).replace("_", " ").title()
-    st.markdown('<div class="ops-section-heading">Accounting Status</div>', unsafe_allow_html=True)
-    coverage_value = evidence_status.get("coverage")
-    critical_gaps = evidence_status.get("critical_gaps")
-    evidence_status_name = evidence_status.get("status")
-    st.markdown(summary_cards_html([
-        {"label": "Accounting", "value": accounting_label, "context": "Canonical generation inactive" if accounting_state == "pending" else "Verified GBP source" if accounting_state == "active" else "Authoritative status error", "tone": "green" if accounting_state == "active" else "red" if accounting_state == "error" else "amber", "help": "Accounting status shows whether verified canonical GBP accounting is active."},
-        {"label": "Opening Evidence", "value": evidence_label, "context": "No frozen pack published" if evidence_status_name == "NOT_FROZEN" else "Evidence gaps remain" if evidence_label == "Incomplete" else "Evidence status", "tone": "amber" if evidence_label in {"Incomplete", "Not Frozen"} else "green", "help": "Opening evidence supports a future canonical starting snapshot without activating it."},
-        {"label": "Evidence Coverage", "value": f"{coverage_value}%" if coverage_value is not None else None, "context": "No frozen pack published" if coverage_value is None else "Verified historical evidence", "tone": "amber" if coverage_value is None or evidence_label == "Incomplete" else "green", "help": "Evidence coverage is the verified share of required historical records."},
-        {"label": "Critical Gaps", "value": critical_gaps, "context": "No frozen pack published" if critical_gaps is None else "Blocking evidence gaps", "tone": "grey" if critical_gaps is None else "green" if critical_gaps == 0 else "red", "help": "Critical gaps are unresolved evidence issues that block snapshot readiness."},
-        {"label": "Pending Reviews", "value": pending, "context": "No review pack available" if pending is None else "Awaiting operator review" if pending else "No reviews outstanding", "tone": "grey" if pending is None else "green" if pending == 0 else "amber", "help": "Pending reviews are governance decisions awaiting an authenticated operator."},
-    ], aria_label="Accounting status summary"), unsafe_allow_html=True)
+    accounting_active = accounting_state == "active"
+    accounting_error = accounting_state == "error"
+    st.markdown(operational_summary_html(
+        "Accounting Status",
+        "Active" if accounting_active else "Attention required" if accounting_error else "Not active",
+        "Verified canonical GBP accounting is active." if accounting_active else accounting_detail if accounting_error else "The new accounting system has not yet been activated because historical evidence is still being verified.",
+        (("Current mode", "Canonical GBP active" if accounting_active else "Accounting status unavailable" if accounting_error else "Waiting for evidence verification"),
+         ("Impact", "No impact on monitoring" if not accounting_error else "Review Operations")),
+        tone="green" if accounting_active else "red" if accounting_error else "amber",
+        help_text="Accounting remains separate from monitoring until its historical evidence is verified.",
+    ), unsafe_allow_html=True)
 
     st.markdown('<div class="ops-section-heading">Latest Activity</div>', unsafe_allow_html=True)
     st.markdown(activity_cards_html([
-        {"icon": "↕", "title": "Trading", "event": latest_trade["label"], "context": "Latest journal entry", "timestamp": latest_trade["detail"], "tone": "blue"},
+        {"icon": "↕", "title": "Trading", "event": f"Bought {latest_trade['ticker']}" if latest_trade.get("action") == "BUY" else f"Sold {latest_trade['ticker']}" if latest_trade.get("action") == "SELL" else latest_trade["label"], "context": "Latest trade", "timestamp": latest_trade["detail"], "tone": "blue"},
         {"icon": "●", "title": "Runtime", "event": runtime_event_label, "context": runtime_event_context, "timestamp": runtime_details["last_scan"], "tone": "grey" if runtime_event_context == "Monitor-only protection" else "green"},
-        {"icon": "◫", "title": "Research", "event": research["label"], "context": "Latest campaign report", "timestamp": research["detail"], "tone": "blue"},
+        {"icon": "◫", "title": "Research", "event": "Research updated" if not research["label"].startswith("No research") else research["label"], "context": "Latest campaign report", "timestamp": research["detail"], "tone": "blue"},
         {"icon": "◉", "title": "Notifications", "event": notification["label"], "context": "Latest notification event", "timestamp": notification["detail"], "tone": "blue"},
     ]), unsafe_allow_html=True)
 
@@ -3738,27 +3807,41 @@ render_investment_brief(
     opening_evidence_status(PROJECT_ROOT / "data" / "frozen_evidence_packs"),
     review_workflow_status(PROJECT_ROOT / "data" / "frozen_evidence_packs"),
 )
-st.markdown(
-    status_table_html(
-        home_source_rows(HOME_SOURCE_DETAILS),
-        ("Source", "Status", "Last Refresh"),
-        caption="Home data sources",
-    ),
-    unsafe_allow_html=True,
-)
-if scheduler_dashboard.error:
-    st.warning(f"Strategy scheduler state unavailable: {scheduler_dashboard.error}")
-elif scheduler_dashboard.instruments:
-    st.markdown(
-        status_table_html(
-            instrument_status_rows(scheduler_dashboard.instruments),
-            ("Instrument", "Status", "Reason", "Last Bar"),
-            caption="Per-instrument status",
-        ),
-        unsafe_allow_html=True,
-    )
-else:
-    st.info("Per-instrument status is unavailable until the first completed strategy bar.")
+source_rows = home_source_rows(HOME_SOURCE_DETAILS)
+source_health = data_health_summary(source_rows)
+st.markdown(operational_summary_html(
+    "Data Health",
+    source_health["status"],
+    "All dashboard data sources agree with their reconciled local reports." if source_health["tone"] == "green" else "One or more dashboard sources require attention.",
+    (("Last updated", source_health["last_updated"]), ("Sources", source_health["healthy"])),
+    tone=source_health["tone"],
+    help_text="Data health summarizes source reconciliation and the latest reported refresh.",
+), unsafe_allow_html=True)
+with st.expander("View Source Details"):
+    st.caption("Detailed source diagnostics are also available on the Operations page.")
+    st.markdown(status_table_html(source_rows, ("Source", "Status", "Last Refresh"), caption="Home data sources"), unsafe_allow_html=True)
+
+instrument_rows = instrument_status_rows(scheduler_dashboard.instruments) if scheduler_dashboard.instruments else []
+trading_summary = trading_status_summary(instrument_rows, unavailable=bool(scheduler_dashboard.error))
+st.markdown(operational_summary_html(
+    "Trading Status",
+    trading_summary["status"],
+    "No trades can currently be executed." if not scheduler_dashboard.error else "Scheduler status could not be read safely.",
+    (("Instruments monitored", trading_summary["monitored"]),
+     ("Execution disabled", trading_summary["waiting"]),
+     ("No-action signals", trading_summary["no_action"]),
+     ("Errors", trading_summary["errors"])),
+    tone=trading_summary["tone"],
+    help_text="Monitor-only mode evaluates instruments without allowing trade execution.",
+), unsafe_allow_html=True)
+with st.expander("View Instrument Details"):
+    st.caption("Detailed scheduler and runtime diagnostics are also available on the Operations page.")
+    if scheduler_dashboard.error:
+        st.warning(f"Strategy scheduler state unavailable: {scheduler_dashboard.error}")
+    elif instrument_rows:
+        st.markdown(status_table_html(instrument_rows, ("Instrument", "Status", "Reason", "Last Bar"), caption="Per-instrument status"), unsafe_allow_html=True)
+    else:
+        st.info("Per-instrument status is unavailable until the first completed strategy bar.")
 
 home_tab, scanner_tab = st.tabs(["Home", "Global Scanner"])
 

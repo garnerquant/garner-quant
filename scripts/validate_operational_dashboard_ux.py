@@ -27,12 +27,14 @@ def main():
           "presentation helper is pure and read-only", issues)
     main_source = (ROOT / "web_dashboard.py").read_text(encoding="utf-8")
     operations = (ROOT / "pages/99_admin_health.py").read_text(encoding="utf-8")
-    check("home_source_rows(HOME_SOURCE_DETAILS)" in main_source and "Per-instrument status" in main_source,
-          "home sources and instrument status use compact tables", issues)
-    check(all(label in main_source for label in ("Accounting Status", "Opening Evidence", "Critical Gaps", "Pending Reviews", "Evidence Coverage")),
-          "accounting summary cards retain required information", issues)
-    check("ops-card-context" in main_source and "font-size:20px" in main_source and "Not available" in helper,
-          "accounting cards use quiet labels, prominent values, context, and safe missing-value wording", issues)
+    check("with st.expander(\"View Source Details\")" in main_source and "with st.expander(\"View Instrument Details\")" in main_source,
+          "source and instrument diagnostics are retained behind explicit detail controls", issues)
+    check(all(label in main_source for label in ("Accounting Status", "Not active", "Waiting for evidence verification", "No impact on monitoring")),
+          "home accounting is reduced to one plain-language operational summary", issues)
+    check(all(label in main_source for label in ("System Status", "Data Health", "Trading Status", "No action required")),
+          "home answers system, data, trading, and operator-action questions directly", issues)
+    check("operational_summary_html" in main_source and "ops-home-summary-status" in main_source and "Not available" in helper,
+          "home summaries use clear hierarchy and safe missing-value wording", issues)
     check(all(label in main_source for label in ("Trading", "Runtime", "Research", "Notifications")),
           "latest activity is divided into four operational cards", issues)
     check(all(token in main_source for token in ("ops-green", "ops-blue", "ops-amber", "ops-red", "ops-grey")),
@@ -40,8 +42,8 @@ def main():
     check('"execution_blocked": ("Execution disabled", "grey"' in helper and
           '"conflict": ("Conflict", "red"' in helper and '"no_action": ("No action", "blue"' in helper,
           "monitor-only, conflict, and no-action statuses use correct semantics", issues)
-    check(all(text in main_source for text in ("Accounting status shows", "Opening evidence supports", "Evidence coverage is", "Buying power is", "Pending reviews are", "Monitor Mode")),
-          "concise operational tooltips cover requested concepts", issues)
+    check(all(text in main_source for text in ("System status summarizes", "Accounting remains separate", "Data health summarizes", "Monitor-only mode evaluates", "Buying power is", "Monitor Mode")),
+          "concise home-summary tooltips cover requested concepts", issues)
     check("<th scope=" in helper and "aria-label" in helper and "data-label" in helper,
           "tables and badges include accessible labels and responsive cell metadata", issues)
     check("padding:6px 10px" in main_source and "row_height=36" in operations,
@@ -51,11 +53,15 @@ def main():
     check("@media (max-width: 768px)" in main_source and "@media (max-width: 480px)" in main_source and
           "content:attr(data-label)" in main_source,
           "tablet and mobile breakpoints retain stacked labelled tables and cards", issues)
-    check("Buying power is" in main_source and "Pending reviews are" in main_source and
+    check("Buying power is" in main_source and "Accounting remains separate" in main_source and
           "Execution is disabled because" in helper,
           "requested tooltips remain concise and keyboard accessible", issues)
     check("investor_cycle_details" in main_source and '"Strategy scan skipped", "Monitor-only protection"' in main_source,
           "Latest Activity separates concise event and context", issues)
+    check('f"Bought {latest_trade[\'ticker\']}"' in main_source and '"Research updated"' in main_source,
+          "Latest Activity uses concise plain-English wording", issues)
+    check("data_health_summary(source_rows)" in main_source and "trading_status_summary(instrument_rows" in main_source,
+          "home summary counts use existing presentation rows without new readers", issues)
     check("st.write({" not in operations and "responsive_table" in operations,
           "Operations dense mappings are replaced with readable tables", issues)
     changed_domains = ("execution/", "runtime/", "canonical_accounting/", "risk_engine/")

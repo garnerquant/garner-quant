@@ -155,6 +155,54 @@ def activity_cards_html(cards):
     return '<div class="ops-activity-grid">' + "".join(values) + "</div>"
 
 
+def operational_summary_html(title, status, description, details, *, tone="grey", help_text=""):
+    """Render a concise home-page answer while preserving detail elsewhere."""
+    safe_title = html.escape(str(title)); safe_status = html.escape(str(status))
+    safe_description = html.escape(str(description)); safe_tone = html.escape(str(tone))
+    tooltip = html.escape(str(help_text))
+    attributes = (
+        f' tabindex="0" title="{tooltip}" aria-label="{safe_title}: {safe_status}. {tooltip}"'
+        if tooltip else f' aria-label="{safe_title}: {safe_status}"'
+    )
+    detail_markup = "".join(
+        f'<div class="ops-summary-detail"><span>{html.escape(str(label))}</span>'
+        f'<strong>{html.escape("Not available" if value in (None, "", "Unavailable") else str(value))}</strong></div>'
+        for label, value in details
+    )
+    return (
+        f'<section class="ops-home-summary ops-card-{safe_tone}"{attributes}>'
+        f'<div class="ops-home-summary-heading">{safe_title}</div>'
+        f'<div class="ops-home-summary-status">{safe_status}</div>'
+        f'<p>{safe_description}</p><div class="ops-summary-details">{detail_markup}</div></section>'
+    )
+
+
+def data_health_summary(rows):
+    total = len(rows); healthy = sum(row.get("Status") == "Reconciled" for row in rows)
+    refreshes = sorted(row.get("Last Refresh") for row in rows if row.get("Last Refresh") not in (None, "", "Not available"))
+    return {
+        "status": "All sources reconciled" if total and healthy == total else "Source attention required",
+        "tone": "green" if total and healthy == total else "amber",
+        "healthy": f"{healthy} / {total} healthy",
+        "last_updated": refreshes[-1] if refreshes else "Not available",
+    }
+
+
+def trading_status_summary(rows, *, unavailable=False):
+    total = len(rows)
+    waiting = sum(row.get("Status") == "Execution disabled" for row in rows)
+    no_action = sum(row.get("Status") == "No action" for row in rows)
+    errors = sum(row.get("Tone") == "red" for row in rows)
+    return {
+        "status": "Not available" if unavailable else "Monitor-only",
+        "tone": "red" if unavailable or errors else "grey",
+        "monitored": total,
+        "waiting": waiting,
+        "no_action": no_action,
+        "errors": errors,
+    }
+
+
 def detail_rows(values, labels):
     """Turn dense mappings into a scan-friendly label/value table."""
     return [{"Item": label, "Value": values.get(key) if values.get(key) not in (None, "", "Unavailable") else "Not available"}
