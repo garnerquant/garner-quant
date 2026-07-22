@@ -53,6 +53,7 @@ data/notification_state.json
 data/runtime_operations_log.json
 data/runtime/
 data/accounting_generations/
+data/risk_engine/
 runtime_data/
 logs/
 

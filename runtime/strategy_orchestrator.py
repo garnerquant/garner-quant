@@ -135,5 +135,8 @@ def schedule_completed_bars(
         "bar_identities": {
             decision.symbol: decision.identity.key for decision in claimed
         },
+        "bar_timestamps": {
+            decision.symbol: decision.identity.bar_close_utc for decision in claimed
+        },
         "health": store.health(),
     }

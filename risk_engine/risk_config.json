@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "configuration_version": "2026-07-22-initial-disabled",
+  "base_currency": "GBP",
+  "trading_enabled": false,
+  "limits_approved": false,
+  "decision_expiry_seconds": 60,
+  "maximum_order_notional_base": "1000",
+  "maximum_position_notional_base": "2000",
+  "maximum_position_ratio": "0.20",
+  "maximum_gross_exposure_ratio": "0.80",
+  "maximum_net_exposure_ratio": "0.80",
+  "maximum_open_positions": 8,
+  "maximum_strategy_exposure_ratio": "0.50",
+  "maximum_market_exposure_ratio": "0.60",
+  "maximum_currency_exposure_ratio": "0.60",
+  "maximum_daily_realised_loss_base": "250",
+  "maximum_daily_total_loss_base": "400",
+  "maximum_drawdown_ratio": "0.15",
+  "market_data_max_age_seconds": {
+    "24/7:1d": 43200,
+    "XLON:1d": 21600,
+    "XNAS:1d": 21600
+  },
+  "fx_max_age_seconds": {
+    "GBP": 300,
+    "USD": 10800
+  },
+  "allowed_order_types": ["MARKET", "LIMIT", "STOP"],
+  "allowed_time_in_force": ["DAY", "GTC"],
+  "reduction_orders_allowed_when_limits_exceeded": true,
+  "kill_switch_allows_reductions": false
+}

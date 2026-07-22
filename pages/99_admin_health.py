@@ -9,6 +9,7 @@ import streamlit as st
 from ui.auth import require_dashboard_login
 from ui.responsive import apply_responsive_styles
 from ui.runtime_status import load_runtime_status, runtime_freshness, runtime_state
+from risk_engine.diagnostics import load_risk_diagnostics
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +43,20 @@ try:
     cols[3].metric("Cycle count", runtime.get("cycle_count", "Unavailable"))
 except Exception:
     st.error("Runtime status could not be read safely.")
+
+st.subheader("Pre-trade risk")
+risk = load_risk_diagnostics()
+risk_cols = st.columns(4)
+risk_cols[0].metric("Risk", risk["engine_status"])
+risk_cols[1].metric("Kill switch", "ACTIVE" if risk["kill_switch_active"] else "INACTIVE")
+risk_cols[2].metric("Trading", "ENABLED" if risk["trading_enabled"] else "DISABLED")
+risk_cols[3].metric("Configuration", risk.get("configuration_version") or "ERROR")
+latest_risk = risk.get("latest_decision") or {}
+st.caption(
+    "Latest decision: "
+    f"{latest_risk.get('status', 'None')} | "
+    f"{latest_risk.get('primary_reason_code', 'No evaluations recorded')}"
+)
 
 st.subheader("Published health artifacts")
 rows = []

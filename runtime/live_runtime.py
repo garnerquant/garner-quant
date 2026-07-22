@@ -674,6 +674,7 @@ def run_paper_execution(
     *,
     eligible_symbols,
     bar_identities,
+    bar_timestamps,
     events=None,
 ):
     events = events if events is not None else []
@@ -685,6 +686,7 @@ def run_paper_execution(
         "markets_open": markets_open,
         "eligible_symbols": list(eligible_symbols),
         "bar_identities": dict(bar_identities),
+        "bar_timestamps": dict(bar_timestamps),
         "symbols_scanned": 0,
         "signals_count": 0,
         "buy_signals": 0,
@@ -728,6 +730,7 @@ def run_paper_execution(
             sync_remote=False,
             eligible_symbols=eligible_symbols,
             bar_identities=bar_identities,
+            bar_timestamps=bar_timestamps,
         )
         result = result or {}
         for event in result.get("events", []):
@@ -1048,6 +1051,7 @@ def run_cycle(config, started_at, cycle_count):
             config.get("mode", "monitor_only"),
             eligible_symbols=scheduler_summary["eligible_symbols"],
             bar_identities=scheduler_summary["bar_identities"],
+            bar_timestamps=scheduler_summary["bar_timestamps"],
             events=events,
         )
         if execution_entry.get("status") == "error":

@@ -1,5 +1,6 @@
 import pandas as pd
 from pathlib import Path
+from decimal import Decimal
 from config import (
     ASSETS,
     MIN_HOLD_DAYS_FOR_SIGNAL_EXIT,
@@ -15,8 +16,13 @@ from execution.trade_ledger import (
     build_trade_event,
     prepare_trade_ledger_append,
 )
-from datetime import datetime
+from datetime import datetime, timezone
 import json
+
+from risk_engine.authorization import verify_risk_authorization
+from risk_engine.configuration import load_risk_configuration
+from risk_engine.engine import PreTradeRiskEngine
+from risk_engine.integration import build_order_proposal, build_production_risk_context
 
 PORTFOLIO_FILE = "paper_portfolio_v3.csv"
 TRADE_JOURNAL_FILE = "trade_journal_v3.csv"
@@ -160,7 +166,31 @@ def commit_trade_state(
     journal,
     transaction_log,
     snapshots,
+    authorizations=None,
+    authorization_now=None,
+    risk_configuration=None,
 ):
+    authorizations = list(authorizations or [])
+    if ledger_events:
+        if len(authorizations) != len(ledger_events):
+            raise RuntimeError("every ledger event requires one central risk authorization")
+        configuration = risk_configuration or load_risk_configuration()
+        for event, authorization in zip(ledger_events, authorizations):
+            proposal, decision = authorization
+            verify_risk_authorization(
+                proposal,
+                decision,
+                configuration=configuration,
+                now=authorization_now,
+            )
+            if (
+                str(event.get("ticker")) != proposal.symbol
+                or str(event.get("action")) != proposal.side
+                or Decimal(str(event.get("shares"))) != proposal.quantity
+                or Decimal(str(event.get("price")))
+                != Decimal(str(proposal.metadata.get("reference_price")))
+            ):
+                raise RuntimeError("approved proposal does not match ledger event")
     frames_by_path = {
         Path(LEDGER_FILE): prepare_trade_ledger_append(ledger_events),
         Path(PORTFOLIO_FILE): portfolio[PORTFOLIO_COLUMNS],
@@ -453,15 +483,22 @@ def update_portfolio(
     *,
     eligible_symbols=None,
     bar_identities=None,
+    bar_timestamps=None,
+    risk_engine=None,
+    risk_context_factory=None,
 ):
     eligible_symbols = set(eligible_symbols or signals.columns)
     bar_identities = dict(bar_identities or {})
+    bar_timestamps = dict(bar_timestamps or {})
+    central_risk = risk_engine or PreTradeRiskEngine()
+    context_factory = risk_context_factory or build_production_risk_context
     portfolio = load_portfolio()
     assert_portfolio_matches_ledger(portfolio)
     journal = load_trade_journal()
     transaction_log = load_transaction_log()
     snapshots = load_trade_snapshots()
     ledger_events = []
+    authorizations = []
 
     latest_date = signals.index[-1]
     trade_date = date_string(latest_date)
@@ -595,6 +632,38 @@ def update_portfolio(
 
             value = current_price * position["shares"]
             trade_id = f"{ticker}_{position['entry_date']}_SELL"
+
+            bar_timestamp = bar_timestamps.get(ticker)
+            if not bar_timestamp:
+                if ticker in decisions:
+                    decisions[ticker]["reason"] = "scheduler bar timestamp unavailable"
+                continue
+            proposal = build_order_proposal(
+                proposal_id=trade_id,
+                signal_id=bar_identities.get(ticker, ""),
+                symbol=ticker,
+                side="SELL",
+                quantity=position["shares"],
+                source_bar_timestamp=bar_timestamp,
+                reference_price=current_price,
+                stop_price=stop_loss,
+                reason=sell_reason,
+                correlation_id=run_id,
+                strategy_timestamp=datetime.now(timezone.utc),
+            )
+            risk_context = context_factory(
+                proposal,
+                reference_price=current_price,
+                reference_price_timestamp=bar_timestamp,
+            )
+            risk_decision = central_risk.evaluate(proposal, risk_context)
+            if not risk_decision.approved:
+                if ticker in decisions:
+                    decisions[ticker]["reason"] = risk_decision.primary_reason_code.lower()
+                    decisions[ticker]["details"]["risk_decision_id"] = risk_decision.decision_id
+                    decisions[ticker]["details"]["risk_status"] = risk_decision.status.value
+                continue
+            authorizations.append((proposal, risk_decision))
 
             journal.loc[len(journal)] = [
                 trade_date,
@@ -756,6 +825,39 @@ def update_portfolio(
 
             shares = position_value / price
 
+            trade_id = f"{ticker}_{trade_date}_BUY"
+            bar_timestamp = bar_timestamps.get(ticker)
+            if not bar_timestamp:
+                if ticker in decisions:
+                    decisions[ticker]["reason"] = "scheduler bar timestamp unavailable"
+                continue
+            proposal = build_order_proposal(
+                proposal_id=trade_id,
+                signal_id=bar_identities.get(ticker, ""),
+                symbol=ticker,
+                side="BUY",
+                quantity=shares,
+                source_bar_timestamp=bar_timestamp,
+                reference_price=price,
+                stop_price=stop_losses[ticker],
+                reason="SIGNAL ENTRY",
+                correlation_id=run_id,
+                strategy_timestamp=datetime.now(timezone.utc),
+            )
+            risk_context = context_factory(
+                proposal,
+                reference_price=price,
+                reference_price_timestamp=bar_timestamp,
+            )
+            risk_decision = central_risk.evaluate(proposal, risk_context)
+            if not risk_decision.approved:
+                if ticker in decisions:
+                    decisions[ticker]["reason"] = risk_decision.primary_reason_code.lower()
+                    decisions[ticker]["details"]["risk_decision_id"] = risk_decision.decision_id
+                    decisions[ticker]["details"]["risk_status"] = risk_decision.status.value
+                continue
+            authorizations.append((proposal, risk_decision))
+
             portfolio_value_before = (
                 cash + portfolio["position_value"].sum()
                 if not portfolio.empty
@@ -777,8 +879,6 @@ def update_portfolio(
             now = datetime.now()
             trade_time = now.strftime("%H:%M:%S")
             timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
-            trade_id = f"{ticker}_{trade_date}_BUY"
-
             transaction_log.loc[len(transaction_log)] = [
                 trade_date,
                 "BUY",
@@ -888,6 +988,9 @@ def update_portfolio(
         journal=journal,
         transaction_log=transaction_log,
         snapshots=snapshots,
+        authorizations=authorizations,
+        authorization_now=datetime.now(timezone.utc),
+        risk_configuration=central_risk.configuration,
     )
 
     trades_df = pd.DataFrame(trades)

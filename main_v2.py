@@ -38,6 +38,7 @@ def _run_main_unlocked(
     sync_remote=True,
     eligible_symbols=None,
     bar_identities=None,
+    bar_timestamps=None,
 ):
     run_started = time.perf_counter()
     pipeline_events = []
@@ -117,6 +118,7 @@ def _run_main_unlocked(
         risk_levels,
         eligible_symbols=asset_tickers,
         bar_identities=bar_identities or {},
+        bar_timestamps=bar_timestamps or {},
     )
     record_event(
         "Paper Portfolio Updated",
@@ -297,6 +299,7 @@ def main(
     sync_remote=True,
     eligible_symbols=None,
     bar_identities=None,
+    bar_timestamps=None,
 ):
     execution_lock = acquire_execution_lock(context="main_v2.main")
 
@@ -338,6 +341,7 @@ def main(
             sync_remote=sync_remote,
             eligible_symbols=eligible_symbols,
             bar_identities=bar_identities,
+            bar_timestamps=bar_timestamps,
         )
     finally:
         execution_lock.release()
