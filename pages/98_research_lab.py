@@ -4,6 +4,7 @@ from pathlib import Path
 import streamlit as st
 
 from dashboard.operations_presentation import summary_cards_html
+from dashboard.continuous_research_reader import continuous_research_status
 from dashboard.research_status_reader import read_research_pipeline_status
 from ui.auth import require_dashboard_login
 from ui.responsive import apply_responsive_styles
@@ -16,6 +17,22 @@ apply_responsive_styles()
 
 st.title("Research Lab")
 st.caption("Research pipeline status and publication readiness.")
+
+continuous = continuous_research_status(ROOT / "data" / "continuous_research")
+if continuous["report"] is not None and continuous["report"]["suggested_tasks"]:
+    report = continuous["report"]
+    st.subheader("Research Queue")
+    st.caption("Advisory proposed tasks. Human approval is required before any experiment can run.")
+    for task in report["suggested_tasks"]:
+        with st.container(border=True):
+            st.markdown(f"### {task['title']}")
+            st.write(task["objective"])
+            st.caption(f"Priority {task['priority']} · Status {task['status']} · Complexity {task['estimated_complexity']}")
+            st.write("Proposed experiment: " + task["proposed_experiment"])
+            st.write("Safety: " + "; ".join(task["safety_constraints"]))
+            st.code(f"Task {task['task_id']}\nHypothesis {task['hypothesis_id']}\nReport hash {report['content_hash']}")
+    st.info("Next step: an authorised operator may review these proposals. This dashboard cannot approve or run experiments.")
+    st.stop()
 
 pipeline = read_research_pipeline_status(ROOT / "data" / "scanner_research")
 if pipeline.status == "UNAVAILABLE":

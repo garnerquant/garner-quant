@@ -91,6 +91,15 @@ class ResearchDashboardPresentationTests(unittest.TestCase):
             for token in ("write_text(", "write_bytes(", "to_csv(", "publish_research_reports", "run_scanner_research"):
                 self.assertNotIn(token, source)
 
+    def test_continuous_dashboards_use_immutable_reader_and_no_actions(self):
+        intelligence = (ROOT / "pages/97_research_intelligence.py").read_text(encoding="utf-8")
+        lab = (ROOT / "pages/98_research_lab.py").read_text(encoding="utf-8")
+        self.assertIn("continuous_research_status", intelligence); self.assertIn("Today's Analyst Brief", intelligence)
+        self.assertIn("Observation lineage", intelligence); self.assertIn("Research Queue", lab)
+        self.assertIn("Human approval is required", lab)
+        for token in ("st.button(", "st.form(", "publish_morning_report", "run_scanner_research"):
+            self.assertNotIn(token, intelligence); self.assertNotIn(token, lab)
+
 
 if __name__ == "__main__":
     unittest.main()

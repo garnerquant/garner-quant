@@ -4,6 +4,7 @@ from pathlib import Path
 import streamlit as st
 
 from dashboard.operations_presentation import summary_cards_html
+from dashboard.continuous_research_reader import continuous_research_status
 from dashboard.research_report_reader import ResearchReportError, ResearchReportReader
 from dashboard.research_status_reader import research_report_overview
 from ui.auth import require_dashboard_login
@@ -18,6 +19,41 @@ apply_responsive_styles()
 
 st.title("Research Intelligence")
 st.caption("Validated research findings and published opportunities.")
+
+continuous = continuous_research_status(ROOT / "data" / "continuous_research")
+if continuous["report"] is not None:
+    report = continuous["report"]
+    st.subheader("Research Overview")
+    st.markdown(summary_cards_html([
+        {"label": "Latest Report", "value": report["created_at"], "tone": "blue"},
+        {"label": "Evidence Cut-off", "value": report["evidence_cutoff"], "tone": "blue"},
+        {"label": "New Observations", "value": len(report["observations"]), "tone": "blue"},
+        {"label": "Open Hypotheses", "value": len(report["hypotheses"]), "tone": "amber"},
+        {"label": "Suggested Tasks", "value": len(report["suggested_tasks"]), "tone": "amber"},
+    ], aria_label="Continuous research overview"), unsafe_allow_html=True)
+    st.subheader("Today's Analyst Brief")
+    st.write(report["executive_summary"])
+    if report["important_limitations"]:
+        st.warning(report["important_limitations"][0])
+    if report["observations"]:
+        st.subheader("Observations")
+        for observation in report["observations"]:
+            with st.expander(observation["title"]):
+                st.write(observation["description"])
+                st.caption(f"Evidence quality: {observation['evidence_quality']} · Sample: {observation['sample_size']} · Status: {observation['status']}")
+                st.write("Limitations: " + "; ".join(observation["limitations"]))
+                st.code(f"Observation {observation['observation_id']}\nReport hash {report['content_hash']}")
+    if report["hypotheses"]:
+        st.subheader("Hypotheses")
+        for hypothesis in report["hypotheses"]:
+            with st.expander(hypothesis["title"]):
+                st.write(hypothesis["hypothesis_statement"])
+                st.caption(f"Priority: {hypothesis['priority_score']} · Evidence: {hypothesis['evidence_strength']} · Lifecycle: {hypothesis['lifecycle_status']}")
+                st.write("Proposed experiment: " + hypothesis["proposed_experiment"])
+                st.write("Falsification: " + hypothesis["falsification_condition"])
+                st.code("Observation lineage: " + ", ".join(hypothesis["observation_ids"]))
+    st.caption(f"Immutable report {report['report_id']} · Evidence snapshot {report['evidence_snapshot_id']} · Report hash {report['content_hash']}")
+    st.stop()
 
 try:
     bundle = ResearchReportReader(REPORT_ROOT).load_latest()
