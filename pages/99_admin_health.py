@@ -13,6 +13,7 @@ from risk_engine.diagnostics import load_risk_diagnostics
 from risk_engine.operations import activation_readiness, configuration_health, decision_history, risk_metrics
 from canonical_accounting.successor import accounting_transaction_status
 from dashboard.accounting_observation_reader import accounting_observation_status, non_fill_observation_status
+from dashboard.opening_snapshot_reader import opening_snapshot_status
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +75,18 @@ with st.expander("Non-fill accounting observation producers", expanded=False):
               "Last observation": non_fill["last_observation_timestamp"],
               "Latest envelope": (non_fill.get("latest_non_fill") or {}).get("event_id"),
               "Latest invalid": (non_fill.get("latest_invalid") or {}).get("reason")})
+
+with st.expander("Canonical opening snapshot", expanded=False):
+    opening = opening_snapshot_status(ROOT / "data" / "opening_snapshot_candidates")
+    st.caption("Read-only inactive candidate review. Validation and approval cannot activate accounting.")
+    opening_cols=st.columns(4)
+    opening_cols[0].metric("Candidate",opening.get("status","ERROR"));opening_cols[1].metric("Readiness",opening.get("readiness","NOT_READY"))
+    opening_cols[2].metric("Approval",opening.get("approval","UNAPPROVED"));opening_cols[3].metric("Pointer",opening.get("pointer","UNKNOWN"))
+    st.write({"Candidate ID":opening.get("candidate_id"),"Candidate hash":opening.get("candidate_hash"),"Cut-off":opening.get("cut_off"),
+              "Source manifest":opening.get("manifest"),"Completeness":opening.get("completeness"),"Cash":opening.get("cash"),
+              "Positions":opening.get("positions"),"Lots":opening.get("lots"),"Strategy attribution %":opening.get("attribution"),
+              "FX evidence %":opening.get("fx"),"Unresolved exceptions":opening.get("exceptions"),"Largest difference":opening.get("largest_difference"),
+              "Inactive":opening.get("inactive"),"Latest validation":opening.get("validated_at")})
 
 st.subheader("Accounting observation envelopes")
 envelopes = accounting_observation_status(ROOT / "data" / "accounting_observations" / "envelopes.jsonl",

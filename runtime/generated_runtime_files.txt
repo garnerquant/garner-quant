@@ -42,6 +42,7 @@ data/broker_account_reconciliation_report.json
 data/runtime/
 data/accounting_generations/
 data/accounting_observations/
+data/opening_snapshot_candidates/
 data/risk_engine/
 runtime_data/
 logs/

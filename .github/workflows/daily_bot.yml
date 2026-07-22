@@ -42,6 +42,7 @@ jobs:
           python scripts/validate_transactional_canonical_accounting.py
           python scripts/validate_accounting_observation_envelope.py
           python scripts/validate_non_fill_accounting_producers.py
+          python scripts/validate_opening_snapshot_candidate.py
           python scripts/validate_accounting_reconciliation.py
           python scripts/validate_accounting_reconciliation_output.py
           python scripts/validate_per_market_bar_scheduler.py

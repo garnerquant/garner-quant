@@ -54,6 +54,7 @@ data/runtime_operations_log.json
 data/runtime/
 data/accounting_generations/
 data/accounting_observations/
+data/opening_snapshot_candidates/
 data/risk_engine/
 runtime_data/
 logs/
