@@ -21,7 +21,12 @@ from canonical_accounting.review_workflow import ReviewRecord, ReviewExportBundl
 from canonical_accounting.frozen_evidence import (
     EvidenceDocumentRequest, FrozenEvidencePack, NormalizedEvidenceRecord,
     collect_evidence, export_frozen_evidence_bundle, freeze_evidence_pack,
-    load_current_frozen_evidence, load_frozen_evidence_pack,
+    load_current_frozen_evidence, load_frozen_evidence_history, load_frozen_evidence_pack,
+)
+from canonical_accounting.evidence_reconciliation import (
+    AuthoritativeImportRequest, GapResolution, ReconciliationReport,
+    ReconciliationResult, reconcile_cash_evidence, reconcile_evidence,
+    reconstruct_evidenced_lot_links, acquire_authoritative_evidence,
 )
 
 __all__ = [
@@ -49,4 +54,8 @@ __all__ = [
     "EvidenceDocumentRequest", "FrozenEvidencePack", "NormalizedEvidenceRecord",
     "collect_evidence", "freeze_evidence_pack", "load_frozen_evidence_pack",
     "load_current_frozen_evidence", "export_frozen_evidence_bundle",
+    "load_frozen_evidence_history",
+    "AuthoritativeImportRequest", "GapResolution", "ReconciliationReport",
+    "ReconciliationResult", "reconcile_evidence", "reconcile_cash_evidence",
+    "reconstruct_evidenced_lot_links", "acquire_authoritative_evidence",
 ]

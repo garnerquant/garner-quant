@@ -132,6 +132,8 @@ class EvidenceDocumentRequest:
     associated_cash_flows: tuple[str, ...] = ()
     associated_lots: tuple[str, ...] = ()
     normalized_records: tuple[NormalizedEvidenceRecord, ...] = ()
+    issue_date: datetime | None = None
+    import_timestamp: datetime | None = None
 
     def validate(self, gap_ids):
         if not self.source or not IDENTIFIER_FORMAT.fullmatch(self.identifier):
@@ -141,10 +143,14 @@ class EvidenceDocumentRequest:
         if self.confidence not in CONFIDENCE_LEVELS or self.verification_status not in VERIFICATION_STATES:
             raise FrozenEvidenceError("evidence confidence or verification state is invalid")
         source_time = _time(self.source_timestamp, "source_timestamp")
+        issue_date = _time(self.issue_date, "issue_date") if self.issue_date is not None else None
+        imported = _time(self.import_timestamp, "import_timestamp") if self.import_timestamp is not None else None
         start = _time(self.coverage_start, "coverage_start")
         end = _time(self.coverage_end, "coverage_end")
         if start > end or source_time < start:
             raise FrozenEvidenceError("evidence coverage is invalid")
+        if issue_date is None or imported is None or issue_date < end or imported < issue_date:
+            raise FrozenEvidenceError("issue and import timestamps are required and ordered")
         if not self.linked_gap_ids or not set(self.linked_gap_ids) <= set(gap_ids):
             raise FrozenEvidenceError("evidence must link existing gaps")
         record_ids = [item.record_id for item in self.normalized_records]
@@ -173,6 +179,9 @@ class EvidenceItem:
     associated_lots: tuple[str, ...]
     normalized_records: tuple[NormalizedEvidenceRecord, ...]
     artifact_name: str
+    issue_date: datetime
+    import_timestamp: datetime
+    document_hash: str
 
 
 @dataclass(frozen=True)
@@ -199,6 +208,8 @@ def collect_evidence(path: str | Path, request: EvidenceDocumentRequest, *, gap_
         request.confidence, request.verification_status, tuple(sorted(request.linked_gap_ids)),
         tuple(sorted(request.associated_positions)), tuple(sorted(request.associated_cash_flows)),
         tuple(sorted(request.associated_lots)), tuple(request.normalized_records), artifact_name,
+        _time(request.issue_date, "issue_date"), _time(request.import_timestamp, "import_timestamp"),
+        _bytes_hash(content),
     )
     return CollectedEvidence(item, content)
 
@@ -241,14 +252,17 @@ def _coverage(found, expected):
     return (Decimal(len(set(found) & set(expected))) * 100 / Decimal(len(set(expected)))).quantize(Decimal("0.01"))
 
 
-def calculate_frozen_coverage(evidence: OpeningSnapshotEvidencePack, items: tuple[EvidenceItem, ...]) -> FrozenCoverage:
-    verified = [item for item in items if item.verification_status == "VERIFIED"]
+def calculate_frozen_coverage(evidence: OpeningSnapshotEvidencePack, items: tuple[EvidenceItem, ...], *, reconciled_evidence_ids=None) -> FrozenCoverage:
+    eligible = set(reconciled_evidence_ids) if reconciled_evidence_ids is not None else None
+    verified = [item for item in items if item.verification_status == "VERIFIED" and
+                (eligible is None or item.identifier in eligible)]
     positions = {item.symbol for item in evidence.positions}
     lots = {item.source_event_id for item in evidence.lots}
     record_types = {record.record_type for item in verified for record in item.normalized_records}
     covered_positions = {value for item in verified for value in item.associated_positions}
     covered_lots = {value for item in verified for value in item.associated_lots}
-    strategy_positions = {value for item in verified if item.document_type == "MANUAL_OPERATOR_DOCUMENT" for value in item.associated_positions}
+    strategy_positions = {value for item in verified for value in item.associated_positions
+                          if any(dict(record.fields).get("strategy_id") for record in item.normalized_records)}
     values = (
         _coverage(strategy_positions, positions), _coverage(covered_lots, lots),
         _coverage(covered_positions, positions), Decimal("100.00") if "CASH_MOVEMENT" in record_types else Decimal("0.00"),
@@ -283,6 +297,9 @@ class FrozenEvidencePack:
     approval_pack_id: str | None
     approval_pack_hash: str | None
     bundle_hash: str
+    previous_pack_id: str | None
+    coverage_change: tuple[tuple[str, Decimal], ...]
+    reconciliation_report: dict[str, Any] | None
 
 
 def _decode_time(value):
@@ -309,10 +326,12 @@ def _decode_record(value):
 
 
 def _decode_item(value):
-    return EvidenceItem(value["source"], value["identifier"], _decode_time(value["source_timestamp"]), value["checksum"], int(value["byte_size"]), value["document_type"], _decode_time(value["coverage_start"]), _decode_time(value["coverage_end"]), value["confidence"], value["verification_status"], tuple(value["linked_gap_ids"]), tuple(value["associated_positions"]), tuple(value["associated_cash_flows"]), tuple(value["associated_lots"]), tuple(_decode_record(x) for x in value["normalized_records"]), value["artifact_name"])
+    issue = _decode_time(value.get("issue_date", value["source_timestamp"]))
+    imported = _decode_time(value.get("import_timestamp", value["source_timestamp"]))
+    return EvidenceItem(value["source"], value["identifier"], _decode_time(value["source_timestamp"]), value["checksum"], int(value["byte_size"]), value["document_type"], _decode_time(value["coverage_start"]), _decode_time(value["coverage_end"]), value["confidence"], value["verification_status"], tuple(value["linked_gap_ids"]), tuple(value["associated_positions"]), tuple(value["associated_cash_flows"]), tuple(value["associated_lots"]), tuple(_decode_record(x) for x in value["normalized_records"]), value["artifact_name"], issue, imported, value.get("document_hash", value["checksum"]))
 
 
-def freeze_evidence_pack(evidence: OpeningSnapshotEvidencePack, collection: tuple[CollectedEvidence, ...], destination: str | Path, *, pack_version: str, repository_commit: str, created_at: datetime, evidence_cutoff: datetime, approval_pack=None, failure_hook=None) -> Path:
+def freeze_evidence_pack(evidence: OpeningSnapshotEvidencePack, collection: tuple[CollectedEvidence, ...], destination: str | Path, *, pack_version: str, repository_commit: str, created_at: datetime, evidence_cutoff: datetime, approval_pack=None, reconciliation_report=None, previous_pack: FrozenEvidencePack | None = None, failure_hook=None) -> Path:
     """Atomically create a new immutable pack version; never update an old one."""
     if not PACK_VERSION_FORMAT.fullmatch(str(pack_version)) or not repository_commit:
         raise FrozenEvidenceError("pack version or repository commit is invalid")
@@ -322,7 +341,11 @@ def freeze_evidence_pack(evidence: OpeningSnapshotEvidencePack, collection: tupl
     gap_ids = {gap.gap_id for gap in evidence.gaps}
     collection = validate_collection(tuple(collection), gap_ids=gap_ids)
     items = tuple(entry.item for entry in collection)
-    coverage = calculate_frozen_coverage(evidence, items)
+    reconciled_ids = None
+    if reconciliation_report is not None:
+        reconciled_ids = {identifier for result in reconciliation_report.results if result.state == "EXACT_MATCH"
+                          for identifier in result.evidence_ids}
+    coverage = calculate_frozen_coverage(evidence, items, reconciled_evidence_ids=reconciled_ids)
     links = []
     missing = []
     if approval_pack is not None:
@@ -333,14 +356,32 @@ def freeze_evidence_pack(evidence: OpeningSnapshotEvidencePack, collection: tupl
             links.append((proposal.proposal_id, evidence_ids))
             if not evidence_ids:
                 missing.append((proposal.proposal_id, "No linked authoritative evidence"))
-    material = {"version": str(pack_version), "commit": repository_commit, "created_at": created_at, "cutoff": evidence_cutoff, "evidence": evidence.pack_hash, "items": tuple((item.identifier, item.checksum) for item in items), "approval": getattr(approval_pack, "pack_hash", None)}
+    if reconciliation_report is not None:
+        if reconciliation_report.evidence_cutoff != evidence_cutoff:
+            raise FrozenEvidenceError("reconciliation and freeze cut-off differ")
+        report_value = _json(reconciliation_report)
+    else:
+        report_value = None
+    coverage_change = tuple((field, getattr(coverage, field) - getattr(previous_pack.coverage, field))
+                            for field in coverage.__dataclass_fields__) if previous_pack else tuple((field, getattr(coverage, field)) for field in coverage.__dataclass_fields__)
+    material = {"version": str(pack_version), "commit": repository_commit, "created_at": created_at, "cutoff": evidence_cutoff, "evidence": evidence.pack_hash, "items": tuple((item.identifier, item.checksum) for item in items), "approval": getattr(approval_pack, "pack_hash", None), "reconciliation": report_value, "previous_pack_id": getattr(previous_pack, "pack_id", None)}
     pack_id = "evidence-freeze-" + _hash(material)[:24]
     root = Path(destination); final = root / f"v{pack_version}-{pack_id}"; staging = root / f".staging-{pack_id}"
+    existing_packs = []
     if root.exists():
         for existing in root.iterdir():
             if existing.is_dir() and not existing.name.startswith(".staging-"):
-                if load_frozen_evidence_pack(existing).pack_version == str(pack_version):
+                existing_pack = load_frozen_evidence_pack(existing); existing_packs.append(existing_pack)
+                if existing_pack.pack_version == str(pack_version):
                     raise FrozenEvidenceError("frozen Evidence Pack version already exists")
+    if existing_packs:
+        current = max(existing_packs, key=lambda pack: int(pack.pack_version))
+        if previous_pack is None or previous_pack.pack_id != current.pack_id or previous_pack.bundle_hash != current.bundle_hash:
+            raise FrozenEvidenceError("new version must bind the current frozen Evidence Pack")
+        if int(pack_version) <= int(current.pack_version):
+            raise FrozenEvidenceError("new frozen Evidence Pack version must increase")
+    elif previous_pack is not None:
+        raise FrozenEvidenceError("previous frozen Evidence Pack is not in the destination")
     if final.exists() or staging.exists():
         raise FrozenEvidenceError("frozen Evidence Pack version already exists")
     root.mkdir(parents=True, exist_ok=True); staging.mkdir()
@@ -350,12 +391,17 @@ def freeze_evidence_pack(evidence: OpeningSnapshotEvidencePack, collection: tupl
         _write_bytes(staging / "coverage.json", _serialize(coverage).encode())
         _write_bytes(staging / "gap_register.json", _serialize(evidence.gaps).encode())
         _write_bytes(staging / "proposal_links.json", _serialize({"links": tuple(links), "missing": tuple(missing)}).encode())
+        _write_bytes(staging / "reconciliation_report.json", _serialize(report_value).encode())
+        _write_bytes(staging / "gap_resolution.json", _serialize(getattr(reconciliation_report, "gaps", ())).encode())
+        _write_bytes(staging / "coverage_trend.json", _serialize(coverage_change).encode())
         for entry in collection:
             _write_bytes(staging / entry.item.artifact_name, entry.content)
         if failure_hook: failure_hook("after_artifacts", staging)
         artifacts = tuple(sorted((str(path.relative_to(staging)).replace("\\", "/"), _bytes_hash(path.read_bytes()), path.stat().st_size) for path in staging.rglob("*") if path.is_file()))
         gap_summary = tuple(sorted((severity, sum(gap.severity == severity for gap in evidence.gaps)) for severity in {gap.severity for gap in evidence.gaps}))
-        manifest = {"pack_id": pack_id, "pack_version": str(pack_version), "repository_commit": repository_commit, "creation_timestamp": created_at, "evidence_cutoff_timestamp": evidence_cutoff, "schema_version": SCHEMA_VERSION, "evidence_hash": evidence.pack_hash, "overall_status": "GAPS_IDENTIFIED" if evidence.gaps else "COMPLETE", "gap_summary": gap_summary, "artifact_manifest": artifacts, "coverage": coverage, "evidence_count": len(items), "verification_summary": tuple((state, sum(item.verification_status == state for item in items)) for state in sorted(VERIFICATION_STATES)), "proposal_evidence_links": tuple(links), "missing_evidence": tuple(missing), "approval_pack_id": getattr(approval_pack, "pack_id", None), "approval_pack_hash": getattr(approval_pack, "pack_hash", None)}
+        gap_states = tuple((state, sum(gap.state == state for gap in getattr(reconciliation_report, "gaps", ()))) for state in ("RESOLVED", "CONFLICT", "OPEN"))
+        overall_status = "CONFLICT" if dict(gap_states).get("CONFLICT") else "GAPS_IDENTIFIED" if dict(gap_states).get("OPEN", len(evidence.gaps)) else "COMPLETE"
+        manifest = {"pack_id": pack_id, "pack_version": str(pack_version), "repository_commit": repository_commit, "creation_timestamp": created_at, "evidence_cutoff_timestamp": evidence_cutoff, "schema_version": SCHEMA_VERSION, "evidence_hash": evidence.pack_hash, "overall_status": overall_status, "gap_summary": gap_summary, "gap_states": gap_states, "artifact_manifest": artifacts, "coverage": coverage, "coverage_change": coverage_change, "evidence_count": len(items), "verification_summary": tuple((state, sum(item.verification_status == state for item in items)) for state in sorted(VERIFICATION_STATES)), "proposal_evidence_links": tuple(links), "missing_evidence": tuple(missing), "approval_pack_id": getattr(approval_pack, "pack_id", None), "approval_pack_hash": getattr(approval_pack, "pack_hash", None), "previous_pack_id": getattr(previous_pack, "pack_id", None), "reconciliation_hash": getattr(reconciliation_report, "report_hash", None)}
         manifest["bundle_hash"] = _hash(manifest)
         _write_bytes(staging / "manifest.json", _serialize(manifest).encode())
         if failure_hook: failure_hook("after_manifest", staging)
@@ -383,10 +429,12 @@ def load_frozen_evidence_pack(path: str | Path) -> FrozenEvidencePack:
     items = tuple(_decode_item(value) for value in json.loads((path / "evidence_inventory.json").read_text()))
     coverage = FrozenCoverage(**{key:Decimal(value) for key,value in json.loads((path / "coverage.json").read_text()).items()})
     links = json.loads((path / "proposal_links.json").read_text())
-    return FrozenEvidencePack(path, manifest["pack_id"], manifest["pack_version"], manifest["repository_commit"], _decode_time(manifest["creation_timestamp"]), _decode_time(manifest["evidence_cutoff_timestamp"]), manifest["schema_version"], manifest["evidence_hash"], manifest["overall_status"], tuple(tuple(x) for x in manifest["gap_summary"]), tuple((x[0],x[1],int(x[2])) for x in manifest["artifact_manifest"]), items, coverage, tuple((x[0],tuple(x[1])) for x in links["links"]), tuple(tuple(x) for x in links["missing"]), source, manifest.get("approval_pack_id"), manifest.get("approval_pack_hash"), manifest["bundle_hash"])
+    reconciliation = json.loads((path / "reconciliation_report.json").read_text()) if (path / "reconciliation_report.json").exists() else None
+    changes = tuple((row[0], Decimal(row[1])) for row in manifest.get("coverage_change", ()))
+    return FrozenEvidencePack(path, manifest["pack_id"], manifest["pack_version"], manifest["repository_commit"], _decode_time(manifest["creation_timestamp"]), _decode_time(manifest["evidence_cutoff_timestamp"]), manifest["schema_version"], manifest["evidence_hash"], manifest["overall_status"], tuple(tuple(x) for x in manifest["gap_summary"]), tuple((x[0],x[1],int(x[2])) for x in manifest["artifact_manifest"]), items, coverage, tuple((x[0],tuple(x[1])) for x in links["links"]), tuple(tuple(x) for x in links["missing"]), source, manifest.get("approval_pack_id"), manifest.get("approval_pack_hash"), manifest["bundle_hash"], manifest.get("previous_pack_id"), changes, reconciliation)
 
 
-def load_current_frozen_evidence(root: str | Path) -> FrozenEvidencePack:
+def load_frozen_evidence_history(root: str | Path) -> tuple[FrozenEvidencePack, ...]:
     root = Path(root)
     candidates = []
     if root.exists():
@@ -398,11 +446,15 @@ def load_current_frozen_evidence(root: str | Path) -> FrozenEvidencePack:
     versions = [version for version, _ in candidates]
     if len(versions) != len(set(versions)):
         raise FrozenEvidenceError("duplicate frozen Evidence Pack version")
-    return max(candidates, key=lambda value:value[0])[1]
+    return tuple(pack for _, pack in sorted(candidates, key=lambda value: value[0]))
+
+
+def load_current_frozen_evidence(root: str | Path) -> FrozenEvidencePack:
+    return load_frozen_evidence_history(root)[-1]
 
 
 def export_frozen_evidence_bundle(path: str | Path) -> str:
     pack = load_frozen_evidence_pack(path)
-    payload = {"manifest": json.loads((pack.path / "manifest.json").read_text()), "coverage": _json(pack.coverage), "gap_register": json.loads((pack.path / "gap_register.json").read_text()), "evidence_inventory": json.loads((pack.path / "evidence_inventory.json").read_text()), "repository_commit": pack.repository_commit, "creation_timestamp": pack.creation_timestamp, "schema_version": pack.schema_version}
+    payload = {"manifest": json.loads((pack.path / "manifest.json").read_text()), "coverage": _json(pack.coverage), "coverage_change": _json(pack.coverage_change), "gap_register": json.loads((pack.path / "gap_register.json").read_text()), "evidence_inventory": json.loads((pack.path / "evidence_inventory.json").read_text()), "reconciliation_report": pack.reconciliation_report, "repository_commit": pack.repository_commit, "creation_timestamp": pack.creation_timestamp, "schema_version": pack.schema_version}
     payload["export_hash"] = _hash(payload)
     return _serialize(payload)

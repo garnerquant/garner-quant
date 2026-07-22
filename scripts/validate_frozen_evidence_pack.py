@@ -44,7 +44,8 @@ def main():
           "freeze subsystem has no accounting publication, migration-lot, or order call", issues)
     for name in ("opening_evidence_reader.py", "migration_approval_reader.py", "review_workflow_reader.py"):
         reader = (ROOT / "dashboard" / name).read_text(encoding="utf-8")
-        check("build_evidence_pack" not in reader and "datetime.now" not in reader and "load_current_frozen_evidence" in reader,
+        check("build_evidence_pack" not in reader and "datetime.now" not in reader and
+              ("load_frozen_evidence" in reader or "load_current_frozen_evidence" in reader),
               f"{name} consumes only explicitly frozen evidence", issues)
     dashboard = (ROOT / "pages/99_admin_health.py").read_text(encoding="utf-8")
     section = dashboard[dashboard.index('Opening snapshot evidence'):dashboard.index('Accounting observation envelopes')]

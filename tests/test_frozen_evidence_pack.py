@@ -37,6 +37,7 @@ class FrozenEvidenceTests(unittest.TestCase):
         record = NormalizedEvidenceRecord("cash-1", "CASH_MOVEMENT", NOW, "GBP", "100", unknown_fields=("counterparty",))
         self.request = EvidenceDocumentRequest("BROKER", "statement-1", NOW, "BROKER_STATEMENT", NOW, NOW,
             "HIGH", "VERIFIED", (gap.gap_id,), associated_positions=("AAPL",), associated_lots=("b1",), normalized_records=(record,))
+        self.request = replace(self.request, issue_date=NOW, import_timestamp=NOW)
         self.collected = collect_evidence(self.root / "statement.pdf", self.request, gap_ids={g.gap_id for g in self.evidence.gaps})
         self.store = self.root / "frozen"
 

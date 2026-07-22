@@ -100,10 +100,12 @@ with st.expander("Opening snapshot evidence", expanded=False):
     evidence_cols[1].metric("Gap Count", evidence.get("gap_count", "Unavailable"))
     evidence_cols[2].metric("Critical Gaps", evidence.get("critical_gaps", "Unavailable"))
     evidence_cols[3].metric("Coverage %", evidence.get("coverage", "Unavailable"))
-    st.write({"Current Frozen Pack": evidence.get("pack_id"), "Pack Version": evidence.get("pack_version"),
+    st.write({"Current Frozen Pack": evidence.get("pack_id"), "Previous Frozen Pack": evidence.get("previous_pack_id"), "Pack Version": evidence.get("pack_version"),
               "Cut-off Date": evidence.get("cutoff"), "Coverage Metrics": evidence.get("coverage_metrics"),
-              "Outstanding Gaps": evidence.get("gap_count"), "Evidence Counts": evidence.get("evidence_count"),
-              "Verification Status": evidence.get("verification"),
+              "Coverage Improvement": evidence.get("coverage_improvement"), "Resolved Gaps": evidence.get("resolved_gaps"),
+              "Outstanding Gaps": evidence.get("outstanding_gaps"), "Conflict Count": evidence.get("conflict_count"),
+              "Evidence Counts": evidence.get("evidence_count"), "Evidence Confidence": evidence.get("verification"),
+              "Import History": evidence.get("import_history"),
               "Replay Readiness": evidence.get("replay_readiness", "NOT_READY"),
               "Opening Snapshot Readiness": evidence.get("opening_snapshot_readiness", "NOT_READY"),
               "Evidence hash": evidence.get("pack_hash"), "Error": evidence.get("error")})
