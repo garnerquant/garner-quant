@@ -28,31 +28,25 @@ except ResearchReportError as exc:
     st.stop()
 
 if bundle is None:
-    st.subheader("Research Status")
-    st.markdown(summary_cards_html([
-        {"label": "Published Research", "value": "Not available", "context": "Waiting for first report", "tone": "grey",
-         "help": "No validated research report has been published yet."},
-        {"label": "Status", "value": "Waiting", "context": "No action is available on this page", "tone": "amber",
-         "help": "Research appears automatically after a validated publication is available."},
-    ], aria_label="Research publication status"), unsafe_allow_html=True)
     with st.container(border=True):
-        st.markdown("### No published research available")
+        st.markdown("## No Published Research")
         st.write("No validated research report has been published yet.")
         st.write("When research becomes available this page will display:")
-        st.markdown("- Latest report\n- Publication date\n- Number of instruments analysed\n- Candidate opportunities\n- High-conviction ideas\n- Portfolio observations")
-        st.caption("Next step: wait for the first validated research publication, then return here to review it.")
+        st.markdown("- Latest report summary\n- Publication date\n- Instruments analysed\n- Candidate opportunities\n- Portfolio observations")
+        st.markdown("**Next step**")
+        st.write("Run the research pipeline to generate the first validated report.")
     st.stop()
 
 overview = research_report_overview(bundle)
 st.subheader("Latest Published Report")
-st.markdown(summary_cards_html([
+report_cards = [
     {"label": "Publication Date", "value": overview["publication_date"], "tone": "blue"},
     {"label": "Report ID", "value": overview["report_id"], "tone": "blue"},
     {"label": "Universe Analysed", "value": overview["universe_analysed"], "tone": "blue"},
     {"label": "Candidate Opportunities", "value": overview["candidate_count"], "tone": "green"},
-    {"label": "High-conviction Ideas", "value": overview["high_conviction_count"], "tone": "grey",
-     "help": "Shown only when the validated report publishes this measure."},
-], aria_label="Latest research report summary"), unsafe_allow_html=True)
+]
+report_cards = [card for card in report_cards if card["value"] is not None]
+st.markdown(summary_cards_html(report_cards, aria_label="Latest research report summary"), unsafe_allow_html=True)
 st.subheader("Research Summary")
 st.write(overview["summary"])
 st.caption("Report integrity checks passed. Values shown above come from the validated published report.")

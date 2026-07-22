@@ -18,27 +18,30 @@ st.title("Research Lab")
 st.caption("Research pipeline status and publication readiness.")
 
 pipeline = read_research_pipeline_status(ROOT / "data" / "scanner_research")
-tone = {"RUNNING": "blue", "PUBLISHING": "blue", "COMPLETED": "green", "FAILED": "red",
-        "IDLE": "grey", "UNAVAILABLE": "grey"}[pipeline.status]
-display_status = "Status unavailable" if pipeline.status == "UNAVAILABLE" else pipeline.status.title()
+if pipeline.status == "UNAVAILABLE":
+    with st.container(border=True):
+        st.markdown("## Research pipeline not yet available")
+        st.write("No research runtime metadata has been published.")
+        st.write("When research becomes available this page will display:")
+        st.markdown("- Pipeline status\n- Current progress\n- Last successful run\n- Last failed run\n- Publication history")
+        st.markdown("**Next step**")
+        st.write("Run the research pipeline to publish metadata.")
+    st.stop()
 
+tone = {"RUNNING": "blue", "PUBLISHING": "blue", "COMPLETED": "green", "FAILED": "red", "IDLE": "grey"}[pipeline.status]
+pipeline_cards = [{"label": "Current Pipeline Status", "value": pipeline.status.title(), "tone": tone}]
+for label, value, value_tone in (
+    ("Last Successful Run", pipeline.last_successful_run, "green"),
+    ("Last Failed Run", pipeline.last_failed_run, "red"),
+    ("Last Publication", pipeline.last_publication, "blue"),
+):
+    if value is not None:
+        pipeline_cards.append({"label": label, "value": value, "tone": value_tone})
 st.subheader("Research Pipeline")
-st.markdown(summary_cards_html([
-    {"label": "Current Pipeline Status", "value": display_status, "tone": tone,
-     "help": "Status is shown only when explicit research metadata is available."},
-    {"label": "Last Successful Run", "value": pipeline.last_successful_run, "tone": "green" if pipeline.last_successful_run else "grey"},
-    {"label": "Last Failed Run", "value": pipeline.last_failed_run, "tone": "red" if pipeline.last_failed_run else "grey"},
-    {"label": "Last Publication", "value": pipeline.last_publication, "tone": "blue" if pipeline.last_publication else "grey"},
-], aria_label="Research pipeline status"), unsafe_allow_html=True)
+st.markdown(summary_cards_html(pipeline_cards, aria_label="Research pipeline status"), unsafe_allow_html=True)
 
 with st.container(border=True):
-    st.markdown("### Purpose")
-    st.write("The Research Lab manages the research generation workflow.")
-    st.write("Research is created by the existing pipeline and becomes available in Research Intelligence once validated.")
-    if pipeline.status == "UNAVAILABLE":
-        st.info("Status unavailable. No research runtime or publication metadata is currently available.")
-        st.caption("Next step: wait for an authorised research run. This page will show its status when metadata becomes available.")
-    elif pipeline.status == "FAILED":
+    if pipeline.status == "FAILED":
         st.error("The latest recorded research run failed.")
         st.caption("Next step: review the pipeline logs, then rerun the existing research workflow outside this page.")
     elif pipeline.status in {"RUNNING", "PUBLISHING"}:

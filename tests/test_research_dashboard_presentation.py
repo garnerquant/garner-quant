@@ -64,12 +64,20 @@ class ResearchDashboardPresentationTests(unittest.TestCase):
     def test_pages_have_complete_plain_english_empty_states(self):
         intelligence = (ROOT / "pages/97_research_intelligence.py").read_text(encoding="utf-8")
         lab = (ROOT / "pages/98_research_lab.py").read_text(encoding="utf-8")
-        for text in ("Research Status", "No published research available", "When research becomes available",
-                     "Latest report", "Candidate opportunities", "Next step"):
+        for text in ("No Published Research", "When research becomes available",
+                     "Latest report summary", "Candidate opportunities", "Next step"):
             self.assertIn(text, intelligence)
-        for text in ("Research Pipeline", "Purpose", "Current Pipeline Status", "Last Successful Run",
-                     "Last Failed Run", "Last Publication", "Status unavailable", "Next step"):
+        for text in ("Research pipeline not yet available", "Pipeline status", "Current progress",
+                     "Last successful run", "Last failed run", "Publication history", "Next step"):
             self.assertIn(text, lab)
+        empty_intelligence = intelligence[intelligence.index("if bundle is None:"):intelligence.index("overview =")]
+        empty_lab = lab[lab.index('if pipeline.status == "UNAVAILABLE":'):lab.index("tone =")]
+        self.assertNotIn("summary_cards_html", empty_intelligence)
+        self.assertNotIn("summary_cards_html", empty_lab)
+        for repeated in ("Not available", "Waiting for first report", '"Waiting"'):
+            self.assertNotIn(repeated, empty_intelligence)
+        for repeated in ("Status unavailable", "Last Successful Run", "Last Failed Run", "Last Publication"):
+            self.assertNotIn(repeated, empty_lab)
         self.assertNotIn("No completed immutable research report", intelligence)
         self.assertNotIn("Research runs are produced outside Streamlit", lab)
 
