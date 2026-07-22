@@ -15,6 +15,7 @@ from canonical_accounting.successor import accounting_transaction_status
 from dashboard.accounting_observation_reader import accounting_observation_status, non_fill_observation_status
 from dashboard.opening_snapshot_reader import opening_snapshot_status
 from dashboard.opening_evidence_reader import opening_evidence_status
+from dashboard.migration_approval_reader import migration_approval_status
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,6 +101,14 @@ with st.expander("Opening snapshot evidence", expanded=False):
     st.write({"Replay Readiness": evidence.get("replay_readiness", "NOT_READY"),
               "Opening Snapshot Readiness": evidence.get("opening_snapshot_readiness", "NOT_READY"),
               "Evidence hash": evidence.get("pack_hash"), "Error": evidence.get("error")})
+
+with st.expander("Migration allocation and approval", expanded=False):
+    migration = migration_approval_status(ROOT)
+    st.caption("Read-only governance proposals. No proposal creates accounting state, lots, candidates, generations, or pointers.")
+    migration_cols=st.columns(4)
+    migration_cols[0].metric("Migration Pack Status",migration.get("status","ERROR"));migration_cols[1].metric("Pending Proposals",migration.get("pending"))
+    migration_cols[2].metric("Approved",migration.get("approved"));migration_cols[3].metric("Rejected",migration.get("rejected"))
+    st.write({"Coverage %":migration.get("coverage"),"Critical Materiality":migration.get("critical"),"Readiness":migration.get("readiness","NOT_READY"),"Pack ID":migration.get("pack_id"),"Error":migration.get("error")})
 
 st.subheader("Accounting observation envelopes")
 envelopes = accounting_observation_status(ROOT / "data" / "accounting_observations" / "envelopes.jsonl",
