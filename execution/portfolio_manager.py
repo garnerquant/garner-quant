@@ -486,6 +486,7 @@ def update_portfolio(
     bar_timestamps=None,
     risk_engine=None,
     risk_context_factory=None,
+    shadow_mode=False,
 ):
     eligible_symbols = set(eligible_symbols or signals.columns)
     bar_identities = dict(bar_identities or {})
@@ -499,6 +500,7 @@ def update_portfolio(
     snapshots = load_trade_snapshots()
     ledger_events = []
     authorizations = []
+    risk_decisions = []
 
     latest_date = signals.index[-1]
     trade_date = date_string(latest_date)
@@ -651,12 +653,17 @@ def update_portfolio(
                 correlation_id=run_id,
                 strategy_timestamp=datetime.now(timezone.utc),
             )
-            risk_context = context_factory(
-                proposal,
-                reference_price=current_price,
-                reference_price_timestamp=bar_timestamp,
-            )
+            context_kwargs = {
+                "reference_price": current_price,
+                "reference_price_timestamp": bar_timestamp,
+            }
+            if shadow_mode:
+                context_kwargs["shadow_mode"] = True
+            risk_context = context_factory(proposal, **context_kwargs)
             risk_decision = central_risk.evaluate(proposal, risk_context)
+            risk_decisions.append(risk_decision)
+            if shadow_mode and risk_decision.approved:
+                raise RuntimeError("shadow mode received an executable approval")
             if not risk_decision.approved:
                 if ticker in decisions:
                     decisions[ticker]["reason"] = risk_decision.primary_reason_code.lower()
@@ -844,12 +851,17 @@ def update_portfolio(
                 correlation_id=run_id,
                 strategy_timestamp=datetime.now(timezone.utc),
             )
-            risk_context = context_factory(
-                proposal,
-                reference_price=price,
-                reference_price_timestamp=bar_timestamp,
-            )
+            context_kwargs = {
+                "reference_price": price,
+                "reference_price_timestamp": bar_timestamp,
+            }
+            if shadow_mode:
+                context_kwargs["shadow_mode"] = True
+            risk_context = context_factory(proposal, **context_kwargs)
             risk_decision = central_risk.evaluate(proposal, risk_context)
+            risk_decisions.append(risk_decision)
+            if shadow_mode and risk_decision.approved:
+                raise RuntimeError("shadow mode received an executable approval")
             if not risk_decision.approved:
                 if ticker in decisions:
                     decisions[ticker]["reason"] = risk_decision.primary_reason_code.lower()
@@ -982,16 +994,17 @@ def update_portfolio(
                     }
                 )
 
-    commit_trade_state(
-        ledger_events=ledger_events,
-        portfolio=portfolio,
-        journal=journal,
-        transaction_log=transaction_log,
-        snapshots=snapshots,
-        authorizations=authorizations,
-        authorization_now=datetime.now(timezone.utc),
-        risk_configuration=central_risk.configuration,
-    )
+    if not shadow_mode:
+        commit_trade_state(
+            ledger_events=ledger_events,
+            portfolio=portfolio,
+            journal=journal,
+            transaction_log=transaction_log,
+            snapshots=snapshots,
+            authorizations=authorizations,
+            authorization_now=datetime.now(timezone.utc),
+            risk_configuration=central_risk.configuration,
+        )
 
     trades_df = pd.DataFrame(trades)
     notification_summary = {
@@ -1013,12 +1026,13 @@ def update_portfolio(
     trace_payload = save_decision_trace(
         trace_timestamp,
         run_id,
-        "paper_execution",
+        "shadow" if shadow_mode else "paper_execution",
         len(decision_trace),
         len(trades),
         decision_trace,
     )
     trades_df.attrs["decision_trace"] = decision_trace
+    trades_df.attrs["risk_decisions"] = risk_decisions
     trades_df.attrs["decision_trace_summary"] = {
         key: trace_payload.get(key)
         for key in [

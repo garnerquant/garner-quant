@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -56,6 +57,7 @@ class PreTradeRiskEngine:
 
     def evaluate(self, proposal: OrderProposal, context: RiskContext) -> RiskDecision:
         with self._evaluation_lock:
+            self._evaluation_started = time.perf_counter()
             try:
                 return self._evaluate_and_audit(proposal, context)
             except Exception as exc:
@@ -90,8 +92,9 @@ class PreTradeRiskEngine:
             return self._finish(proposal, context, findings, findings[0].reason_code, DecisionStatus.REJECTED)
 
         if context.runtime_mode == "monitor_only":
-            findings.append(RiskFinding("runtime_mode", "failed", "MONITOR_ONLY", "runtime is monitor-only"))
-            return self._finish(proposal, context, findings, "MONITOR_ONLY", DecisionStatus.MONITOR_ONLY)
+            findings.append(RiskFinding("runtime_mode", "failed", "MONITOR_ONLY", "runtime is monitor-only; execution is ineligible"))
+            if not context.shadow_mode:
+                return self._finish(proposal, context, findings, "MONITOR_ONLY", DecisionStatus.MONITOR_ONLY)
 
         operational = [
             (self.configuration.trading_enabled and context.trading_enabled, "trading_enabled", "TRADING_DISABLED", "risk and runtime trading controls are not enabled"),
@@ -108,22 +111,45 @@ class PreTradeRiskEngine:
         else:
             findings.append(RiskFinding("kill_switch", "passed", "OK", "kill switch is inactive"))
         failed = next((item for item in findings if item.status == "failed"), None)
-        if failed:
+        if failed and not context.shadow_mode:
             return self._finish(proposal, context, findings, failed.reason_code, DecisionStatus.BLOCKED)
 
         self._market_checks(proposal, context, metadata, findings)
         failed = next((item for item in findings if item.status in {"failed", "unavailable"}), None)
-        if failed:
+        if failed and not context.shadow_mode:
             status = DecisionStatus.BLOCKED if failed.reason_code in BLOCK_REASON_CODES else DecisionStatus.REJECTED
             return self._finish(proposal, context, findings, failed.reason_code, status)
 
         self._accounting_checks(context, findings)
         failed = next((item for item in findings if item.status in {"failed", "unavailable"}), None)
-        if failed:
+        if failed and not context.shadow_mode:
             return self._finish(proposal, context, findings, failed.reason_code, DecisionStatus.BLOCKED)
 
-        self._portfolio_checks(proposal, context, metadata, findings)
+        portfolio_available = not any(
+            item.check == "portfolio_state" and item.status == "unavailable"
+            for item in findings
+        ) and all((
+            context.accounting_active,
+            context.accounting_verified,
+            context.accounting_reconciled,
+            context.accounting_base_currency == self.configuration.base_currency,
+            context.reference_price is not None,
+            not metadata.fx_required or context.fx_rate_to_base is not None,
+        ))
+        if portfolio_available:
+            self._portfolio_checks(proposal, context, metadata, findings)
+        else:
+            findings.append(RiskFinding(
+                "projected_portfolio", "unavailable", "PORTFOLIO_STATE_UNAVAILABLE",
+                "projected exposure, affordability, cash and concentration cannot be calculated",
+            ))
         failed = next((item for item in findings if item.status in {"failed", "unavailable"}), None)
+        if context.shadow_mode:
+            primary = next(
+                (item.reason_code for item in findings if item.reason_code != "MONITOR_ONLY" and item.status in {"failed", "unavailable"}),
+                "MONITOR_ONLY",
+            )
+            return self._finish(proposal, context, findings, primary, DecisionStatus.MONITOR_ONLY)
         if failed:
             status = DecisionStatus.BLOCKED if failed.reason_code in BLOCK_REASON_CODES else DecisionStatus.REJECTED
             return self._finish(proposal, context, findings, failed.reason_code, status)
@@ -258,6 +284,29 @@ class PreTradeRiskEngine:
             findings.append(RiskFinding("portfolio_equity", "unavailable", "PORTFOLIO_STATE_UNAVAILABLE", "portfolio equity must be positive"))
             return
         projected_cash = cash - notional - fees if proposal.side.upper() == "BUY" else cash + notional - fees
+        projected_positions = dict(positions)
+        if projected_position:
+            projected_positions[proposal.symbol] = projected_position
+        else:
+            projected_positions.pop(proposal.symbol, None)
+        gross = sum(abs(value) for value in projected_positions.values()) + decimal_value(context.open_order_notional_base, "open_order_notional_base")
+        net = sum(projected_positions.values())
+        concentration = projected_position / equity
+        findings.append(RiskFinding(
+            "projected_portfolio", "passed", "OK", "projected post-trade portfolio values calculated",
+            {
+                "order_notional_base": notional,
+                "estimated_fees_base": fees,
+                "projected_cash_base": projected_cash,
+                "affordability_shortfall_base": max(Decimal("0"), -projected_cash),
+                "projected_position_base": projected_position,
+                "projected_concentration_ratio": concentration,
+                "projected_gross_exposure_base": gross,
+                "projected_gross_exposure_ratio": gross / equity,
+                "projected_net_exposure_base": net,
+                "projected_net_exposure_ratio": abs(net) / equity,
+            },
+        ))
         if proposal.side.upper() == "BUY" and projected_cash < 0:
             findings.append(RiskFinding("cash", "failed", "INSUFFICIENT_CASH", "post-trade cash would be negative", {"projected_cash_base": projected_cash}))
         limits = self.configuration
@@ -266,15 +315,8 @@ class PreTradeRiskEngine:
         if not reducing or not limits.reduction_orders_allowed_when_limits_exceeded:
             if projected_position > limits.maximum_position_notional_base:
                 findings.append(RiskFinding("position_notional", "failed", "POSITION_LIMIT_EXCEEDED", "projected position exceeds notional limit"))
-            if projected_position / equity > limits.maximum_position_ratio:
+            if concentration > limits.maximum_position_ratio:
                 findings.append(RiskFinding("concentration", "failed", "CONCENTRATION_LIMIT_EXCEEDED", "projected position exceeds concentration limit"))
-        projected_positions = dict(positions)
-        if projected_position:
-            projected_positions[proposal.symbol] = projected_position
-        else:
-            projected_positions.pop(proposal.symbol, None)
-        gross = sum(abs(value) for value in projected_positions.values()) + decimal_value(context.open_order_notional_base, "open_order_notional_base")
-        net = sum(projected_positions.values())
         if not reducing or not limits.reduction_orders_allowed_when_limits_exceeded:
             if gross / equity > limits.maximum_gross_exposure_ratio:
                 findings.append(RiskFinding("gross_exposure", "failed", "GROSS_EXPOSURE_LIMIT_EXCEEDED", "projected gross exposure exceeds limit"))
@@ -332,7 +374,17 @@ class PreTradeRiskEngine:
             primary_reason_code=reason, summary="Order approved by central pre-trade risk engine" if status is DecisionStatus.APPROVED else f"Order not approved: {reason}",
             findings=tuple(findings), checks_performed=tuple(item.check for item in findings),
             checks_passed=passed, checks_failed=failed, checks_unavailable=unavailable,
-            relevant_limits=self.configuration.limits(), observed_values={"runtime_mode": context.runtime_mode},
+            relevant_limits=self.configuration.limits(), observed_values={
+                "runtime_mode": context.runtime_mode,
+                "shadow_mode": context.shadow_mode,
+                "execution_eligible": False if context.shadow_mode else status is DecisionStatus.APPROVED,
+                **{
+                    key: value
+                    for item in findings
+                    if item.check == "projected_portfolio"
+                    for key, value in item.observed.items()
+                },
+            },
             software_version=SOFTWARE_VERSION, configuration_version=self.configuration.configuration_version,
             configuration_hash=self.configuration.configuration_hash, proposal_fingerprint=proposal_fingerprint,
             context_fingerprint=context_fingerprint, accounting_generation_id=context.accounting_generation_id,
@@ -342,6 +394,7 @@ class PreTradeRiskEngine:
                 "fx": self._safe_timestamp(context.fx_timestamp),
             },
             correlation_id=proposal.correlation_id,
+            evaluation_latency_ms=Decimal(str(round((time.perf_counter() - self._evaluation_started) * 1000, 3))),
         )
 
     @staticmethod

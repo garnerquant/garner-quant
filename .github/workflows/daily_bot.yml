@@ -37,6 +37,7 @@ jobs:
           python scripts/validate_atomic_trade_state.py
           python scripts/validate_execution_input_guards.py
           python scripts/validate_pre_trade_risk_engine.py
+          python scripts/validate_risk_shadow_mode.py
           python scripts/validate_canonical_currency_generation.py
           python scripts/validate_accounting_reconciliation.py
           python scripts/validate_accounting_reconciliation_output.py

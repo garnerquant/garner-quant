@@ -128,6 +128,7 @@ class RiskContext:
     estimated_fees_base: Decimal = Decimal("0")
     seen_proposal_ids: frozenset[str] = frozenset()
     trace_id: str | None = None
+    shadow_mode: bool = False
 
     def __post_init__(self):
         object.__setattr__(self, "now", utc_datetime(self.now, "now"))
@@ -179,6 +180,7 @@ class RiskDecision:
     accounting_generation_id: str | None
     market_data_timestamps: dict[str, str | None]
     correlation_id: str
+    evaluation_latency_ms: Decimal = Decimal("0")
 
     def to_dict(self) -> dict[str, Any]:
         return json_value(asdict(self))

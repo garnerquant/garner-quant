@@ -107,6 +107,7 @@ def build_production_risk_context(
     runtime_status_path=Path("data/live_runtime_status.json"),
     accounting_state_root=Path("data/accounting_generations"),
     now=None,
+    shadow_mode=False,
 ) -> RiskContext:
     instant = utc_datetime(now or datetime.now(timezone.utc), "now")
     config, runtime = _runtime_state(runtime_config_path, runtime_status_path)
@@ -137,4 +138,5 @@ def build_production_risk_context(
         strategy_exposure_base=None,
         market_exposure_base=market_exposure, currency_exposure_base=currency_exposure,
         estimated_fees_base=Decimal("0"), seen_proposal_ids=frozenset(), trace_id=proposal.correlation_id,
+        shadow_mode=bool(shadow_mode),
     )

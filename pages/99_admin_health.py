@@ -10,6 +10,7 @@ from ui.auth import require_dashboard_login
 from ui.responsive import apply_responsive_styles
 from ui.runtime_status import load_runtime_status, runtime_freshness, runtime_state
 from risk_engine.diagnostics import load_risk_diagnostics
+from risk_engine.operations import activation_readiness, configuration_health, decision_history, risk_metrics
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +58,58 @@ st.caption(
     f"{latest_risk.get('status', 'None')} | "
     f"{latest_risk.get('primary_reason_code', 'No evaluations recorded')}"
 )
+
+try:
+    metrics = risk_metrics()
+    history = decision_history()
+    readiness = activation_readiness()
+    latest_history = history[-1] if history else {}
+    accounting_label = "ACTIVE" if not any(item["description"] == "Accounting inactive" for item in readiness["blockers"]) else "PENDING"
+    ops = st.columns(4)
+    ops[0].metric("Accounting", accounting_label)
+    ops[1].metric("Approvals today", metrics["APPROVED"])
+    ops[2].metric("Rejections today", metrics["REJECTED"])
+    ops[3].metric("Blocked / monitor", f"{metrics['BLOCKED']} / {metrics['MONITOR_ONLY']}")
+    st.caption(
+        f"Last evaluation: {metrics['last_evaluation_timestamp'] or 'None'} | "
+        f"Average latency: {metrics['average_latency_ms'] or 'Unavailable'} ms | "
+        f"Readiness: {'READY' if readiness['ready'] else 'NOT READY'}"
+    )
+    st.caption(
+        "Latest proposal: "
+        f"{latest_history.get('strategy', 'None')} / {latest_history.get('symbol', 'None')} "
+        f"{latest_history.get('side', '')} {latest_history.get('quantity', '')} | "
+        f"Decision: {latest_history.get('decision', 'None')} | "
+        f"Reason: {latest_history.get('reason', 'None')}"
+    )
+    with st.expander("Risk decision history and readiness", expanded=False):
+        filter_cols = st.columns(5)
+        strategies = sorted({row["strategy"] for row in history if row["strategy"]})
+        symbols = sorted({row["symbol"] for row in history if row["symbol"]})
+        decisions = sorted({row["decision"] for row in history if row["decision"]})
+        reasons = sorted({row["reason"] for row in history if row["reason"]})
+        strategy_filter = filter_cols[0].selectbox("Strategy", ["All", *strategies])
+        symbol_filter = filter_cols[1].selectbox("Symbol", ["All", *symbols])
+        decision_filter = filter_cols[2].selectbox("Decision", ["All", *decisions])
+        reason_filter = filter_cols[3].selectbox("Reason", ["All", *reasons])
+        date_filter = filter_cols[4].text_input("UTC date", placeholder="YYYY-MM-DD")
+        filtered = decision_history(
+            strategy=None if strategy_filter == "All" else strategy_filter,
+            symbol=None if symbol_filter == "All" else symbol_filter,
+            decision=None if decision_filter == "All" else decision_filter,
+            reason=None if reason_filter == "All" else reason_filter,
+            date=date_filter or None,
+        )
+        st.dataframe(pd.DataFrame(filtered), width="stretch", hide_index=True)
+        st.markdown("**Rolling risk metrics**")
+        st.json(metrics)
+        st.markdown("**Activation readiness — paper execution must remain disabled**")
+        st.dataframe(pd.DataFrame(readiness["blockers"]), width="stretch", hide_index=True)
+        config_health = configuration_health()
+        st.markdown("**Configuration health**")
+        st.dataframe(pd.DataFrame(config_health.get("fields", [])), width="stretch", hide_index=True)
+except Exception as exc:
+    st.error(f"Risk operations history could not be read safely: {exc}")
 
 st.subheader("Published health artifacts")
 rows = []

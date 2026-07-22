@@ -39,6 +39,7 @@ def _run_main_unlocked(
     eligible_symbols=None,
     bar_identities=None,
     bar_timestamps=None,
+    shadow_mode=False,
 ):
     run_started = time.perf_counter()
     pipeline_events = []
@@ -119,12 +120,25 @@ def _run_main_unlocked(
         eligible_symbols=asset_tickers,
         bar_identities=bar_identities or {},
         bar_timestamps=bar_timestamps or {},
+        shadow_mode=shadow_mode,
     )
     record_event(
         "Paper Portfolio Updated",
-        "Updated paper portfolio, trade journal, and transaction log.",
+        "Evaluated shadow proposals without persistence." if shadow_mode else "Updated paper portfolio, trade journal, and transaction log.",
         {"paper_trades": len(v3_trades)},
     )
+
+    if shadow_mode:
+        risk_decisions = v3_trades.attrs.get("risk_decisions", [])
+        return {
+            "status": "shadow_complete", "symbols_scanned": len(asset_tickers),
+            "signals_count": len(signals.columns), "buy_signals": buy_signals,
+            "sell_signals": sell_signals, "hold_signals": hold_signals,
+            "trades_recorded": 0, "paper_trades": 0, "portfolio_changed": False,
+            "notifications_sent": 0, "shadow_decisions": len(risk_decisions),
+            "latest_shadow_decision": risk_decisions[-1].to_dict() if risk_decisions else None,
+            "executed_symbols": [], "events": pipeline_events,
+        }
 
     for _, trade in v3_trades.iterrows():
         record_event(
@@ -166,6 +180,7 @@ def _run_main_unlocked(
             "portfolio_v2.csv": {"index": True},
         },
     )
+
     ledger = load_trade_ledger()
     audit_trail, trade_stats = write_authoritative_trade_reports(
         legacy_journal=trade_journal,
@@ -300,6 +315,7 @@ def main(
     eligible_symbols=None,
     bar_identities=None,
     bar_timestamps=None,
+    shadow_mode=False,
 ):
     execution_lock = acquire_execution_lock(context="main_v2.main")
 
@@ -342,6 +358,7 @@ def main(
             eligible_symbols=eligible_symbols,
             bar_identities=bar_identities,
             bar_timestamps=bar_timestamps,
+            shadow_mode=shadow_mode,
         )
     finally:
         execution_lock.release()

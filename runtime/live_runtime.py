@@ -840,6 +840,47 @@ def run_paper_execution(
     return entry
 
 
+def run_shadow_evaluation(
+    now,
+    *,
+    eligible_symbols,
+    bar_identities,
+    bar_timestamps,
+    events=None,
+):
+    """Evaluate real strategy proposals without entering an execution path."""
+    events = events if events is not None else []
+    entry = {
+        "timestamp": iso_timestamp(now), "status": "started",
+        "eligible_symbols": list(eligible_symbols), "shadow_decisions": 0,
+        "trades_recorded": 0, "portfolio_changed": False,
+        "executed_symbols": [], "error": None,
+    }
+    append_event(events, "Risk Shadow Started", "Evaluating strategy proposals with execution disabled.", now=now)
+    try:
+        from main_v2 import main as run_daily_pipeline
+
+        result = run_daily_pipeline(
+            show_charts=False, send_telegram=False, sync_remote=False,
+            eligible_symbols=eligible_symbols, bar_identities=bar_identities,
+            bar_timestamps=bar_timestamps, shadow_mode=True,
+        ) or {}
+        if result.get("trades_recorded") or result.get("portfolio_changed") or result.get("executed_symbols"):
+            raise RuntimeError("shadow pipeline reported an execution side effect")
+        entry.update({
+            "status": "completed", "shadow_decisions": int(result.get("shadow_decisions", 0)),
+            "latest_shadow_decision": result.get("latest_shadow_decision"),
+        })
+        append_event(
+            events, "Risk Shadow Completed", "Risk proposals were evaluated without execution.",
+            details={"decisions": entry["shadow_decisions"]}, now=now,
+        )
+    except Exception as exc:
+        entry.update({"status": "error", "error": str(exc)})
+        append_event(events, "Risk Shadow Error", "Shadow evaluation failed closed.", severity="error", details={"error": str(exc)}, now=now)
+    return entry
+
+
 def run_cycle(config, started_at, cycle_count):
     now = utc_now()
     cycle_started_at = now
@@ -886,6 +927,7 @@ def run_cycle(config, started_at, cycle_count):
     notification_summary = empty_notification_summary()
     last_error = None
     execution_entry = None
+    shadow_entry = None
     execution_log = load_execution_log()
     blocked_reason = paper_execution_blocked_reason(
         config,
@@ -910,7 +952,7 @@ def run_cycle(config, started_at, cycle_count):
             now=now,
             strategy_version=STRATEGY_VERSION,
             configuration_version=STRATEGY_CONFIGURATION_VERSION,
-            execution_block_reason=blocked_reason,
+            execution_block_reason=None if config.get("mode") == "monitor_only" else blocked_reason,
         )
         append_event(
             events,
@@ -1043,6 +1085,26 @@ def run_cycle(config, started_at, cycle_count):
             severity="warning",
             details={"error": str(exc)},
         )
+
+    if config.get("enabled", True) and config.get("mode") == "monitor_only" and scheduler_summary["eligible_symbols"]:
+        shadow_entry = run_shadow_evaluation(
+            now,
+            eligible_symbols=scheduler_summary["eligible_symbols"],
+            bar_identities=scheduler_summary["bar_identities"],
+            bar_timestamps=scheduler_summary["bar_timestamps"],
+            events=events,
+        )
+        from runtime.bar_scheduler import ProcessedBarStore
+
+        scheduler_store = ProcessedBarStore()
+        for decision in scheduler_summary["claimed"]:
+            scheduler_store.transition(
+                decision.identity, "NO_ACTION" if shadow_entry.get("status") == "completed" else "FAILED_FINAL",
+                timestamp=now, signal_result="shadow_evaluated",
+                execution_result="not_executed", failure_reason=shadow_entry.get("error"),
+            )
+        if shadow_entry.get("status") == "error":
+            last_error = shadow_entry.get("error")
 
     if blocked_reason is None and scheduler_summary["eligible_symbols"]:
         execution_entry = run_paper_execution(
@@ -1190,6 +1252,7 @@ def run_cycle(config, started_at, cycle_count):
         ),
         "paper_execution_blocked_reason": blocked_reason,
         "strategy_scheduler": json_safe(scheduler_summary),
+        "risk_shadow": json_safe(shadow_entry),
         "last_execution_at": (
             execution_entry.get("timestamp")
             if execution_entry is not None
