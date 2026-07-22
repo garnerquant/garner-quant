@@ -164,7 +164,7 @@ def main():
           "dashboard retains exactly the total-equity and drawdown chart render calls", issues)
     check(
         "Day Equity Curve" in source
-        and 'st.subheader("Drawdown")' in source,
+        and 'class="performance-drawdown-heading">Drawdown</h3>' in source,
         "remaining dashboard chart-title set is unchanged",
         issues,
     )

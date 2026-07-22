@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 import altair as alt
 import pandas as pd
@@ -95,6 +96,15 @@ class PerformanceChartStyleTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual([row["drawdown_pct"] for row in rows], [0, -1])
         self.assertTrue(all(row["drawdown_pct"] <= 0 for row in rows))
+
+    def test_drawdown_spacing_is_scoped_without_changing_chart_render_size(self):
+        source = (Path(__file__).resolve().parents[1] / "web_dashboard.py").read_text(encoding="utf-8")
+        self.assertIn('.performance-drawdown-heading', source)
+        self.assertIn('margin-top: -0.5rem', source)
+        self.assertEqual(source.count('st.altair_chart('), 2)
+        self.assertEqual(source.count('width="stretch"'), 2)
+        self.assertIn('apply_performance_chart_layout(chart)', source)
+        self.assertIn('build_drawdown_chart(', source)
 
 
 if __name__ == "__main__":

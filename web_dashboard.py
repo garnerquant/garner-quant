@@ -114,6 +114,15 @@ def inject_mobile_css():
             max-width: 1280px;
         }
 
+        .performance-drawdown-heading {
+            margin: 0;
+            padding: 0;
+        }
+
+        [data-testid="stElementContainer"]:has(.performance-drawdown-heading) {
+            margin-top: -0.5rem;
+        }
+
         .status-card {
             background: linear-gradient(135deg, #114f2f, #0d3823);
             border: 1px solid #2f9d5c;
@@ -3603,7 +3612,10 @@ with home_tab:
 
         render_equity_curve(chart_data, current_balance, start_balance)
 
-        st.subheader("Drawdown")
+        st.markdown(
+            '<h3 class="performance-drawdown-heading">Drawdown</h3>',
+            unsafe_allow_html=True,
+        )
         if len(challenge_result.data) == 1:
             st.info("Only the starting equity observation is available; drawdown is 0.00%.")
         else:
