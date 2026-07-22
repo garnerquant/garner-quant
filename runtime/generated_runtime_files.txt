@@ -43,6 +43,7 @@ data/runtime/
 data/accounting_generations/
 data/accounting_observations/
 data/opening_snapshot_candidates/
+data/frozen_evidence_packs/
 data/risk_engine/
 runtime_data/
 logs/

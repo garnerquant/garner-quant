@@ -92,19 +92,24 @@ with st.expander("Canonical opening snapshot", expanded=False):
               "Inactive":opening.get("inactive"),"Latest validation":opening.get("validated_at")})
 
 with st.expander("Opening snapshot evidence", expanded=False):
-    evidence = opening_evidence_status(ROOT)
-    st.caption("Read-only evidence inventory and gap analysis. This does not create a candidate, generation, lot, or pointer.")
+    frozen_evidence_root = ROOT / "data" / "frozen_evidence_packs"
+    evidence = opening_evidence_status(frozen_evidence_root)
+    st.caption("Read-only frozen evidence inventory and gap analysis. Dashboard reads never regenerate evidence.")
     evidence_cols = st.columns(4)
     evidence_cols[0].metric("Evidence Pack Status", evidence.get("status", "ERROR"))
     evidence_cols[1].metric("Gap Count", evidence.get("gap_count", "Unavailable"))
     evidence_cols[2].metric("Critical Gaps", evidence.get("critical_gaps", "Unavailable"))
     evidence_cols[3].metric("Coverage %", evidence.get("coverage", "Unavailable"))
-    st.write({"Replay Readiness": evidence.get("replay_readiness", "NOT_READY"),
+    st.write({"Current Frozen Pack": evidence.get("pack_id"), "Pack Version": evidence.get("pack_version"),
+              "Cut-off Date": evidence.get("cutoff"), "Coverage Metrics": evidence.get("coverage_metrics"),
+              "Outstanding Gaps": evidence.get("gap_count"), "Evidence Counts": evidence.get("evidence_count"),
+              "Verification Status": evidence.get("verification"),
+              "Replay Readiness": evidence.get("replay_readiness", "NOT_READY"),
               "Opening Snapshot Readiness": evidence.get("opening_snapshot_readiness", "NOT_READY"),
               "Evidence hash": evidence.get("pack_hash"), "Error": evidence.get("error")})
 
 with st.expander("Migration allocation and approval", expanded=False):
-    migration = migration_approval_status(ROOT)
+    migration = migration_approval_status(frozen_evidence_root)
     st.caption("Read-only governance proposals. No proposal creates accounting state, lots, candidates, generations, or pointers.")
     migration_cols=st.columns(4)
     migration_cols[0].metric("Migration Pack Status",migration.get("status","ERROR"));migration_cols[1].metric("Pending Proposals",migration.get("pending"))
@@ -112,7 +117,7 @@ with st.expander("Migration allocation and approval", expanded=False):
     st.write({"Coverage %":migration.get("coverage"),"Critical Materiality":migration.get("critical"),"Readiness":migration.get("readiness","NOT_READY"),"Pack ID":migration.get("pack_id"),"Error":migration.get("error")})
 
 with st.expander("Operator migration review", expanded=False):
-    review=review_workflow_status(ROOT)
+    review=review_workflow_status(frozen_evidence_root)
     st.caption("Authenticated read-only review. Decisions are created explicitly through the offline governance service; this dashboard has no approval controls.")
     review_cols=st.columns(4);review_cols[0].metric("Review Status",review.get("status","ERROR"));review_cols[1].metric("Outstanding Reviews",review.get("outstanding"));review_cols[2].metric("Critical Pending",review.get("critical_pending"));review_cols[3].metric("Approval Coverage",f"{review.get('coverage',0)}%")
     st.write({"Evidence Version":review.get("evidence_version"),"Approval Pack Version":review.get("pack_version"),"Proposals":review.get("proposals"),"Error":review.get("error")})

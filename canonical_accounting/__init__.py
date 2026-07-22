@@ -18,6 +18,11 @@ from canonical_accounting.opening_snapshot import OpeningSnapshotCandidate, Open
 from canonical_accounting.evidence_pack import OpeningSnapshotEvidencePack, build_evidence_pack
 from canonical_accounting.migration_approval import ApprovalPack, ApprovalRecord, MigrationProposal, build_migration_approval_pack
 from canonical_accounting.review_workflow import ReviewRecord, ReviewExportBundle, create_review, export_review_bundle
+from canonical_accounting.frozen_evidence import (
+    EvidenceDocumentRequest, FrozenEvidencePack, NormalizedEvidenceRecord,
+    collect_evidence, export_frozen_evidence_bundle, freeze_evidence_pack,
+    load_current_frozen_evidence, load_frozen_evidence_pack,
+)
 
 __all__ = [
     "ConversionResult",
@@ -41,4 +46,7 @@ __all__ = [
     "build_evidence_pack",
     "ApprovalPack", "ApprovalRecord", "MigrationProposal", "build_migration_approval_pack",
     "ReviewRecord", "ReviewExportBundle", "create_review", "export_review_bundle",
+    "EvidenceDocumentRequest", "FrozenEvidencePack", "NormalizedEvidenceRecord",
+    "collect_evidence", "freeze_evidence_pack", "load_frozen_evidence_pack",
+    "load_current_frozen_evidence", "export_frozen_evidence_bundle",
 ]
