@@ -8,6 +8,8 @@ from pathlib import Path
 import pandas as pd
 
 from canonical_accounting.instruments import get_instrument_metadata
+from canonical_accounting.generation import load_active_generation
+from canonical_accounting.successor import load_transactional_generation
 from dashboard.accounting_reader import load_dashboard_accounting_status
 from risk_engine.models import OrderProposal, RiskContext, decimal_value, utc_datetime
 
@@ -55,11 +57,11 @@ def _runtime_state(config_path, status_path):
 def _canonical_state(state_root):
     status = load_dashboard_accounting_status(state_root)
     if status.bundle is None:
-        return status, None, None, None, None, None, None, None, None
+        return status, None, None, None, None, None, None, None, None, None
     bundle = status.bundle
     broker = bundle.broker.iloc[0] if len(bundle.broker) == 1 else None
     if broker is None:
-        return status, None, None, None, None, None, None, None, None
+        return status, None, None, None, None, None, None, None, None, None
     positions = {}
     quantities = {}
     market_exposure = {}
@@ -90,9 +92,16 @@ def _canonical_state(state_root):
             daily_realised = decimal_value(latest["realised_pnl"], "latest realised pnl") - decimal_value(first["realised_pnl"], "day-start realised pnl")
             daily_total = decimal_value(latest["portfolio_value"], "latest equity") - decimal_value(first["portfolio_value"], "day-start equity")
             hwm = max(decimal_value(value, "tracker equity") for value in tracker["portfolio_value"])
+    strategy_exposure = None
+    try:
+        active_generation = load_active_generation(state_root)
+        _, snapshot, _ = load_transactional_generation(active_generation.path, expected_id=active_generation.generation_id)
+        strategy_exposure = {key: value.gross for key, value in snapshot.strategy_exposure.items()}
+    except Exception:
+        strategy_exposure = None
     return (
         status, broker, positions, quantities, market_exposure, currency_exposure,
-        daily_realised, daily_total, hwm,
+        daily_realised, daily_total, hwm, strategy_exposure,
     )
 
 
@@ -111,7 +120,7 @@ def build_production_risk_context(
 ) -> RiskContext:
     instant = utc_datetime(now or datetime.now(timezone.utc), "now")
     config, runtime = _runtime_state(runtime_config_path, runtime_status_path)
-    accounting, broker, positions, quantities, market_exposure, currency_exposure, daily_realised, daily_total, hwm = _canonical_state(accounting_state_root)
+    accounting, broker, positions, quantities, market_exposure, currency_exposure, daily_realised, daily_total, hwm, strategy_exposure = _canonical_state(accounting_state_root)
     manifest = accounting.bundle.manifest if accounting.bundle is not None else {}
     reconciliation = str(broker.get("reconciliation_status", "")) if broker is not None else ""
     return RiskContext(
@@ -135,7 +144,7 @@ def build_production_risk_context(
         positions_base=positions, position_quantities=quantities, open_order_notional_base=Decimal("0") if positions is not None else None,
         daily_realised_pnl_base=daily_realised, daily_total_pnl_base=daily_total,
         equity_high_water_mark_base=hwm,
-        strategy_exposure_base=None,
+        strategy_exposure_base=strategy_exposure,
         market_exposure_base=market_exposure, currency_exposure_base=currency_exposure,
         estimated_fees_base=Decimal("0"), seen_proposal_ids=frozenset(), trace_id=proposal.correlation_id,
         shadow_mode=bool(shadow_mode),

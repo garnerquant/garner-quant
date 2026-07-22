@@ -66,13 +66,13 @@ def fifo_accounting(events: pd.DataFrame) -> dict:
             raise CanonicalLedgerError("duplicate canonical event ID")
         seen.add(event_id)
         kind = str(event["event_type"]).upper()
-        if kind in {"OPENING_CASH", "GENERATION_INITIALIZATION"}:
+        if kind in {"OPENING_CASH", "GENERATION_INITIALIZATION", "DEPOSIT", "WITHDRAWAL", "FEE", "DIVIDEND", "FX_ADJUSTMENT", "CORPORATE_ACTION"}:
             continue
         symbol = str(event["symbol"])
         quantity = decimal_value(event["quantity"], "quantity")
         base_gross = decimal_value(event["base_gross_amount"], "base_gross_amount")
         base_fee = decimal_value(event["base_fee"], "base_fee")
-        if kind in {"BUY", "OPENING_POSITION"}:
+        if kind in {"BUY", "BUY_FILL", "OPENING_POSITION"}:
             lots[symbol].append({
                 "event_id": event_id,
                 "remaining_quantity": quantity,
@@ -80,7 +80,7 @@ def fifo_accounting(events: pd.DataFrame) -> dict:
                 "entry_fx_rate": decimal_value(event["fx_rate_to_base"], "fx_rate_to_base"),
             })
             continue
-        if kind != "SELL":
+        if kind not in {"SELL", "SELL_FILL"}:
             raise CanonicalLedgerError(f"unsupported canonical event type: {kind}")
         remaining = quantity
         exit_fee_remaining = base_fee

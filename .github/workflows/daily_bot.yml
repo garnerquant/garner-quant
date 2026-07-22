@@ -39,6 +39,7 @@ jobs:
           python scripts/validate_pre_trade_risk_engine.py
           python scripts/validate_risk_shadow_mode.py
           python scripts/validate_canonical_currency_generation.py
+          python scripts/validate_transactional_canonical_accounting.py
           python scripts/validate_accounting_reconciliation.py
           python scripts/validate_accounting_reconciliation_output.py
           python scripts/validate_per_market_bar_scheduler.py

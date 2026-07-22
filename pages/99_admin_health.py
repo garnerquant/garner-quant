@@ -11,6 +11,7 @@ from ui.responsive import apply_responsive_styles
 from ui.runtime_status import load_runtime_status, runtime_freshness, runtime_state
 from risk_engine.diagnostics import load_risk_diagnostics
 from risk_engine.operations import activation_readiness, configuration_health, decision_history, risk_metrics
+from canonical_accounting.successor import accounting_transaction_status
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,6 +111,22 @@ try:
         st.dataframe(pd.DataFrame(config_health.get("fields", [])), width="stretch", hide_index=True)
 except Exception as exc:
     st.error(f"Risk operations history could not be read safely: {exc}")
+
+st.subheader("Canonical accounting transactions")
+accounting_transactions = accounting_transaction_status(ROOT / "data" / "accounting_generations")
+accounting_cols = st.columns(4)
+accounting_cols[0].metric("Pointer", accounting_transactions["pointer_status"])
+accounting_cols[1].metric("Generation", accounting_transactions["current_generation"] or "INACTIVE")
+accounting_cols[2].metric("Lineage", accounting_transactions["lineage_health"])
+accounting_cols[3].metric("Snapshot", accounting_transactions["snapshot_health"])
+st.caption(
+    f"Parent: {accounting_transactions.get('parent_generation') or 'None'} | "
+    f"Manifest: {accounting_transactions['manifest_validation']} | "
+    f"Pending activation: {accounting_transactions['pending_activation']} | "
+    f"Age: {accounting_transactions.get('generation_age_seconds') or 'Unavailable'} seconds | "
+    f"Last event: {accounting_transactions.get('last_accounting_event') or 'None'} | "
+    f"Strategies: {accounting_transactions.get('strategy_count', 0)}"
+)
 
 st.subheader("Published health artifacts")
 rows = []

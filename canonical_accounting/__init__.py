@@ -8,6 +8,9 @@ from canonical_accounting.currency import (
     convert_amount_to_base,
     normalize_price_to_major_unit,
 )
+from canonical_accounting.events import AccountingEvent, AccountingEventType
+from canonical_accounting.snapshot import CanonicalPortfolioSnapshot
+from canonical_accounting.successor import SuccessorGenerationWriter
 
 __all__ = [
     "ConversionResult",
@@ -16,4 +19,8 @@ __all__ = [
     "InstrumentMetadata",
     "convert_amount_to_base",
     "normalize_price_to_major_unit",
+    "AccountingEvent",
+    "AccountingEventType",
+    "CanonicalPortfolioSnapshot",
+    "SuccessorGenerationWriter",
 ]
