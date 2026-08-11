@@ -1,5 +1,6 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import json
 
 import pytest
 
@@ -44,3 +45,73 @@ def test_point_in_time_mode_uses_only_cutoff_available_observations():
 
 def test_publication_root_must_be_explicit_and_outside_repository(tmp_path):
     with pytest.raises(ValueError): publish_bundle(assemble_validated_research(**kwargs()), ".")
+
+
+def _published(tmp_path):
+    return publish_bundle(assemble_validated_research(**kwargs()), tmp_path / "isolated_test_root")
+
+
+@pytest.mark.parametrize("name", ["unexpected.json", ".hidden", ".research-leftover"])
+def test_publication_rejects_unexpected_files(tmp_path, name):
+    namespace = _published(tmp_path)
+    (namespace / name).write_text("x", encoding="utf-8")
+    assert not verify_publication(namespace)
+
+
+def test_publication_rejects_unexpected_directory(tmp_path):
+    namespace = _published(tmp_path)
+    (namespace / "extra").mkdir()
+    assert not verify_publication(namespace)
+
+
+def test_publication_rejects_missing_or_modified_content(tmp_path):
+    namespace = _published(tmp_path)
+    (namespace / "bundle.json").unlink()
+    assert not verify_publication(namespace)
+    namespace = _published(tmp_path / "second")
+    (namespace / "bundle.json").write_bytes(b"changed")
+    assert not verify_publication(namespace)
+
+
+def test_publication_rejects_invalid_manifest_metadata(tmp_path):
+    namespace = _published(tmp_path)
+    manifest_path = namespace / "content_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"][0]["size"] = -1
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert not verify_publication(namespace)
+
+
+@pytest.mark.parametrize("name", ["../outside.json", r"..\outside.json", "C:/outside.json", r"C:\outside.json", r"\\server\share\outside.json", "evidence/../../outside.json"])
+def test_publication_rejects_unsafe_manifest_paths(tmp_path, name):
+    namespace = _published(tmp_path)
+    manifest_path = namespace / "content_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"][0]["name"] = name
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert not verify_publication(namespace)
+
+
+def test_publication_rejects_duplicate_and_case_collision_entries(tmp_path):
+    namespace = _published(tmp_path)
+    manifest_path = namespace / "content_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    item = dict(manifest["files"][0])
+    manifest["files"].append(item)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert not verify_publication(namespace)
+    namespace = _published(tmp_path / "case")
+    manifest_path = namespace / "content_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"].append({**manifest["files"][0], "name": "BUNDLE.JSON"})
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert not verify_publication(namespace)
+
+
+def test_publication_rejects_symlink_when_supported(tmp_path):
+    namespace = _published(tmp_path)
+    try:
+        (namespace / "link").symlink_to(namespace / "bundle.json")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+    assert not verify_publication(namespace)

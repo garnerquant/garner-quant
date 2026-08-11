@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import tempfile
+import stat
 
 from data.point_in_time import FundamentalObservation
 from research.evidence_mode import FieldRequirement, EvidenceModeDecision, select_evidence
@@ -87,10 +88,77 @@ def publish_bundle(bundle: ValidatedResearchBundle, output_root) -> Path:
     return namespace
 
 
+def _reject_duplicate_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _safe_manifest_name(value):
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise ValueError("invalid publication path")
+    normalized = value.replace("\\", "/")
+    path = Path(normalized)
+    if normalized.startswith(("/", "//")) or len(normalized) >= 2 and normalized[1] == ":":
+        raise ValueError("absolute publication path")
+    parts = normalized.split("/")
+    if len(parts) != 1 or parts[0] in {"", ".", ".."}:
+        raise ValueError("unsupported publication path")
+    if path.is_absolute() or path.name != normalized:
+        raise ValueError("unsupported publication path")
+    return normalized
+
+
+def _regular_entry(path):
+    try:
+        info = path.lstat()
+    except (FileNotFoundError, OSError):
+        return False
+    return stat.S_ISREG(info.st_mode)
+
+
 def verify_publication(namespace) -> bool:
-    path = Path(namespace)
-    manifest = json.loads((path / "content_manifest.json").read_text(encoding="utf-8"))
-    expected = {item["name"]: item for item in manifest["files"]}
-    if set(expected) != {"bundle.json"}: return False
-    target = path / "bundle.json"
-    return target.exists() and target.stat().st_size == expected["bundle.json"]["size"] and _file_hash(target) == expected["bundle.json"]["sha256"]
+    """Verify an exact, flat publication namespace without following links."""
+    try:
+        path = Path(namespace)
+        if not path.is_dir() or path.is_symlink():
+            return False
+        manifest_path = path / "content_manifest.json"
+        if not _regular_entry(manifest_path):
+            return False
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+        if manifest.get("schema_version") != 1 or not isinstance(manifest.get("run_id"), str) or not isinstance(manifest.get("files"), list):
+            return False
+        expected = {}
+        for item in manifest["files"]:
+            if not isinstance(item, dict) or set(item) != {"name", "size", "sha256"}:
+                return False
+            name = _safe_manifest_name(item["name"])
+            key = name.casefold()
+            if key in expected:
+                return False
+            if not isinstance(item["size"], int) or isinstance(item["size"], bool) or item["size"] < 0:
+                return False
+            digest = item["sha256"]
+            if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+                return False
+            expected[key] = (name, item["size"], digest)
+        if set(expected) != {"bundle.json"}:
+            return False
+        actual = []
+        for entry in path.iterdir():
+            if entry.is_symlink() or not _regular_entry(entry):
+                return False
+            actual.append(entry.name)
+        actual_keys = [name.casefold() for name in actual]
+        if len(actual_keys) != len(set(actual_keys)) or set(actual_keys) != {"bundle.json", "content_manifest.json"}:
+            return False
+        target = path / expected["bundle.json"][0]
+        size = expected["bundle.json"][1]
+        digest = expected["bundle.json"][2]
+        return target.stat().st_size == size and _file_hash(target) == digest
+    except (OSError, ValueError, TypeError, UnicodeError, json.JSONDecodeError):
+        return False
