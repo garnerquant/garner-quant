@@ -9,6 +9,17 @@ from pathlib import Path
 import stat
 import sys
 
+
+def _bootstrap_repository_imports():
+    if __package__ in (None, ""):
+        repository_root = Path(__file__).resolve().parents[1]
+        repository_root_text = str(repository_root)
+        if repository_root_text not in sys.path:
+            sys.path.insert(0, repository_root_text)
+
+
+_bootstrap_repository_imports()
+
 from research import shadow_input as _shadow_input
 from research import shadow_report as _shadow_report
 from research import shadow_runner as _shadow_runner

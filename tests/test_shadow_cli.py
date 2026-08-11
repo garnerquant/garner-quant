@@ -4,6 +4,8 @@ import ast
 from io import StringIO
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -39,6 +41,19 @@ def test_import_has_no_side_effects(tmp_path):
 def test_help_is_success_and_bounded():
     code, out, err = invoke(["--help"])
     assert code == 0 and "--input" in out and err == ""
+
+
+def test_direct_script_invocation_bootstraps_repository_imports():
+    result = subprocess.run(
+        [sys.executable, "scripts/run_shadow_research.py", "--help"],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "--input" in result.stdout
+    assert result.stderr == ""
 
 
 def test_missing_input_is_argument_error():
