@@ -1,0 +1,2 @@
+import { ReactNode } from "react";
+export function ChartCard({ title, subtitle, actions, children }: { title: string; subtitle?: string; actions?: ReactNode; children: ReactNode }) { return <section className="rounded-xl border border-slate-700/70 bg-[#111c24] p-5 shadow-[0_8px_24px_rgba(0,0,0,.12)]"><div className="mb-5 flex items-start justify-between gap-3"><div><h2 className="text-xl font-semibold text-slate-100">{title}</h2>{subtitle ? <p className="mt-1.5 text-[15px] text-slate-300">{subtitle}</p> : null}</div>{actions}</div>{children}</section>; }

@@ -1,0 +1,11 @@
+"use client";
+import { ReactNode, useMemo, useState } from "react";
+import { ArrowDownUp } from "lucide-react";
+type Direction = "asc" | "desc";
+export interface TableColumn<T> { key: keyof T | string; label: string; sortable?: boolean; className?: string; render?: (row: T) => ReactNode; sortValue?: (row: T) => string | number; }
+export function DataTable<T extends object>({ data, columns, onRowClick }: { data: T[]; columns: TableColumn<T>[]; onRowClick?: (row: T) => void }) {
+  const [sortKey, setSortKey] = useState<string | null>(null); const [direction, setDirection] = useState<Direction>("asc");
+  const sorted = useMemo(() => { if (!sortKey) return data; const col = columns.find((c) => String(c.key) === sortKey); if (!col) return data; return [...data].sort((a,b) => { const av = col.sortValue ? col.sortValue(a) : String(a[sortKey as keyof T] ?? ""); const bv = col.sortValue ? col.sortValue(b) : String(b[sortKey as keyof T] ?? ""); const result = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv)); return direction === "asc" ? result : -result; }); }, [columns,data,direction,sortKey]);
+  const toggle = (key: string) => { if (sortKey === key) setDirection((d) => d === "asc" ? "desc" : "asc"); else { setSortKey(key); setDirection("asc"); }};
+  return <div className="overflow-hidden rounded-lg border border-slate-700/70"><div className="max-h-[540px] overflow-auto"><table className="min-w-full text-left text-[15px]"><thead className="sticky top-0 z-10 bg-[#17242d]"><tr>{columns.map((c) => <th key={String(c.key)} className={`whitespace-nowrap px-4 py-3.5 font-medium text-slate-300 ${c.className ?? ""}`}>{c.sortable ? <button onClick={() => toggle(String(c.key))} className="inline-flex items-center gap-1.5">{c.label}<ArrowDownUp size={14}/></button> : c.label}</th>)}</tr></thead><tbody className="divide-y divide-slate-700/50">{sorted.map((row,index) => <tr key={index} onClick={onRowClick ? () => onRowClick(row) : undefined} className={onRowClick ? "cursor-pointer transition hover:bg-white/[.045]" : ""}>{columns.map((c) => <td key={String(c.key)} className={`whitespace-nowrap px-4 py-4 align-middle text-[15px] text-slate-100 ${c.className ?? ""}`}>{c.render ? c.render(row) : String(row[c.key as keyof T] ?? "")}</td>)}</tr>)}</tbody></table></div></div>;
+}
