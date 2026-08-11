@@ -43,6 +43,7 @@ from dashboard.scanner_reader import ScannerDashboardReader, ScannerReaderError
 from config import PAPER_TRADING_CHALLENGE_DAYS
 from execution.trade_audit import build_authoritative_trade_audit
 from reporting.paper_performance import challenge_initial_capital
+from reporting.evidence_labels import evidence_label
 from ui.auth import require_dashboard_login
 from ui.responsive import (
     apply_responsive_styles,
@@ -3857,6 +3858,9 @@ with home_tab:
     st.divider()
 
     st.subheader(f"🚀 {PAPER_TRADING_CHALLENGE_DAYS} Day Paper Trading Challenge")
+
+    paper_label = evidence_label("paper_observation_unverified")
+    st.warning(f"{paper_label.title}\n\n{paper_label.warning}")
 
     if paper_30.empty or challenge_result is None or challenge_result.data.empty:
         if paper_30.empty:

@@ -7,6 +7,7 @@ from dashboard.operations_presentation import summary_cards_html
 from dashboard.continuous_research_reader import continuous_research_status
 from dashboard.research_report_reader import ResearchReportError, ResearchReportReader
 from dashboard.research_status_reader import research_report_overview
+from reporting.evidence_labels import evidence_label
 from ui.auth import require_dashboard_login
 from ui.responsive import apply_responsive_styles
 
@@ -19,6 +20,8 @@ apply_responsive_styles()
 
 st.title("Research Intelligence")
 st.caption("Validated research findings and published opportunities.")
+research_label = evidence_label("legacy_unverified")
+st.warning(f"{research_label.title}\n\n{research_label.warning}")
 
 continuous = continuous_research_status(ROOT / "data" / "continuous_research")
 if continuous["report"] is not None:

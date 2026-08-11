@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 
 from research.backtest_analytics import load_backtest_analytics
+from reporting.evidence_labels import evidence_label
 from ui.auth import require_dashboard_login
 from ui.responsive import (
     apply_responsive_styles,
@@ -98,6 +99,8 @@ st.warning(
     "Research-only analytics. This page reads saved CSV outputs and does not "
     "modify live runtime, paper execution, scheduler, Supabase, or notifications."
 )
+legacy_label = evidence_label("legacy_methodologically_invalid")
+st.error(f"{legacy_label.title}\n\n{legacy_label.warning}")
 
 cols = responsive_columns(5)
 cols[0].metric("Total Return", format_percent(summary["total_return"]))
