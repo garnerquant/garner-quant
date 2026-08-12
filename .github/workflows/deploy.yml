@@ -24,8 +24,13 @@ jobs:
 
       - name: Deploy on Lightsail
         run: |
+          set +e
+          timeout --foreground --signal=TERM --kill-after=30s 45m \
           ssh -i ~/.ssh/lightsail_deploy_key \
             -o IdentitiesOnly=yes \
+            -o ConnectTimeout=30 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=3 \
             "${{ secrets.AWS_USER }}@${{ secrets.AWS_HOST }}" \
             'bash -s' <<'REMOTE_DEPLOY'
           set -euo pipefail
@@ -36,6 +41,11 @@ jobs:
           COMPOSE_FILE="$APP_DIR/docker-compose.dashboard.yml"
           API_CONTAINER="garner-quant-dashboard-api"
           FRONTEND_CONTAINER="garner-quant-dashboard-preview"
+          SERVICE_TIMEOUT="2m"
+          GIT_TIMEOUT="5m"
+          PIP_TIMEOUT="15m"
+          APT_TIMEOUT="15m"
+          COMPOSE_TIMEOUT="30m"
 
           cd "$APP_DIR"
 
@@ -45,22 +55,141 @@ jobs:
             exit 1
           }
 
+          if ! timeout --foreground --kill-after=15s 30s sudo -n true; then
+            echo "Passwordless sudo is required for deployment automation on this host."
+            exit 1
+          fi
+
           RUNTIME_BACKUP="$(mktemp -d)"
           RUNTIME_RESTORED=false
-          cleanup_runtime_backup() {
+          DASHBOARD_WAS_ACTIVE=false
+          RUNTIME_WAS_ACTIVE=false
+
+          run_with_timeout() {
+            local label="$1"
+            local timeout_limit="$2"
+            shift 2
+            echo "START: $label"
+            if timeout --foreground --signal=TERM --kill-after=30s "$timeout_limit" "$@"; then
+              echo "DONE: $label"
+            else
+              local status="$?"
+              if [ "$status" -eq 124 ]; then
+                echo "TIMEOUT: $label exceeded $timeout_limit."
+              else
+                echo "FAILED: $label exited with status $status."
+              fi
+              return "$status"
+            fi
+          }
+
+          run_sudo_with_timeout() {
+            local label="$1"
+            local timeout_limit="$2"
+            shift 2
+            run_with_timeout "$label" "$timeout_limit" sudo -n "$@"
+          }
+
+          report_apt_locks() {
+            local lock_path=""
+            local owner_info=""
+            local lock_detected=false
+            if ! command -v fuser >/dev/null 2>&1; then
+              echo "The 'fuser' command is unavailable; apt/dpkg lock holders cannot be inspected on this host."
+              return 0
+            fi
+            for lock_path in /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock; do
+              owner_info="$(sudo -n fuser "$lock_path" 2>/dev/null || true)"
+              if [ -n "$owner_info" ]; then
+                echo "Active apt/dpkg lock detected: $lock_path (holders: $owner_info)"
+                lock_detected=true
+              fi
+            done
+            if [ "$lock_detected" = false ]; then
+              echo "No active apt/dpkg locks detected."
+            fi
+          }
+
+          fail_if_apt_locked() {
+            local lock_path=""
+            local owner_info=""
+            local lock_detected=false
+            if ! command -v fuser >/dev/null 2>&1; then
+              echo "The 'fuser' command is unavailable; continuing without lock-owner inspection."
+              return 0
+            fi
+            for lock_path in /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock; do
+              owner_info="$(sudo -n fuser "$lock_path" 2>/dev/null || true)"
+              if [ -n "$owner_info" ]; then
+                echo "Active apt/dpkg lock detected: $lock_path (holders: $owner_info)"
+                lock_detected=true
+              fi
+            done
+            if [ "$lock_detected" = true ]; then
+              echo "Cannot continue while another apt/dpkg process is holding a lock."
+              return 1
+            fi
+          }
+
+          run_apt_get() {
+            local label="$1"
+            shift
+            echo "START: $label"
+            if ! fail_if_apt_locked; then
+              return 1
+            fi
+            if timeout --foreground --signal=TERM --kill-after=30s "$APT_TIMEOUT" \
+              sudo -n env DEBIAN_FRONTEND=noninteractive apt-get \
+                -o DPkg::Lock::Timeout=60 \
+                -o Acquire::Retries=2 \
+                -o Acquire::http::Timeout=30 \
+                -o Acquire::https::Timeout=30 \
+                "$@"; then
+              echo "DONE: $label"
+            else
+              local status="$?"
+              if [ "$status" -eq 124 ]; then
+                echo "TIMEOUT: $label exceeded $APT_TIMEOUT."
+              else
+                echo "FAILED: $label exited with status $status."
+              fi
+              report_apt_locks
+              return "$status"
+            fi
+          }
+
+          ensure_service_running_after_failure() {
+            local service="$1"
+            if timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl is-active --quiet "$service"; then
+              echo "Recovery: $service is already running."
+            else
+              echo "Recovery: starting $service after failed deployment..."
+              timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl start "$service" || echo "Recovery failed for $service."
+            fi
+          }
+
+          restore_existing_services_after_failure() {
+            ensure_service_running_after_failure "$DASHBOARD_SERVICE"
+            ensure_service_running_after_failure "$RUNTIME_SERVICE"
+          }
+          cleanup_deployment() {
+            local status="$?"
+            if [ "$status" -ne 0 ]; then
+              echo "Deployment failed with status $status. Existing service recovery is being checked."
+              restore_existing_services_after_failure
+            fi
             if [ "$RUNTIME_RESTORED" = true ]; then
               rm -rf "$RUNTIME_BACKUP"
             else
               echo "Deployment failed before runtime-state restoration completed."
               echo "Recovery backup retained at: $RUNTIME_BACKUP"
             fi
+            exit "$status"
           }
-          trap cleanup_runtime_backup EXIT
+          trap cleanup_deployment EXIT
 
-          DASHBOARD_WAS_ACTIVE=false
-          RUNTIME_WAS_ACTIVE=false
-          sudo systemctl is-active --quiet "$DASHBOARD_SERVICE" && DASHBOARD_WAS_ACTIVE=true
-          sudo systemctl is-active --quiet "$RUNTIME_SERVICE" && RUNTIME_WAS_ACTIVE=true
+          timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl is-active --quiet "$DASHBOARD_SERVICE" && DASHBOARD_WAS_ACTIVE=true
+          timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl is-active --quiet "$RUNTIME_SERVICE" && RUNTIME_WAS_ACTIVE=true
 
           echo "Preserving server-owned runtime state..."
           while IFS= read -r runtime_path; do
@@ -86,9 +215,8 @@ jobs:
             fi
           done < runtime/generated_runtime_files.txt
 
-          echo "Fetching latest main..."
-          git fetch origin main
-          git reset --hard origin/main
+          run_with_timeout "Fetch latest main" "$GIT_TIMEOUT" git fetch origin main
+          run_with_timeout "Reset deployment checkout to origin/main" "$GIT_TIMEOUT" git reset --hard origin/main
 
           echo "Restoring server-owned runtime state..."
           cp -a "$RUNTIME_BACKUP/." "$APP_DIR/"
@@ -96,91 +224,120 @@ jobs:
 
           echo "Installing/updating dependencies..."
           if [ ! -d ".venv" ]; then
-            python3 -m venv .venv
+            run_with_timeout "Create Python virtualenv" 5m python3 -m venv .venv
           fi
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install -r requirements.txt
+          run_with_timeout "Upgrade pip" "$PIP_TIMEOUT" .venv/bin/python -m pip install --disable-pip-version-check --upgrade pip
+          run_with_timeout "Install Python requirements" "$PIP_TIMEOUT" .venv/bin/python -m pip install --disable-pip-version-check -r requirements.txt
 
           echo "Running startup validation..."
-          if ! .venv/bin/python -m runtime.startup_validation; then
+          if ! run_with_timeout "Run startup validation" 5m .venv/bin/python -m runtime.startup_validation; then
             echo "Startup validation failed. Existing services were not restarted."
-            sudo systemctl status "$DASHBOARD_SERVICE" --no-pager || true
-            sudo systemctl status "$RUNTIME_SERVICE" --no-pager || true
+            timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl status "$DASHBOARD_SERVICE" --no-pager || true
+            timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl status "$RUNTIME_SERVICE" --no-pager || true
             exit 1
           fi
 
           ensure_docker_compose() {
             local compose_package=""
             local docker_codename=""
+            local docker_architecture=""
 
             echo "Checking Docker and Docker Compose v2 availability..."
             if command -v docker >/dev/null 2>&1; then
-              docker --version || true
+              timeout --foreground --kill-after=15s 30s sudo -n docker --version || docker --version || true
             else
               echo "Docker CLI is not installed."
             fi
-            if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-              echo "Docker Compose v2 is already available: $(docker compose version)"
+            if command -v docker >/dev/null 2>&1 && timeout --foreground --kill-after=15s 30s sudo -n docker compose version >/dev/null 2>&1; then
+              echo "Docker Compose v2 is already available: $(timeout --foreground --kill-after=15s 30s sudo -n docker compose version)"
             else
-              echo "Docker Compose v2 is unavailable; installing the Ubuntu Docker packages..."
+              echo "Docker Compose v2 is unavailable; starting installation."
               if ! command -v apt-get >/dev/null 2>&1; then
                 echo "Cannot install Docker Compose v2: apt-get is unavailable on this host."
                 return 1
               fi
 
-              sudo apt-get update
-              if apt-cache show docker-compose-v2 >/dev/null 2>&1; then
+              report_apt_locks
+              run_apt_get "Refresh apt package metadata" update
+              if timeout --foreground --kill-after=15s 30s apt-cache show docker-compose-v2 >/dev/null 2>&1; then
                 compose_package="docker-compose-v2"
-              elif apt-cache show docker-compose-plugin >/dev/null 2>&1; then
+              elif timeout --foreground --kill-after=15s 30s apt-cache show docker-compose-plugin >/dev/null 2>&1; then
                 compose_package="docker-compose-plugin"
               fi
 
               if [ -n "$compose_package" ]; then
-                echo "Installing $compose_package from the Ubuntu package sources..."
+                echo "Using Ubuntu package sources for Docker Compose v2."
                 if command -v docker >/dev/null 2>&1; then
-                  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$compose_package"
+                  run_apt_get "Install $compose_package" install -y "$compose_package"
                 else
-                  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io "$compose_package"
+                  run_apt_get "Install docker.io and $compose_package" install -y docker.io "$compose_package"
                 fi
               else
                 echo "Ubuntu package sources do not provide a Compose v2 package; enabling Docker's official apt repository..."
-                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg
+                run_apt_get "Install Docker apt prerequisites" install -y ca-certificates curl gnupg
                 . /etc/os-release
                 docker_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}"
                 if [ -z "$docker_codename" ]; then
                   echo "Cannot determine the Ubuntu release codename for Docker's apt repository."
                   return 1
                 fi
-                sudo install -m 0755 -d /etc/apt/keyrings
-                curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
-                sudo chmod a+r /etc/apt/keyrings/docker.gpg
-                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $docker_codename stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-                sudo apt-get update
-                if command -v docker >/dev/null 2>&1; then
-                  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin
+                docker_architecture="$(dpkg --print-architecture)"
+                run_sudo_with_timeout "Create Docker apt keyring directory" 30s install -m 0755 -d /etc/apt/keyrings
+                echo "START: Download Docker GPG key"
+                if timeout --foreground --signal=TERM --kill-after=30s 2m \
+                  curl --fail --silent --show-error --location --connect-timeout 15 --max-time 60 https://download.docker.com/linux/ubuntu/gpg \
+                  | sudo -n gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg; then
+                  echo "DONE: Download Docker GPG key"
                 else
-                  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+                  local status="$?"
+                  if [ "$status" -eq 124 ]; then
+                    echo "TIMEOUT: Download Docker GPG key exceeded 2m."
+                  else
+                    echo "FAILED: Download Docker GPG key exited with status $status."
+                  fi
+                  return "$status"
+                fi
+                run_sudo_with_timeout "Set Docker GPG key permissions" 30s chmod a+r /etc/apt/keyrings/docker.gpg
+                echo "START: Register Docker apt repository"
+                if printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu %s stable\n' "$docker_architecture" "$docker_codename" \
+                  | timeout --foreground --signal=TERM --kill-after=30s 30s sudo -n tee /etc/apt/sources.list.d/docker.list >/dev/null
+                then
+                  echo "DONE: Register Docker apt repository"
+                else
+                  local status="$?"
+                  if [ "$status" -eq 124 ]; then
+                    echo "TIMEOUT: Register Docker apt repository exceeded 30s."
+                  else
+                    echo "FAILED: Register Docker apt repository exited with status $status."
+                  fi
+                  return "$status"
+                fi
+                run_apt_get "Refresh apt package metadata for Docker repository" update
+                if command -v docker >/dev/null 2>&1; then
+                  run_apt_get "Install docker-compose-plugin" install -y docker-compose-plugin
+                else
+                  run_apt_get "Install Docker Engine and Compose v2" install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
                 fi
               fi
             fi
 
-            sudo systemctl enable --now docker
-            if ! sudo docker compose version >/dev/null 2>&1; then
+            run_sudo_with_timeout "Enable and start Docker daemon" "$SERVICE_TIMEOUT" systemctl enable --now docker
+            echo "START: Verify Docker Compose v2"
+            if ! timeout --foreground --kill-after=15s 30s sudo -n docker compose version >/dev/null 2>&1; then
               echo "Docker Compose v2 installation completed but 'sudo docker compose' is still unavailable."
-              sudo docker --version || true
+              timeout --foreground --kill-after=15s 30s sudo -n docker --version || true
               return 1
             fi
-            echo "Using: $(sudo docker compose version)"
+            echo "DONE: Verify Docker Compose v2"
+            echo "Using: $(timeout --foreground --kill-after=15s 30s sudo -n docker compose version)"
           }
 
           ensure_docker_compose
-          DOCKER=(sudo docker)
+          DOCKER=(sudo -n docker)
 
-          echo "Validating dashboard Compose configuration..."
-          "${DOCKER[@]}" compose -f "$COMPOSE_FILE" config -q
+          run_with_timeout "Validate dashboard Compose configuration" 2m "${DOCKER[@]}" compose -f "$COMPOSE_FILE" config -q
 
-          echo "Building and starting the read-only dashboard API and Next.js frontend..."
-          "${DOCKER[@]}" compose -f "$COMPOSE_FILE" up -d --build "$API_CONTAINER" "$FRONTEND_CONTAINER"
+          run_with_timeout "Build and start the read-only dashboard API and Next.js frontend" "$COMPOSE_TIMEOUT" "${DOCKER[@]}" compose -f "$COMPOSE_FILE" up -d --build "$API_CONTAINER" "$FRONTEND_CONTAINER"
 
           wait_for_container_health() {
             local container="$1"
@@ -216,13 +373,11 @@ jobs:
             local service="$1"
             local was_active="$2"
             if [ "$was_active" = true ]; then
-              echo "Restarting active $service..."
-              sudo systemctl restart "$service"
+              run_sudo_with_timeout "Restart active $service" "$SERVICE_TIMEOUT" systemctl restart "$service"
             else
-              echo "$service was inactive before deployment; starting it for production health checks."
-              sudo systemctl start "$service"
+              run_sudo_with_timeout "Start inactive $service for production health checks" "$SERVICE_TIMEOUT" systemctl start "$service"
             fi
-            sudo systemctl is-active --quiet "$service"
+            run_sudo_with_timeout "Confirm $service is active" "$SERVICE_TIMEOUT" systemctl is-active --quiet "$service"
           }
 
           start_or_restart_and_check_systemd_service "$DASHBOARD_SERVICE" "$DASHBOARD_WAS_ACTIVE"
@@ -235,7 +390,15 @@ jobs:
           .venv/bin/python runtime/health_check.py
 
           echo "Service status:"
-          sudo systemctl status "$DASHBOARD_SERVICE" --no-pager
-          sudo systemctl status "$RUNTIME_SERVICE" --no-pager
-          "${DOCKER[@]}" compose -f "$COMPOSE_FILE" ps
+          timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl status "$DASHBOARD_SERVICE" --no-pager
+          timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl status "$RUNTIME_SERVICE" --no-pager
+          run_with_timeout "Show dashboard Compose service status" 2m "${DOCKER[@]}" compose -f "$COMPOSE_FILE" ps
           REMOTE_DEPLOY
+          ssh_status=$?
+          set -e
+          if [ "$ssh_status" -eq 124 ]; then
+            echo "Remote deployment exceeded the 45-minute timeout."
+          elif [ "$ssh_status" -ne 0 ]; then
+            echo "Remote deployment exited with status $ssh_status."
+          fi
+          exit "$ssh_status"
