@@ -33,6 +33,9 @@ jobs:
           APP_DIR="/home/ubuntu/garner-quant"
           DASHBOARD_SERVICE="garner-quant-dashboard"
           RUNTIME_SERVICE="garner-quant-runtime"
+          COMPOSE_FILE="$APP_DIR/docker-compose.dashboard.yml"
+          API_CONTAINER="garner-quant-dashboard-api"
+          FRONTEND_CONTAINER="garner-quant-dashboard-preview"
 
           cd "$APP_DIR"
 
@@ -58,9 +61,6 @@ jobs:
           RUNTIME_WAS_ACTIVE=false
           sudo systemctl is-active --quiet "$DASHBOARD_SERVICE" && DASHBOARD_WAS_ACTIVE=true
           sudo systemctl is-active --quiet "$RUNTIME_SERVICE" && RUNTIME_WAS_ACTIVE=true
-
-          echo "Stopping runtime and dashboard before code update..."
-          sudo systemctl stop "$RUNTIME_SERVICE" "$DASHBOARD_SERVICE"
 
           echo "Preserving server-owned runtime state..."
           while IFS= read -r runtime_path; do
@@ -103,26 +103,77 @@ jobs:
 
           echo "Running startup validation..."
           if ! .venv/bin/python -m runtime.startup_validation; then
-            echo "Startup validation failed. Runtime will remain stopped."
+            echo "Startup validation failed. Existing services were not restarted."
             sudo systemctl status "$DASHBOARD_SERVICE" --no-pager || true
             sudo systemctl status "$RUNTIME_SERVICE" --no-pager || true
             exit 1
           fi
 
-          if [ "$DASHBOARD_WAS_ACTIVE" = true ]; then
-            echo "Restarting dashboard..."
-            sudo systemctl restart "$DASHBOARD_SERVICE"
-          else
-            echo "Dashboard was stopped before deployment; leaving it stopped."
-          fi
-          if [ "$RUNTIME_WAS_ACTIVE" = true ]; then
-            echo "Restarting runtime..."
-            sudo systemctl restart "$RUNTIME_SERVICE"
-          else
-            echo "Runtime was stopped before deployment; leaving it stopped."
+          if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
+            echo "Docker Compose is required to run the dashboard API and Next.js frontend."
+            exit 1
           fi
 
+          echo "Validating dashboard Compose configuration..."
+          docker compose -f "$COMPOSE_FILE" config -q
+
+          echo "Building and starting the read-only dashboard API and Next.js frontend..."
+          docker compose -f "$COMPOSE_FILE" up -d --build "$API_CONTAINER" "$FRONTEND_CONTAINER"
+
+          wait_for_container_health() {
+            local container="$1"
+            local attempts=30
+            local health=""
+            for _ in $(seq 1 "$attempts"); do
+              health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$container" 2>/dev/null || true)"
+              case "$health" in
+                healthy)
+                  echo "$container is healthy."
+                  return 0
+                  ;;
+                unhealthy)
+                  echo "$container reported unhealthy."
+                  docker logs --tail 100 "$container" || true
+                  return 1
+                  ;;
+              esac
+              sleep 2
+            done
+            echo "Timed out waiting for $container health; last status: ${health:-missing}"
+            docker logs --tail 100 "$container" || true
+            return 1
+          }
+
+          wait_for_container_health "$API_CONTAINER"
+          wait_for_container_health "$FRONTEND_CONTAINER"
+
+          echo "Checking the externally served Next.js frontend on port 3000..."
+          curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3000/ >/dev/null
+
+          start_or_restart_and_check_systemd_service() {
+            local service="$1"
+            local was_active="$2"
+            if [ "$was_active" = true ]; then
+              echo "Restarting active $service..."
+              sudo systemctl restart "$service"
+            else
+              echo "$service was inactive before deployment; starting it for production health checks."
+              sudo systemctl start "$service"
+            fi
+            sudo systemctl is-active --quiet "$service"
+          }
+
+          start_or_restart_and_check_systemd_service "$DASHBOARD_SERVICE" "$DASHBOARD_WAS_ACTIVE"
+          start_or_restart_and_check_systemd_service "$RUNTIME_SERVICE" "$RUNTIME_WAS_ACTIVE"
+
+          echo "Checking Streamlit dashboard on port 8501..."
+          curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8501/ >/dev/null
+
+          echo "Checking runtime health..."
+          .venv/bin/python runtime/health_check.py
+
           echo "Service status:"
-          sudo systemctl status "$DASHBOARD_SERVICE" --no-pager || true
-          sudo systemctl status "$RUNTIME_SERVICE" --no-pager || true
+          sudo systemctl status "$DASHBOARD_SERVICE" --no-pager
+          sudo systemctl status "$RUNTIME_SERVICE" --no-pager
+          docker compose -f "$COMPOSE_FILE" ps
           REMOTE_DEPLOY
