@@ -32,6 +32,30 @@ from reporting.paper_performance import (
 from runtime.locks import acquire_execution_lock
 
 
+def write_read_only_dashboard_snapshots(
+    prices,
+    signals,
+    weights,
+    risk_levels,
+    signal_rows,
+):
+    atomic_write_csv_frames(
+        {
+            "prices_v2.csv": prices,
+            "signals_v2.csv": signals,
+            "weights_v2.csv": weights,
+            "risk_levels_v2.csv": risk_levels,
+            "signal_report_v2.csv": pd.DataFrame(signal_rows),
+        },
+        to_csv_kwargs_by_path={
+            "prices_v2.csv": {"index": True},
+            "signals_v2.csv": {"index": True},
+            "weights_v2.csv": {"index": True},
+            "risk_levels_v2.csv": {"index": True},
+        },
+    )
+
+
 def _run_main_unlocked(
     show_charts=True,
     send_telegram=True,
@@ -127,8 +151,24 @@ def _run_main_unlocked(
         "Evaluated shadow proposals without persistence." if shadow_mode else "Updated paper portfolio, trade journal, and transaction log.",
         {"paper_trades": len(v3_trades)},
     )
+    signal_rows = create_signal_report(signals, weights)
 
     if shadow_mode:
+        write_read_only_dashboard_snapshots(
+            prices,
+            signals,
+            weights,
+            risk_levels,
+            signal_rows,
+        )
+        record_event(
+            "Saved Read-Only Evidence",
+            "Refreshed read-only dashboard signal and risk snapshots without mutating paper trading state.",
+            {
+                "signals_count": len(signal_rows),
+                "risk_rows": len(risk_levels.index),
+            },
+        )
         risk_decisions = v3_trades.attrs.get("risk_decisions", [])
         return {
             "status": "shadow_complete", "symbols_scanned": len(asset_tickers),
@@ -213,7 +253,6 @@ def _run_main_unlocked(
     open_positions = len(ledger_open_positions(ledger))
     print_trade_analytics(trade_stats)
 
-    signal_rows = create_signal_report(signals, weights)
     print_signal_report(signal_rows)
     print_holdings_report(holdings_report)
 
