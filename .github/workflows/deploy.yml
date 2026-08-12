@@ -16,11 +16,44 @@ jobs:
 
     steps:
       - name: Configure SSH key
+        env:
+          AWS_SSH_PRIVATE_KEY_VALUE: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
+          AWS_HOST_VALUE: ${{ secrets.AWS_HOST }}
+          AWS_USER_VALUE: ${{ secrets.AWS_USER }}
         run: |
+          if [ -z "$AWS_HOST_VALUE" ]; then
+            echo "AWS_HOST secret is missing or empty."
+            exit 1
+          fi
+          if [ -z "$AWS_USER_VALUE" ]; then
+            echo "AWS_USER secret is missing or empty."
+            exit 1
+          fi
+          if [ -z "$AWS_SSH_PRIVATE_KEY_VALUE" ]; then
+            echo "AWS_SSH_PRIVATE_KEY secret is missing or empty."
+            exit 1
+          fi
+
+          case "$AWS_SSH_PRIVATE_KEY_VALUE" in
+            "-----BEGIN OPENSSH PRIVATE KEY-----"*|"-----BEGIN RSA PRIVATE KEY-----"*|"-----BEGIN EC PRIVATE KEY-----"*|"-----BEGIN DSA PRIVATE KEY-----"*|"-----BEGIN PRIVATE KEY-----"*)
+              echo "AWS_SSH_PRIVATE_KEY header validation succeeded."
+              ;;
+            *)
+              echo "AWS_SSH_PRIVATE_KEY is present but does not begin with a supported private-key header."
+              exit 1
+              ;;
+          esac
+
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.AWS_SSH_PRIVATE_KEY }}" > ~/.ssh/lightsail_deploy_key
+          printf '%s\n' "$AWS_SSH_PRIVATE_KEY_VALUE" > ~/.ssh/lightsail_deploy_key
           chmod 600 ~/.ssh/lightsail_deploy_key
-          ssh-keyscan -H "${{ secrets.AWS_HOST }}" >> ~/.ssh/known_hosts
+          if ssh-keygen -y -f ~/.ssh/lightsail_deploy_key >/dev/null 2>&1; then
+            echo "AWS_SSH_PRIVATE_KEY passed ssh-keygen validation."
+          else
+            echo "AWS_SSH_PRIVATE_KEY failed ssh-keygen validation."
+            exit 1
+          fi
+          ssh-keyscan -H "$AWS_HOST_VALUE" >> ~/.ssh/known_hosts
 
       - name: Deploy on Lightsail
         run: |
