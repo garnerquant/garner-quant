@@ -21,6 +21,8 @@ jobs:
           AWS_HOST_VALUE: ${{ secrets.AWS_HOST }}
           AWS_USER_VALUE: ${{ secrets.AWS_USER }}
         run: |
+          set -euo pipefail
+
           if [ -z "$AWS_HOST_VALUE" ]; then
             echo "AWS_HOST secret is missing or empty."
             exit 1
@@ -43,8 +45,29 @@ jobs:
               exit 1
               ;;
           esac
+          if printf '%s' "$AWS_HOST_VALUE" | grep -Eq '://|[[:space:]]|@|/|:'; then
+            echo "AWS_HOST must be a bare hostname or IPv4 address only, without protocol, port, username, path, or SSH command prefix."
+            exit 1
+          fi
+          if ! printf '%s' "$AWS_HOST_VALUE" | grep -Eq '^[A-Za-z0-9.-]+$'; then
+            echo "AWS_HOST contains unsupported characters. Use only a bare hostname or IPv4 address."
+            exit 1
+          fi
+          echo "AWS_HOST format validation succeeded."
+          if timeout 15s getent ahostsv4 "$AWS_HOST_VALUE" >/dev/null 2>&1; then
+            echo "AWS_HOST resolution check succeeded."
+          else
+            aws_host_resolution_status="$?"
+            if [ "$aws_host_resolution_status" -eq 124 ]; then
+              echo "AWS_HOST resolution check timed out."
+            else
+              echo "AWS_HOST could not be resolved. Ensure the secret contains a reachable public hostname or IPv4 address."
+            fi
+            exit 1
+          fi
 
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           printf '%s\n' "$AWS_SSH_PRIVATE_KEY_VALUE" > ~/.ssh/lightsail_deploy_key
           chmod 600 ~/.ssh/lightsail_deploy_key
           if ssh-keygen -y -f ~/.ssh/lightsail_deploy_key >/dev/null 2>&1; then
@@ -53,7 +76,36 @@ jobs:
             echo "AWS_SSH_PRIVATE_KEY failed ssh-keygen validation."
             exit 1
           fi
-          ssh-keyscan -H "$AWS_HOST_VALUE" >> ~/.ssh/known_hosts
+          if timeout 15s python3 - "$AWS_HOST_VALUE" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+sock = socket.create_connection((host, 22), timeout=10)
+sock.close()
+PY
+          then
+            echo "SSH port 22 connectivity check succeeded."
+          else
+            aws_host_connectivity_status="$?"
+            if [ "$aws_host_connectivity_status" -eq 124 ]; then
+              echo "Timed out while testing TCP connectivity to AWS_HOST on port 22."
+            else
+              echo "AWS_HOST resolved but SSH port 22 is unreachable. Verify the Lightsail instance is running and allows SSH on port 22."
+            fi
+            exit 1
+          fi
+          if timeout 30s ssh-keyscan -T 10 -p 22 -H "$AWS_HOST_VALUE" >> ~/.ssh/known_hosts 2>/dev/null; then
+            echo "ssh-keyscan succeeded."
+          else
+            ssh_keyscan_status="$?"
+            if [ "$ssh_keyscan_status" -eq 124 ]; then
+              echo "ssh-keyscan timed out while connecting to AWS_HOST on port 22."
+            else
+              echo "ssh-keyscan failed after AWS_HOST format, resolution, and port 22 checks succeeded. Review remote SSH availability and network reachability."
+            fi
+            exit 1
+          fi
 
       - name: Deploy on Lightsail
         run: |
