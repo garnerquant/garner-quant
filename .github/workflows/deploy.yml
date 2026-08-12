@@ -531,7 +531,28 @@ jobs:
           start_or_restart_and_check_systemd_service "$RUNTIME_SERVICE" "$RUNTIME_WAS_ACTIVE"
 
           echo "Checking Streamlit dashboard on port 8501..."
-          curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8501/ >/dev/null
+
+          STREAMLIT_READY=false
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 5 \
+              http://127.0.0.1:8501/ >/dev/null 2>&1
+            then
+              STREAMLIT_READY=true
+              echo "Streamlit dashboard is healthy."
+              break
+            fi
+
+            echo "Streamlit is not ready yet; retry ${attempt}/30..."
+            sleep 2
+          done
+
+          if [ "$STREAMLIT_READY" != true ]; then
+            echo "Streamlit dashboard did not become healthy within 60 seconds."
+            sudo -n systemctl status "$DASHBOARD_SERVICE" --no-pager || true
+            sudo -n journalctl -u "$DASHBOARD_SERVICE" -n 40 --no-pager || true
+            exit 7
+          fi
 
           echo "Checking runtime health..."
           .venv/bin/python runtime/health_check.py
