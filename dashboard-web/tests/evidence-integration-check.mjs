@@ -24,4 +24,23 @@ assert.match(integration, /Latest cycle/);
 assert.match(integration, /Safety controls/);
 assert.match(integration, /Monitor only/);
 assert.doesNotMatch(integration, /92 \/ 100|Preview ready|System healthy/);
+assert.match(client, /Research: <EvidenceIntegration resource="research" version="research.v1" title="Research run evidence" variant="research"/);
+assert.match(client, /Audit: <EvidenceIntegration resource="audit" version="audit.v1" title="Artifact verification evidence" variant="audit"/);
+for (const label of ["Artifact", "Status", "Verification", "Freshness", "Full artifact path", "Evidence status"]) {
+  assert.match(integration, new RegExp(label), `Audit renderer must include ${label}`);
+}
+assert.match(integration, /Some evidence is verified, but freshness or mounted-artifact verification is incomplete\./);
+assert.match(integration, /data\.records\.slice\(0, 5\)/);
+assert.match(integration, /View all evidence/);
+assert.match(integration, /EvidenceFieldRows/);
+for (const label of ["Dataset snapshot", "Schema version", "Content hash", "Strategy", "Parameters", "Execution model", "Cost model", "Information cutoff", "Code version"]) {
+  assert.match(integration, new RegExp(label), `Research details must include ${label}`);
+}
+for (const label of ["Run", "Status", "Dataset", "Reproducibility", "Full run ID", "Details", "View all runs"]) {
+  assert.match(integration, new RegExp(label), `Research renderer must include ${label}`);
+}
+assert.match(integration, /data\.records\.slice\(0, 3\)/);
+assert.match(integration, /shortRunId/);
+assert.match(integration, /Object\.entries\(record\.fields\)/);
+assert.doesNotMatch(integration, /Equity curve|Monthly returns|benchmark|performance values/);
 console.log("read-only evidence integration checks passed");
