@@ -170,9 +170,21 @@ def _ledger_portfolio_mismatches(portfolio, base_dir, tolerance=1e-6):
 def _build_valuation(portfolio, latest_prices, timestamp, existing_holdings=None):
     valued_portfolio = portfolio.copy()
     existing_holdings = existing_holdings or {}
+    existing_snapshot_timestamps = {
+        str(row.get("date", "")).strip()
+        for row in existing_holdings.values()
+        if str(row.get("date", "")).strip()
+    }
+    existing_snapshot_timestamp = (
+        next(iter(existing_snapshot_timestamps))
+        if len(existing_snapshot_timestamps) == 1
+        else None
+    )
+    force_snapshot_refresh = len(existing_snapshot_timestamps) > 1
     holdings_rows = []
     total_market_value = 0.0
     total_unrealised_pnl = 0.0
+    snapshot_changed = force_snapshot_refresh
 
     numeric_columns = [
         "current_price",
@@ -235,28 +247,19 @@ def _build_valuation(portfolio, latest_prices, timestamp, existing_holdings=None
             and _close_enough(position.get("unrealised_pnl"), unrealised_pnl)
             and _close_enough(position.get("unrealised_pnl_pct"), unrealised_pnl_pct)
         )
-        valuation_timestamp = (
-            position.get("valuation_updated_at")
-            if portfolio_unchanged and str(position.get("valuation_updated_at", "")).strip()
-            else timestamp
-        )
-        holding_date = (
-            previous_holding.get("date")
-            if holding_unchanged and str(previous_holding.get("date", "")).strip()
-            else timestamp
-        )
+        if not holding_unchanged or not portfolio_unchanged:
+            snapshot_changed = True
 
         valued_portfolio.loc[index, "current_price"] = current_price
         valued_portfolio.loc[index, "market_value"] = market_value
         valued_portfolio.loc[index, "unrealised_pnl"] = unrealised_pnl
         valued_portfolio.loc[index, "unrealised_pnl_pct"] = unrealised_pnl_pct
-        valued_portfolio.loc[index, "valuation_updated_at"] = valuation_timestamp
 
         total_market_value += market_value
         total_unrealised_pnl += market_value - original_value
         holdings_rows.append(
             {
-                "date": holding_date,
+                "portfolio_index": index,
                 "ticker": ticker,
                 "shares": shares,
                 "entry_price": entry_price,
@@ -266,6 +269,18 @@ def _build_valuation(portfolio, latest_prices, timestamp, existing_holdings=None
                 "unrealised_pnl_percent": unrealised_pnl_pct,
             }
         )
+
+    snapshot_timestamp = (
+        timestamp
+        if snapshot_changed or existing_snapshot_timestamp is None
+        else existing_snapshot_timestamp
+    )
+    for row in holdings_rows:
+        valued_portfolio.loc[
+            row.pop("portfolio_index"),
+            "valuation_updated_at",
+        ] = snapshot_timestamp
+        row["date"] = snapshot_timestamp
 
     return valued_portfolio, pd.DataFrame(holdings_rows), total_market_value, total_unrealised_pnl
 
@@ -286,21 +301,37 @@ def _build_broker(cash, positions_value, realised_pnl, unrealised_pnl):
     )
 
 
-def _build_portfolio_report_refresh(base_dir, portfolio_value):
+def _build_portfolio_report_refresh(base_dir, portfolio_value, timestamp):
     path = _path(base_dir, PORTFOLIO_REPORT_FILE)
     report = _read_csv(path)
-    if report.empty or "equity" not in report.columns:
+    if report.empty or "Date" not in report.columns or "equity" not in report.columns:
         return None, False
 
     report = report.copy()
-    previous_equity = (
-        _numeric(report["equity"].iloc[-2])
-        if len(report) > 1
-        else _numeric(report["equity"].iloc[-1])
-    )
-    report.loc[report.index[-1], "equity"] = float(portfolio_value)
+    current_date = str(timestamp).split(" ", 1)[0]
+    last_index = report.index[-1]
+    last_date = str(report.loc[last_index, "Date"]).strip()
+
+    if last_date == current_date:
+        target_index = last_index
+        previous_equity = (
+            _numeric(report["equity"].iloc[-2])
+            if len(report) > 1
+            else _numeric(report["equity"].iloc[-1])
+        )
+    else:
+        previous_equity = _numeric(report["equity"].iloc[-1])
+        appended = {column: report.loc[last_index, column] for column in report.columns}
+        appended["Date"] = current_date
+        if "trading_cost" in report.columns:
+            appended["trading_cost"] = 0.0
+        report.loc[len(report)] = appended
+        target_index = report.index[-1]
+
+    report.loc[target_index, "Date"] = current_date
+    report.loc[target_index, "equity"] = float(portfolio_value)
     if "daily_return" in report.columns:
-        report.loc[report.index[-1], "daily_return"] = (
+        report.loc[target_index, "daily_return"] = (
             (float(portfolio_value) / previous_equity) - 1
             if previous_equity
             else 0.0
@@ -311,13 +342,13 @@ def _build_portfolio_report_refresh(base_dir, portfolio_value):
             .dropna()
             .max()
         )
-        report.loc[report.index[-1], "peak"] = max(
+        report.loc[target_index, "peak"] = max(
             float(portfolio_value),
             float(previous_peak) if not pd.isna(previous_peak) else float(portfolio_value),
         )
     if "drawdown" in report.columns and "peak" in report.columns:
-        peak = _numeric(report.loc[report.index[-1], "peak"])
-        report.loc[report.index[-1], "drawdown"] = (
+        peak = _numeric(report.loc[target_index, "peak"])
+        report.loc[target_index, "drawdown"] = (
             (float(portfolio_value) / peak) - 1
             if peak
             else 0.0
@@ -448,7 +479,11 @@ def _commit_refresh_frames(
     if not changed_frames:
         return []
 
-    atomic_write_csv_frames(changed_frames, failure_hook=failure_hook)
+    atomic_write_csv_frames(
+        changed_frames,
+        failure_hook=failure_hook,
+        lock_path=_path(base_dir, Path("data") / "execution.lock"),
+    )
     return changed_files
 
 
@@ -563,7 +598,11 @@ def mark_to_market_refresh(monitor_result=None, sync_remote=True, base_dir="."):
     broker = broker_frame(broker_values)
 
     portfolio_value = float(broker.loc[0, "portfolio_value"])
-    portfolio_report, _ = _build_portfolio_report_refresh(base_dir, portfolio_value)
+    portfolio_report, _ = _build_portfolio_report_refresh(
+        base_dir,
+        portfolio_value,
+        timestamp,
+    )
     tracker, _ = _build_tracker_refresh(base_dir, broker.loc[0], timestamp)
     refresh_frames = {
         HOLDINGS_FILE: holdings,
