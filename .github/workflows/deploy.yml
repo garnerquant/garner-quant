@@ -13,8 +13,17 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: garner-quant
+      DASHBOARD_IMAGE_ARCHIVE: /tmp/garner-quant-dashboard-images.tar.gz
+      DASHBOARD_IMAGE_CHECKSUM: /tmp/garner-quant-dashboard-images.tar.gz.sha256
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
       - name: Configure SSH key
         env:
           AWS_SSH_PRIVATE_KEY_VALUE: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
@@ -100,6 +109,37 @@ jobs:
             exit 1
           fi
 
+      - name: Build dashboard images on GitHub Actions runner
+        run: |
+          set -euo pipefail
+
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.dashboard.yml config -q
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.dashboard.yml build --progress plain garner-quant-dashboard-api garner-quant-dashboard-preview
+
+          docker image inspect "${COMPOSE_PROJECT_NAME}-garner-quant-dashboard-api:latest" >/dev/null
+          docker image inspect "${COMPOSE_PROJECT_NAME}-garner-quant-dashboard-preview:latest" >/dev/null
+
+          rm -f "$DASHBOARD_IMAGE_ARCHIVE" "$DASHBOARD_IMAGE_CHECKSUM"
+          docker save \
+            "${COMPOSE_PROJECT_NAME}-garner-quant-dashboard-api:latest" \
+            "${COMPOSE_PROJECT_NAME}-garner-quant-dashboard-preview:latest" \
+            | gzip > "$DASHBOARD_IMAGE_ARCHIVE"
+          sha256sum "$DASHBOARD_IMAGE_ARCHIVE" > "$DASHBOARD_IMAGE_CHECKSUM"
+
+      - name: Upload dashboard image bundle to Lightsail
+        run: |
+          set -euo pipefail
+
+          timeout --foreground --signal=TERM --kill-after=30s 15m \
+          scp -i ~/.ssh/lightsail_deploy_key \
+            -o IdentitiesOnly=yes \
+            -o ConnectTimeout=30 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=60 \
+            "$DASHBOARD_IMAGE_ARCHIVE" \
+            "$DASHBOARD_IMAGE_CHECKSUM" \
+            "${{ secrets.AWS_USER }}@${{ secrets.AWS_HOST }}:/tmp/"
+
       - name: Deploy on Lightsail
         run: |
           set +e
@@ -110,7 +150,7 @@ jobs:
             -o ServerAliveInterval=30 \
             -o ServerAliveCountMax=60 \
             "${{ secrets.AWS_USER }}@${{ secrets.AWS_HOST }}" \
-            'bash -s' <<'REMOTE_DEPLOY'
+            "DEPLOY_COMMIT='${{ github.sha }}' COMPOSE_PROJECT_NAME='${COMPOSE_PROJECT_NAME}' DASHBOARD_IMAGE_ARCHIVE='${DASHBOARD_IMAGE_ARCHIVE}' DASHBOARD_IMAGE_CHECKSUM='${DASHBOARD_IMAGE_CHECKSUM}' bash -s" <<'REMOTE_DEPLOY'
           set -euo pipefail
 
           APP_DIR="/home/ubuntu/garner-quant"
@@ -124,9 +164,13 @@ jobs:
           SERVICE_TIMEOUT="2m"
           GIT_TIMEOUT="5m"
           PIP_TIMEOUT="15m"
+          IMAGE_TRANSFER_TIMEOUT="20m"
           APT_TIMEOUT="15m"
-          COMPOSE_BUILD_TIMEOUT="30m"
           COMPOSE_UP_TIMEOUT="10m"
+          DEPLOY_COMMIT="${DEPLOY_COMMIT:?DEPLOY_COMMIT is required}"
+          COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-garner-quant}"
+          DASHBOARD_IMAGE_ARCHIVE="${DASHBOARD_IMAGE_ARCHIVE:-/tmp/garner-quant-dashboard-images.tar.gz}"
+          DASHBOARD_IMAGE_CHECKSUM="${DASHBOARD_IMAGE_CHECKSUM:-/tmp/garner-quant-dashboard-images.tar.gz.sha256}"
 
           cd "$APP_DIR"
 
@@ -298,7 +342,11 @@ jobs:
           done < runtime/generated_runtime_files.txt
 
           run_with_timeout "Fetch latest main" "$GIT_TIMEOUT" git fetch origin main
-          run_with_timeout "Reset deployment checkout to origin/main" "$GIT_TIMEOUT" git reset --hard origin/main
+          if ! git merge-base --is-ancestor "$DEPLOY_COMMIT" origin/main; then
+            echo "The workflow commit $DEPLOY_COMMIT is not reachable from origin/main."
+            exit 1
+          fi
+          run_with_timeout "Reset deployment checkout to workflow commit" "$GIT_TIMEOUT" git reset --hard "$DEPLOY_COMMIT"
           TARGET_DEPLOY_HEAD="$(git rev-parse HEAD)"
 
           echo "Restoring server-owned runtime state..."
@@ -417,33 +465,26 @@ jobs:
 
           ensure_docker_compose
           DOCKER=(sudo -n docker)
-          COMPOSE=(env COMPOSE_DISABLE_ENV_FILE=1 "${DOCKER[@]}" compose -f "$COMPOSE_FILE")
+          COMPOSE=(env COMPOSE_DISABLE_ENV_FILE=1 COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" "${DOCKER[@]}" compose -f "$COMPOSE_FILE")
+
+          echo "Inspecting Lightsail memory availability..."
+          free -m || true
+          grep -E 'MemTotal|MemAvailable|SwapTotal|SwapFree' /proc/meminfo || true
+
+          echo "Inspecting Docker engine capacity..."
+          timeout --foreground --kill-after=15s 30s sudo -n docker info 2>/dev/null | grep -E 'Server Version|Storage Driver|Cgroup Driver|Cgroup Version|CPUs|Total Memory' || true
+
+          if [ ! -f "$DASHBOARD_IMAGE_ARCHIVE" ] || [ ! -f "$DASHBOARD_IMAGE_CHECKSUM" ]; then
+            echo "Dashboard image bundle or checksum is missing on the server."
+            exit 1
+          fi
+          run_with_timeout "Verify dashboard image bundle checksum" 2m sha256sum -c "$DASHBOARD_IMAGE_CHECKSUM"
+          run_with_timeout "Load prebuilt dashboard images" "$IMAGE_TRANSFER_TIMEOUT" sh -c "gzip -dc \"$DASHBOARD_IMAGE_ARCHIVE\" | sudo -n docker load"
+          rm -f "$DASHBOARD_IMAGE_ARCHIVE" "$DASHBOARD_IMAGE_CHECKSUM"
 
           run_with_timeout "Validate dashboard Compose configuration" 2m "${COMPOSE[@]}" config -q
 
-          dashboard_sources_changed=false
-          if [ -n "$PRE_DEPLOY_HEAD" ] && [ "$PRE_DEPLOY_HEAD" != "$TARGET_DEPLOY_HEAD" ]; then
-            if ! git diff --quiet "$PRE_DEPLOY_HEAD" "$TARGET_DEPLOY_HEAD" -- docker-compose.dashboard.yml dashboard-api dashboard-web; then
-              dashboard_sources_changed=true
-            fi
-          fi
-
-          dashboard_images_missing=false
-          for dashboard_service in "$API_SERVICE" "$FRONTEND_SERVICE"; do
-            dashboard_image_id="$("${COMPOSE[@]}" images -q "$dashboard_service" 2>/dev/null | tr -d '\r')"
-            if [ -z "$dashboard_image_id" ]; then
-              echo "No cached image found for $dashboard_service."
-              dashboard_images_missing=true
-            fi
-          done
-
-          if [ "$dashboard_sources_changed" = true ] || [ "$dashboard_images_missing" = true ]; then
-            run_with_timeout "Build dashboard images" "$COMPOSE_BUILD_TIMEOUT" "${COMPOSE[@]}" build --progress plain "$API_SERVICE" "$FRONTEND_SERVICE"
-          else
-            echo "Dashboard sources are unchanged and cached images are present; skipping rebuild."
-          fi
-
-          run_with_timeout "Start the read-only dashboard API and Next.js frontend" "$COMPOSE_UP_TIMEOUT" "${COMPOSE[@]}" up -d --no-build "$API_SERVICE" "$FRONTEND_SERVICE"
+          run_with_timeout "Start the read-only dashboard API and Next.js frontend" "$COMPOSE_UP_TIMEOUT" "${COMPOSE[@]}" up -d --no-build --force-recreate "$API_SERVICE" "$FRONTEND_SERVICE"
 
           wait_for_container_health() {
             local container="$1"
