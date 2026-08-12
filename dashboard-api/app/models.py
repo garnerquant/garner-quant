@@ -163,3 +163,23 @@ class PortfolioResponse(BaseModel):
     allocation: AllocationSummary
     cash: CashSummary
     section_availability: dict[str, AvailabilityField]
+
+
+class SignalRecord(BaseModel):
+    instrument: str
+    signal_code: str
+    status: str
+    target_weight: str
+    as_of_utc: datetime
+
+
+class SignalsResponse(BaseModel):
+    schema_version: Literal["signals.v1"]
+    generated_at_utc: datetime
+    source_as_of_utc: datetime | None = None
+    source_classification: SourceClassification
+    freshness: SnapshotFreshness
+    warnings: list[str]
+    source_file: str
+    items: list[SignalRecord] = []
+    availability: AvailabilityField

@@ -11,7 +11,8 @@ if (!integration.includes("Portfolio data as of") || !integration.includes("Hold
 if (integration.includes('title="Allocation unavailable"') || integration.includes('title="Contribution unavailable"') || integration.includes('title="Holdings unavailable"')) throw new Error("Portfolio partial state must use one holdings-unavailable panel");
 if (!proxy.includes("DASHBOARD_API_URL") || !proxy.includes("/api/v1/portfolio")) throw new Error("Portfolio proxy is not server-only");
 if (!client.includes("Portfolio: integratedPortfolio")) throw new Error("Portfolio must use the integration component");
-for (const page of ["Markets: markets", "Signals: signalView", "Research: research", '"Shadow Runs": shadow', '"Risk & Health": risk', "Audit: audit"]) {
+if (!client.includes("Signals: integratedSignals")) throw new Error("Signals must use the integration component");
+for (const page of ["Markets: markets", "Research: research", '"Shadow Runs": shadow', '"Risk & Health": risk', "Audit: audit"]) {
   if (!client.includes(page)) throw new Error(`${page} must remain on the mock preview`);
 }
 

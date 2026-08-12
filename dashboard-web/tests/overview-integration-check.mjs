@@ -14,9 +14,10 @@ if (!integration.includes("performanceDomain") || !integration.includes("display
 if (!integration.includes("Holdings have inconsistent timestamps") || integration.includes("description={data.allocation.availability.reason")) throw new Error("Overview allocation message must be human-readable");
 if (!proxy.includes("DASHBOARD_API_URL") || !proxy.includes("/api/v1/overview")) throw new Error("Overview proxy is not server-only");
 if (!client.includes("Overview: integratedOverview")) throw new Error("Only Overview may use the integration component");
+if (!client.includes("Signals: integratedSignals")) throw new Error("Signals must use the integration component");
 const header = readFileSync("components/Header.tsx", "utf8");
 if (!header.includes("Preview UI") || !header.includes("Monitor only") || header.includes("Local mock") || header.includes("11 Aug 2026")) throw new Error("Global header status indicators are incorrect");
-for (const page of ["Markets: markets", "Signals: signalView", "Research: research", '"Shadow Runs": shadow', '"Risk & Health": risk', "Audit: audit"]) {
+for (const page of ["Markets: markets", "Research: research", '"Shadow Runs": shadow', '"Risk & Health": risk', "Audit: audit"]) {
   if (!client.includes(page)) throw new Error(`${page} must remain on the mock preview`);
 }
 

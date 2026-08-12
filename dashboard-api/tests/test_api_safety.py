@@ -13,13 +13,15 @@ FORBIDDEN_IMPORTS = {"requests", "httpx", "urllib", "socket", "subprocess", "exe
 
 def test_only_expected_routes_and_get_methods() -> None:
     client = TestClient(app)
-    assert {route.path for route in app.routes} == {"/health", "/api/v1/overview", "/api/v1/portfolio"}
+    assert {route.path for route in app.routes} == {"/health", "/api/v1/overview", "/api/v1/portfolio", "/api/v1/signals"}
     assert client.get("/health").status_code == 200
     assert client.post("/health").status_code == 405
     assert client.put("/api/v1/overview").status_code == 405
     assert client.delete("/api/v1/overview").status_code == 405
     assert client.get("/api/v1/portfolio").status_code == 200
     assert client.post("/api/v1/portfolio").status_code == 405
+    assert client.get("/api/v1/signals").status_code == 200
+    assert client.post("/api/v1/signals").status_code == 405
 
 
 def test_static_capability_and_import_audit() -> None:
