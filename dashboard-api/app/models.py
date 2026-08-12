@@ -183,3 +183,21 @@ class SignalsResponse(BaseModel):
     source_file: str
     items: list[SignalRecord] = []
     availability: AvailabilityField
+
+
+class EvidenceRecord(BaseModel):
+    identity: str
+    as_of_utc: datetime | None = None
+    status: str
+    fields: dict[str, str | None] = {}
+
+
+class ReadOnlyEvidenceResponse(BaseModel):
+    schema_version: str
+    generated_at_utc: datetime
+    source_as_of_utc: datetime | None = None
+    source_classification: SourceClassification
+    freshness: SnapshotFreshness
+    provenance: list[str]
+    warnings: list[str]
+    records: list[EvidenceRecord]

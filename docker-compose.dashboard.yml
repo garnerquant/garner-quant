@@ -11,6 +11,8 @@ services:
       - ./signal_report_v2.csv:/data/snapshots/signal_report_v2.csv:ro
       - ./runtime/live_runtime_config.json:/data/config/live_runtime_config.json:ro
       - ./risk_engine/risk_config.json:/data/config/risk_config.json:ro
+      - ./data/continuous_research/morning_reports:/data/research:ro
+      - ./docs/baseline_evidence_manifest.json:/data/audit/baseline_evidence_manifest.json:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3)\""]
       interval: 20s

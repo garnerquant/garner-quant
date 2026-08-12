@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test": "node tests/overview-integration-check.mjs && node tests/portfolio-integration-check.mjs && node tests/evidence-integration-check.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
