@@ -25,12 +25,12 @@ jobs:
       - name: Deploy on Lightsail
         run: |
           set +e
-          timeout --foreground --signal=TERM --kill-after=30s 45m \
+          timeout --foreground --signal=TERM --kill-after=30s 60m \
           ssh -i ~/.ssh/lightsail_deploy_key \
             -o IdentitiesOnly=yes \
             -o ConnectTimeout=30 \
             -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=3 \
+            -o ServerAliveCountMax=60 \
             "${{ secrets.AWS_USER }}@${{ secrets.AWS_HOST }}" \
             'bash -s' <<'REMOTE_DEPLOY'
           set -euo pipefail
@@ -39,13 +39,16 @@ jobs:
           DASHBOARD_SERVICE="garner-quant-dashboard"
           RUNTIME_SERVICE="garner-quant-runtime"
           COMPOSE_FILE="$APP_DIR/docker-compose.dashboard.yml"
+          API_SERVICE="garner-quant-dashboard-api"
+          FRONTEND_SERVICE="garner-quant-dashboard-preview"
           API_CONTAINER="garner-quant-dashboard-api"
           FRONTEND_CONTAINER="garner-quant-dashboard-preview"
           SERVICE_TIMEOUT="2m"
           GIT_TIMEOUT="5m"
           PIP_TIMEOUT="15m"
           APT_TIMEOUT="15m"
-          COMPOSE_TIMEOUT="30m"
+          COMPOSE_BUILD_TIMEOUT="30m"
+          COMPOSE_UP_TIMEOUT="10m"
 
           cd "$APP_DIR"
 
@@ -190,6 +193,7 @@ jobs:
 
           timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl is-active --quiet "$DASHBOARD_SERVICE" && DASHBOARD_WAS_ACTIVE=true
           timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl is-active --quiet "$RUNTIME_SERVICE" && RUNTIME_WAS_ACTIVE=true
+          PRE_DEPLOY_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
 
           echo "Preserving server-owned runtime state..."
           while IFS= read -r runtime_path; do
@@ -217,6 +221,7 @@ jobs:
 
           run_with_timeout "Fetch latest main" "$GIT_TIMEOUT" git fetch origin main
           run_with_timeout "Reset deployment checkout to origin/main" "$GIT_TIMEOUT" git reset --hard origin/main
+          TARGET_DEPLOY_HEAD="$(git rev-parse HEAD)"
 
           echo "Restoring server-owned runtime state..."
           cp -a "$RUNTIME_BACKUP/." "$APP_DIR/"
@@ -334,10 +339,33 @@ jobs:
 
           ensure_docker_compose
           DOCKER=(sudo -n docker)
+          COMPOSE=(env COMPOSE_DISABLE_ENV_FILE=1 "${DOCKER[@]}" compose -f "$COMPOSE_FILE")
 
-          run_with_timeout "Validate dashboard Compose configuration" 2m "${DOCKER[@]}" compose -f "$COMPOSE_FILE" config -q
+          run_with_timeout "Validate dashboard Compose configuration" 2m "${COMPOSE[@]}" config -q
 
-          run_with_timeout "Build and start the read-only dashboard API and Next.js frontend" "$COMPOSE_TIMEOUT" "${DOCKER[@]}" compose -f "$COMPOSE_FILE" up -d --build "$API_CONTAINER" "$FRONTEND_CONTAINER"
+          dashboard_sources_changed=false
+          if [ -n "$PRE_DEPLOY_HEAD" ] && [ "$PRE_DEPLOY_HEAD" != "$TARGET_DEPLOY_HEAD" ]; then
+            if ! git diff --quiet "$PRE_DEPLOY_HEAD" "$TARGET_DEPLOY_HEAD" -- docker-compose.dashboard.yml dashboard-api dashboard-web; then
+              dashboard_sources_changed=true
+            fi
+          fi
+
+          dashboard_images_missing=false
+          for dashboard_service in "$API_SERVICE" "$FRONTEND_SERVICE"; do
+            dashboard_image_id="$("${COMPOSE[@]}" images -q "$dashboard_service" 2>/dev/null | tr -d '\r')"
+            if [ -z "$dashboard_image_id" ]; then
+              echo "No cached image found for $dashboard_service."
+              dashboard_images_missing=true
+            fi
+          done
+
+          if [ "$dashboard_sources_changed" = true ] || [ "$dashboard_images_missing" = true ]; then
+            run_with_timeout "Build dashboard images" "$COMPOSE_BUILD_TIMEOUT" "${COMPOSE[@]}" build --progress plain "$API_SERVICE" "$FRONTEND_SERVICE"
+          else
+            echo "Dashboard sources are unchanged and cached images are present; skipping rebuild."
+          fi
+
+          run_with_timeout "Start the read-only dashboard API and Next.js frontend" "$COMPOSE_UP_TIMEOUT" "${COMPOSE[@]}" up -d --no-build "$API_SERVICE" "$FRONTEND_SERVICE"
 
           wait_for_container_health() {
             local container="$1"
@@ -392,12 +420,12 @@ jobs:
           echo "Service status:"
           timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl status "$DASHBOARD_SERVICE" --no-pager
           timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl status "$RUNTIME_SERVICE" --no-pager
-          run_with_timeout "Show dashboard Compose service status" 2m "${DOCKER[@]}" compose -f "$COMPOSE_FILE" ps
+          run_with_timeout "Show dashboard Compose service status" 2m "${COMPOSE[@]}" ps
           REMOTE_DEPLOY
           ssh_status=$?
           set -e
           if [ "$ssh_status" -eq 124 ]; then
-            echo "Remote deployment exceeded the 45-minute timeout."
+            echo "Remote deployment exceeded the 60-minute timeout."
           elif [ "$ssh_status" -ne 0 ]; then
             echo "Remote deployment exited with status $ssh_status."
           fi
