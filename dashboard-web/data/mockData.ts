@@ -238,13 +238,6 @@ export const riskStatus: StatusItem[] = [
   { label: "Evidence", value: "Unverified research", tone: "warning" },
 ];
 
-export const shadowComparisonSummary: StatusItem[] = [
-  { label: "Agree", value: "12", tone: "positive" },
-  { label: "Differ", value: "3", tone: "warning" },
-  { label: "Unavailable", value: "2", tone: "negative" },
-  { label: "Methodology mismatch", value: "1", tone: "warning" },
-];
-
 export const contributionSeries: ChartPoint[] = [
   { date: "VWRL.L", contribution: 2.6 },
   { date: "IUSA.L", contribution: 3.2 },
@@ -396,34 +389,6 @@ export const returnDistribution = [
   { bucket: "0 to 2", value: 4 },
   { bucket: "2 to 4", value: 2 },
   { bucket: "4 to 6", value: 1 },
-];
-
-export const riskTimeline = [
-  { label: "08:00", status: "Healthy", tone: "positive" },
-  { label: "09:30", status: "Cycle started", tone: "neutral" },
-  { label: "11:20", status: "AAPL stale quote warning", tone: "warning" },
-  { label: "13:40", status: "Research evidence pending", tone: "warning" },
-  { label: "15:44", status: "Monitor cycle healthy", tone: "positive" },
-];
-
-export const healthItems: StatusItem[] = [
-  { label: "Overall health score", value: "92 / 100", tone: "positive" },
-  { label: "Runtime heartbeat", value: "Healthy", tone: "positive" },
-  { label: "Dashboard status", value: "Preview ready", tone: "positive" },
-  { label: "Latest cycle", value: "11 Aug 2026 15:44", tone: "neutral" },
-  { label: "Market session", value: "US pre-close / UK closed", tone: "neutral" },
-  { label: "Data freshness", value: "Healthy", tone: "positive" },
-  { label: "Accounting reconciliation", value: "Reconciled", tone: "positive" },
-  { label: "Risk engine", value: "Healthy", tone: "positive" },
-  { label: "Kill-switch", value: "Armed / no trigger", tone: "warning" },
-  { label: "Deployment version", value: "preview-e94e1b5", tone: "neutral" },
-  { label: "Service uptime", value: "4d 12h", tone: "neutral" },
-];
-
-export const warnings = [
-  "AAPL quote freshness outside target window.",
-  "Research evidence remains unverified.",
-  "BTC-GBP source provenance unavailable.",
 ];
 
 export const auditRows: EvidenceRow[] = [

@@ -3,13 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test": "node tests/overview-integration-check.mjs && node tests/portfolio-integration-check.mjs && node tests/evidence-integration-check.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "check:overview-integration": "node tests/overview-integration-check.mjs",
-    "check:portfolio-integration": "node tests/portfolio-integration-check.mjs"
+    "check:portfolio-integration": "node tests/portfolio-integration-check.mjs",
+    "check:signals-integration": "node tests/signals-integration-check.mjs"
   },
   "dependencies": {
     "lightweight-charts": "^5.2.0",

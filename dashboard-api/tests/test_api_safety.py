@@ -13,13 +13,15 @@ FORBIDDEN_IMPORTS = {"requests", "httpx", "urllib", "socket", "subprocess", "exe
 
 def test_only_expected_routes_and_get_methods() -> None:
     client = TestClient(app)
-    assert {route.path for route in app.routes} == {"/health", "/api/v1/overview", "/api/v1/portfolio"}
+    assert {route.path for route in app.routes} == {"/health", "/api/v1/overview", "/api/v1/portfolio", "/api/v1/signals", "/api/v1/markets", "/api/v1/research", "/api/v1/shadow-runs", "/api/v1/risk-health", "/api/v1/audit"}
     assert client.get("/health").status_code == 200
     assert client.post("/health").status_code == 405
     assert client.put("/api/v1/overview").status_code == 405
     assert client.delete("/api/v1/overview").status_code == 405
     assert client.get("/api/v1/portfolio").status_code == 200
     assert client.post("/api/v1/portfolio").status_code == 405
+    assert client.get("/api/v1/signals").status_code == 200
+    assert client.post("/api/v1/signals").status_code == 405
 
 
 def test_static_capability_and_import_audit() -> None:
@@ -43,3 +45,4 @@ def test_dashboard_api_mounts_are_explicit_and_read_only() -> None:
     for source in ("portfolio_v2.csv", "holdings_report.csv", "signal_report_v2.csv", "live_runtime_config.json", "risk_config.json"):
         assert f"{source}:ro" in compose
     assert "./:/data" not in compose
+    assert "baseline_evidence_manifest.json:/data/audit/baseline_evidence_manifest.json:ro" in compose
