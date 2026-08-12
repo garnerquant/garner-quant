@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "check:overview-integration": "node tests/overview-integration-check.mjs"
+    "check:overview-integration": "node tests/overview-integration-check.mjs",
+    "check:portfolio-integration": "node tests/portfolio-integration-check.mjs"
   },
   "dependencies": {
     "lightweight-charts": "^5.2.0",

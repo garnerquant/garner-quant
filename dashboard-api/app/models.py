@@ -109,3 +109,57 @@ class OverviewResponse(BaseModel):
     recent_signals: SignalSummary
     performance_series: PerformanceSeries
     risk_safety_summary: SafetySummary
+
+
+class PortfolioHolding(BaseModel):
+    instrument: str
+    quantity: str
+    entry_price: str
+    current_price: str
+    market_value: str
+    unrealised_pnl: str
+    unrealised_pnl_percent: str
+
+
+class PortfolioHoldings(BaseModel):
+    as_of_utc: datetime | None = None
+    items: list[PortfolioHolding] = []
+    availability: AvailabilityField
+
+
+class PortfolioValueSummary(BaseModel):
+    portfolio_value: str | None = None
+    as_of_utc: datetime | None = None
+    holdings_market_value: str | None = None
+    holdings_as_of_utc: datetime | None = None
+    reconciliation: AvailabilityField
+    availability: AvailabilityField
+
+
+class CashSummary(BaseModel):
+    value: str | None = None
+    as_of_utc: datetime | None = None
+    availability: AvailabilityField
+
+
+class SnapshotSelectionPolicy(BaseModel):
+    identity_field: str
+    timestamp_field: str
+    required_columns: list[str]
+    completeness_rule: str
+    selection_rule: str
+
+
+class PortfolioResponse(BaseModel):
+    schema_version: Literal["portfolio.v1"]
+    generated_at_utc: datetime
+    source_as_of_utc: datetime | None = None
+    source_classification: SourceClassification
+    freshness: SnapshotFreshness
+    warnings: list[str]
+    snapshot_selection_policy: SnapshotSelectionPolicy
+    portfolio_summary: PortfolioValueSummary
+    holdings: PortfolioHoldings
+    allocation: AllocationSummary
+    cash: CashSummary
+    section_availability: dict[str, AvailabilityField]
