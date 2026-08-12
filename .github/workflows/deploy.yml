@@ -76,14 +76,7 @@ jobs:
             echo "AWS_SSH_PRIVATE_KEY failed ssh-keygen validation."
             exit 1
           fi
-          if timeout 15s python3 - "$AWS_HOST_VALUE" <<'PY'
-import socket
-import sys
-
-host = sys.argv[1]
-sock = socket.create_connection((host, 22), timeout=10)
-sock.close()
-PY
+          if timeout 15s python3 -c "import socket, sys; sock = socket.create_connection((sys.argv[1], 22), timeout=10); sock.close()" "$AWS_HOST_VALUE"
           then
             echo "SSH port 22 connectivity check succeeded."
           else
