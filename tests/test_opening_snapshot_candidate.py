@@ -68,8 +68,8 @@ class OpeningSnapshotTests(unittest.TestCase):
   with self.assertRaises(OpeningSnapshotError):replace(a,candidate_hash="bad").validate(c,r)
   replace(a,decision="REJECTED").validate(c,r);replace(a,decision="CHANGES_REQUIRED").validate(c,r)
  def test_inactive_freeze_restart_and_safety(self):
-  c=self.candidate();r=reconcile_candidate(c,self.expected());protected=[ROOT/n for n in ("trade_ledger_v1.csv","paper_portfolio_v3.csv","holdings_report.csv","broker_account.csv","paper_30_day_tracker.csv")];before={p:hashlib.sha256(p.read_bytes()).hexdigest() for p in protected}
-  path=freeze_inactive_candidate(c,r,self.root/"candidates");self.assertTrue((path/"candidate.json").exists());self.assertFalse((ROOT/"data/accounting_generations/accounting_generation.json").exists());self.assertEqual(before,{p:hashlib.sha256(p.read_bytes()).hexdigest() for p in protected})
+  c=self.candidate();r=reconcile_candidate(c,self.expected());protected=[ROOT/n for n in ("trade_ledger_v1.csv","paper_portfolio_v3.csv","holdings_report.csv","broker_account.csv","paper_30_day_tracker.csv")];before={p:hashlib.sha256(p.read_bytes()).hexdigest() for p in protected if p.is_file()}
+  path=freeze_inactive_candidate(c,r,self.root/"candidates");self.assertTrue((path/"candidate.json").exists());self.assertFalse((ROOT/"data/accounting_generations/accounting_generation.json").exists());self.assertEqual(before,{p:hashlib.sha256(p.read_bytes()).hexdigest() for p in protected if p.is_file()})
   with self.assertRaises(OpeningSnapshotError):freeze_inactive_candidate(c,r,self.root/"candidates")
   with self.assertRaises(OpeningSnapshotError):freeze_inactive_candidate(c,reconcile_candidate(c,{**self.expected(),"equity":"1"}),self.root/"bad")
 if __name__=="__main__":unittest.main()
