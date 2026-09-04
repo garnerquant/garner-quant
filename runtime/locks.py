@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from uuid import uuid4
 
 
 DEFAULT_EXECUTION_LOCK = Path("data") / "execution.lock"
@@ -154,6 +155,17 @@ def current_process_owns_lock(path=DEFAULT_EXECUTION_LOCK):
         return False
 
 
+def take_over_stale_lock(path):
+    """Atomically reserve a stale lock before removing it."""
+    stale_path = Path(path).with_name(f".{Path(path).name}.stale-{uuid4().hex}")
+    try:
+        Path(path).replace(stale_path)
+    except FileNotFoundError:
+        return False
+    stale_path.unlink(missing_ok=True)
+    return True
+
+
 def acquire_execution_lock(
     path=DEFAULT_EXECUTION_LOCK,
     context=None,
@@ -179,11 +191,12 @@ def acquire_execution_lock(
             pid_running = process_is_running(existing_pid)
 
             if not pid_running:
-                print(
-                    "Warning: stale execution lock taken over "
-                    "(PID is not running)."
-                )
-                path.unlink(missing_ok=True)
+                if take_over_stale_lock(path):
+                    print(
+                        "Warning: stale execution lock taken over "
+                        "(PID is not running)."
+                    )
+                    continue
                 continue
 
             if age is not None and age > stale_seconds:
@@ -191,7 +204,8 @@ def acquire_execution_lock(
                     "Warning: stale execution lock taken over "
                     f"(age {int(age)}s exceeded {stale_seconds}s)."
                 )
-                path.unlink(missing_ok=True)
+                if take_over_stale_lock(path):
+                    continue
                 continue
 
             return ExecutionLock(
