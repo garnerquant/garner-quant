@@ -3,7 +3,7 @@ import ast,hashlib,json,subprocess,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];PROTECTED=("trade_ledger_v1.csv","paper_portfolio_v3.csv","holdings_report.csv","broker_account.csv","paper_30_day_tracker.csv")
 FORBIDDEN=("SuccessorGenerationWriter","publish_prepared","load_active_generation","POINTER_FILE","commit_trade_state","submit_order","place_order","broker_adapter")
-def hashes():return {n:hashlib.sha256((ROOT/n).read_bytes()).hexdigest() for n in PROTECTED}
+def hashes():return {n:hashlib.sha256((ROOT/n).read_bytes()).hexdigest() for n in PROTECTED if (ROOT/n).is_file()}
 def check(v,l,i):print(("PASS"if v else"FAIL")+": "+l);i.append(l)if not v else None
 def main():
  issues=[];before=hashes();pointer=ROOT/"data/accounting_generations/accounting_generation.json";generations=ROOT/"data/accounting_generations/generations";g0=sorted(p.name for p in generations.iterdir())if generations.exists()else[]

@@ -7,6 +7,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -23,7 +25,7 @@ def require(condition, message):
 
 
 def hashes():
-    return {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in PROTECTED}
+    return {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in PROTECTED if (ROOT / name).is_file()}
 
 
 def main():
@@ -44,7 +46,14 @@ def main():
     output = ROOT / ".tmp" / "risk_shadow_validator"
     shutil.rmtree(output, ignore_errors=True)
     try:
-        report = run_shadow_simulations(output, prices_path=ROOT / "prices_v2.csv")
+        prices_path = ROOT / "prices_v2.csv"
+        if not prices_path.is_file():
+            # Runtime prices are ignored server state; use an isolated fixture
+            # when validating a clean source checkout in CI.
+            output.mkdir(parents=True, exist_ok=True)
+            prices_path = output / "prices_v2.csv"
+            pd.DataFrame({"BTC-GBP": [50000]}).to_csv(prices_path)
+        report = run_shadow_simulations(output, prices_path=prices_path)
         require(report["execution_attempts"] == 0 and len(report["scenarios"]) == 16, "shadow scenarios are incomplete")
         rows = decision_history(audit_path=output / "decisions.jsonl")
         require(rows and all(row["execution_eligible"] is False for row in rows), "shadow history contains execution eligibility")

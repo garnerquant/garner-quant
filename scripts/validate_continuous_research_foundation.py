@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[1]
 PROTECTED=("trade_ledger_v1.csv","trade_journal_v3.csv","paper_portfolio_v3.csv","paper_30_day_tracker.csv","broker_account.csv","config.py","risk_engine/risk_config.json","strategy/signals.py","strategy/portfolio.py")
 
 
-def hashes(): return {name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in PROTECTED}
+def hashes(): return {name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in PROTECTED if (ROOT/name).is_file()}
 
 
 def main():

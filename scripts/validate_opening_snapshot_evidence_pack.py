@@ -17,7 +17,7 @@ FORBIDDEN = ("SuccessorGenerationWriter", "publish_prepared", "freeze_inactive_c
 
 
 def hashes():
-    return {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in PROTECTED}
+    return {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in PROTECTED if (ROOT / name).is_file()}
 
 
 def check(value, label, issues):

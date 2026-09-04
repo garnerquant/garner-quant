@@ -11,7 +11,7 @@ ROOT=Path(__file__).resolve().parents[1]
 PROTECTED=("trade_ledger_v1.csv","paper_portfolio_v3.csv","holdings_report.csv","broker_account.csv","paper_30_day_tracker.csv")
 FORBIDDEN=("SuccessorGenerationWriter","publish_prepared","commit_trade_state","submit_order","place_order","broker_adapter","reconcile_broker_account_file")
 
-def hashes(): return {name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in PROTECTED}
+def hashes(): return {name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in PROTECTED if (ROOT/name).is_file()}
 def check(value,label,issues): print(("PASS" if value else "FAIL")+": "+label); issues.append(label) if not value else None
 
 def main():

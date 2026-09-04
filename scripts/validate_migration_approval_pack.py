@@ -4,7 +4,7 @@ from datetime import datetime,timezone
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT));PROTECTED=("trade_ledger_v1.csv","paper_portfolio_v3.csv","holdings_report.csv","broker_account.csv","paper_30_day_tracker.csv")
 FORBIDDEN=("SuccessorGenerationWriter","publish_prepared","freeze_inactive_candidate","build_candidate","submit_order","place_order","broker_adapter","write_text(","write_bytes(","open(\"w")
-def hashes():return {x:hashlib.sha256((ROOT/x).read_bytes()).hexdigest() for x in PROTECTED}
+def hashes():return {x:hashlib.sha256((ROOT/x).read_bytes()).hexdigest() for x in PROTECTED if (ROOT/x).is_file()}
 def check(v,l,issues):print(("PASS"if v else"FAIL")+": "+l);issues.append(l)if not v else None
 def main():
  issues=[];before=hashes();pointer=ROOT/"data/accounting_generations/accounting_generation.json";candidate=ROOT/"data/opening_snapshot_candidates";gens=ROOT/"data/accounting_generations/generations";g0=sorted(x.name for x in gens.iterdir())if gens.exists()else[];c0=sorted(x.name for x in candidate.iterdir())if candidate.exists()else[]
