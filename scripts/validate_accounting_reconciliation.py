@@ -124,6 +124,43 @@ def main(argv=None):
             f"files: {', '.join(missing_runtime_files)}"
         )
         print("reconciliation=skipped (runtime state is absent)")
+        if args.report_file:
+            report_file = Path(args.report_file).resolve()
+            report_file.parent.mkdir(parents=True, exist_ok=True)
+            report_file.write_text(
+                json.dumps(
+                    {
+                        "generated_at": datetime.now().isoformat(timespec="seconds"),
+                        "starting_cash": float(STARTING_CASH),
+                        "expected_ledger_cash": None,
+                        "actual_broker_cash": None,
+                        "cash_difference": None,
+                        "expected_ledger_realised_pnl": None,
+                        "actual_broker_realised_pnl": None,
+                        "realised_pnl_difference": None,
+                        "expected_open_cost_basis": None,
+                        "holdings_market_value": None,
+                        "actual_broker_positions_value": None,
+                        "expected_unrealised_pnl": None,
+                        "actual_broker_unrealised_pnl": None,
+                        "expected_portfolio_value": None,
+                        "actual_broker_portfolio_value": None,
+                        "portfolio_value_difference": None,
+                        "currency_summary": [],
+                        "expected_open_positions": [],
+                        "holding_mismatches": [],
+                        "issues": [{
+                            "severity": "INFO",
+                            "message": "reconciliation skipped: server-owned runtime state is unavailable",
+                            "details": {"missing_runtime_files": missing_runtime_files},
+                        }],
+                        "likely_root_cause": "server-owned runtime artifacts are absent from this checkout",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            print(f"wrote={report_file}")
         return 0
     issues = []
     ledger = load_trade_ledger(LEDGER_FILE)
