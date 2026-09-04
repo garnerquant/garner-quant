@@ -41,7 +41,9 @@ def main():
         "deployment preserves runtime state across source reset",
         issues,
     )
-    reset_at = deploy.index("git reset --hard origin/main")
+    # Deployments reset to the exact workflow commit, rather than assuming
+    # that the remote branch tip is the commit being deployed.
+    reset_at = deploy.index('git reset --hard "$DEPLOY_COMMIT"')
     restore_at = deploy.index("Restoring server-owned runtime state")
     validation_at = deploy.index("Running startup validation")
     check(reset_at < restore_at < validation_at, "deployment restores state before startup validation", issues)
@@ -71,8 +73,9 @@ def main():
     check(
         "DASHBOARD_WAS_ACTIVE=false" in deploy
         and "RUNTIME_WAS_ACTIVE=false" in deploy
-        and 'if [ "$DASHBOARD_WAS_ACTIVE" = true ]' in deploy
-        and 'if [ "$RUNTIME_WAS_ACTIVE" = true ]' in deploy,
+        and 'if [ "$was_active" = true ]' in deploy
+        and 'start_or_restart_and_check_systemd_service "$DASHBOARD_SERVICE" "$DASHBOARD_WAS_ACTIVE"' in deploy
+        and 'start_or_restart_and_check_systemd_service "$RUNTIME_SERVICE" "$RUNTIME_WAS_ACTIVE"' in deploy,
         "deployment preserves each service's pre-deploy running state",
         issues,
     )
