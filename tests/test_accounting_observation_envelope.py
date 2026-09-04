@@ -99,13 +99,13 @@ class AccountingObservationEnvelopeTests(unittest.TestCase):
 
     def test_monitor_only_pipeline_records_or_fails_without_execution_or_accounting(self):
         protected=[ROOT/name for name in ("trade_ledger_v1.csv","paper_portfolio_v3.csv","holdings_report.csv","broker_account.csv","paper_30_day_tracker.csv")]
-        before={path:hashlib.sha256(path.read_bytes()).hexdigest() for path in protected}
+        before={path:hashlib.sha256(path.read_bytes()).hexdigest() for path in protected if path.is_file()}
         proposal=self.proposal(); context=self.context(); decision=self.engine.evaluate(proposal, context)
         result=observe_monitor_only_evaluation(proposal, context, decision, store=self.store); self.assertEqual(result["status"], "VALID")
         bad=self.proposal(proposal_id="bad", symbol="AAPL", market="NASDAQ", expected_execution_currency="USD", metadata={"timeframe":"1d","strategy_version":"v","fx_source":""})
         bad_context=self.context(reference_price=Decimal("200"), fx_rate_to_base=None, fx_timestamp=None); bad_decision=self.engine.evaluate(bad,bad_context)
         self.assertEqual(observe_monitor_only_evaluation(bad,bad_context,bad_decision,store=self.store)["status"],"INVALID")
-        self.assertEqual(before,{path:hashlib.sha256(path.read_bytes()).hexdigest() for path in protected}); self.assertFalse((ROOT/"data/accounting_generations/accounting_generation.json").exists())
+        self.assertEqual(before,{path:hashlib.sha256(path.read_bytes()).hexdigest() for path in protected if path.is_file()}); self.assertFalse((ROOT/"data/accounting_generations/accounting_generation.json").exists())
 
 
 if __name__ == "__main__": unittest.main()
