@@ -88,9 +88,9 @@ class NonFillProducerTests(unittest.TestCase):
         for value in ("NaN","Infinity"):
             with self.assertRaises(AccountingObservationError): self.request(amount=value)
         with self.assertRaises(Exception): self.request(native_currency="ZZZ")
-        protected=[ROOT/name for name in ("trade_ledger_v1.csv","paper_portfolio_v3.csv","holdings_report.csv","broker_account.csv","paper_30_day_tracker.csv")]; before={p:hashlib.sha256(p.read_bytes()).hexdigest() for p in protected}
+        protected=[ROOT/name for name in ("trade_ledger_v1.csv","paper_portfolio_v3.csv","holdings_report.csv","broker_account.csv","paper_30_day_tracker.csv")]; before={p:hashlib.sha256(p.read_bytes()).hexdigest() for p in protected if p.is_file()}
         observe_non_fill_event(self.request(),store=self.store)
-        self.assertEqual(before,{p:hashlib.sha256(p.read_bytes()).hexdigest() for p in protected}); self.assertFalse((ROOT/"data/accounting_generations/accounting_generation.json").exists())
+        self.assertEqual(before,{p:hashlib.sha256(p.read_bytes()).hexdigest() for p in protected if p.is_file()}); self.assertFalse((ROOT/"data/accounting_generations/accounting_generation.json").exists())
         self.assertEqual(producer_framework_status()["active_production_producers"],[])
         class FailedStore:
             def append(self,_envelope): raise OSError("fixture storage failure")
