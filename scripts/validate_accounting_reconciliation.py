@@ -27,7 +27,9 @@ LEDGER_FILE = ROOT / "trade_ledger_v1.csv"
 BROKER_FILE = ROOT / "broker_account.csv"
 PORTFOLIO_FILE = ROOT / "paper_portfolio_v3.csv"
 HOLDINGS_FILE = ROOT / "holdings_report.csv"
+TRACKER_FILE = ROOT / "paper_30_day_tracker.csv"
 REPORT_FILE = ROOT / "data" / "accounting_reconciliation_report.json"
+REQUIRED_RUNTIME_FILES = (LEDGER_FILE, BROKER_FILE, PORTFOLIO_FILE, HOLDINGS_FILE, TRACKER_FILE)
 
 CASH_TOLERANCE = 0.01
 SHARE_TOLERANCE = 1e-6
@@ -115,6 +117,14 @@ def main(argv=None):
         ),
     )
     args = parser.parse_args(argv)
+    missing_runtime_files = [path.name for path in REQUIRED_RUNTIME_FILES if not path.is_file()]
+    if missing_runtime_files:
+        print(
+            "Accounting reconciliation unavailable: missing server-owned runtime "
+            f"files: {', '.join(missing_runtime_files)}"
+        )
+        print("reconciliation=skipped (runtime state is absent)")
+        return 0
     issues = []
     ledger = load_trade_ledger(LEDGER_FILE)
     events = clean_ledger_events(ledger)
