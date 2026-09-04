@@ -1,47 +1,54 @@
 "use client";
 
-import { ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { ChartCard } from "@/components/ChartCard";
 import { DataTable, TableColumn } from "@/components/DataTable";
+import { EmptyState } from "@/components/EmptyState";
+import { ErrorState } from "@/components/ErrorState";
 import { MetricCard } from "@/components/MetricCard";
 import { PortfolioApiResponse, isPortfolioApiResponse } from "@/lib/portfolioApi";
 
-type SourceState = { kind: "loading" } | { kind: "api"; data: PortfolioApiResponse } | { kind: "fallback" };
+type SourceState = { kind: "loading" } | { kind: "api"; data: PortfolioApiResponse } | { kind: "error" };
 type Position = PortfolioApiResponse["holdings"]["items"][number];
+type TablePosition = Position & { allocation: number | null; cost_basis: number };
 
 const colours = ["#5fb8b1", "#72c59a", "#cda96b", "#8496a3", "#6689a8"];
 const money = (value: string) => `GBP ${Number(value).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const timestamp = (value: string | null) => value ? new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(value)) + " UTC" : "Unavailable";
+const costBasis = (row: Position) => Number(row.quantity) * Number(row.entry_price);
 
-const positionColumns: TableColumn<Position>[] = [
+const positionColumns: TableColumn<TablePosition>[] = [
   { key: "instrument", label: "Instrument", sortable: true },
   { key: "quantity", label: "Quantity", sortable: true, className: "text-right tabular-nums" },
+  { key: "cost_basis", label: "Cost basis", sortable: true, className: "text-right tabular-nums", render: (row) => money(String(row.cost_basis)), sortValue: (row) => row.cost_basis },
   { key: "current_price", label: "Current price", sortable: true, className: "text-right tabular-nums", render: (row) => money(row.current_price), sortValue: (row) => Number(row.current_price) },
   { key: "market_value", label: "Market value", sortable: true, className: "text-right tabular-nums", render: (row) => money(row.market_value), sortValue: (row) => Number(row.market_value) },
   { key: "unrealised_pnl", label: "Unrealised P&L", sortable: true, className: "text-right tabular-nums", render: (row) => <span className={Number(row.unrealised_pnl) >= 0 ? "text-mint" : "text-danger"}>{money(row.unrealised_pnl)}</span>, sortValue: (row) => Number(row.unrealised_pnl) },
+  { key: "allocation", label: "Allocation", sortable: true, className: "text-right tabular-nums", render: (row) => row.allocation === null ? "Unavailable" : `${row.allocation.toFixed(2)}%`, sortValue: (row) => row.allocation ?? -1 },
 ];
 
-export function PortfolioIntegration({ fallback }: { fallback: ReactNode }) {
+export function PortfolioIntegration() {
   const [state, setState] = useState<SourceState>({ kind: "loading" });
 
   useEffect(() => {
     let active = true;
     fetch("/api/portfolio", { cache: "no-store" })
       .then(async (response) => response.ok ? response.json() : Promise.reject(new Error("unavailable")))
-      .then((data: unknown) => { if (active) setState(isPortfolioApiResponse(data) ? { kind: "api", data } : { kind: "fallback" }); })
-      .catch(() => { if (active) setState({ kind: "fallback" }); });
+      .then((data: unknown) => { if (active) setState(isPortfolioApiResponse(data) ? { kind: "api", data } : { kind: "error" }); })
+      .catch(() => { if (active) setState({ kind: "error" }); });
     return () => { active = false; };
   }, []);
 
   if (state.kind === "loading") return <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-32 animate-pulse rounded-xl border border-slate-700/70 bg-[#111c24]" />)}</div>;
-  if (state.kind === "fallback") return <div className="space-y-4"><p className="text-[15px] text-slate-300">Mock preview — the read-only portfolio source is unavailable. No snapshot and mock values are combined.</p>{fallback}</div>;
+  if (state.kind === "error") return <ErrorState title="Portfolio data unavailable" description="The read-only portfolio source could not be loaded. No demo values are shown." />;
 
   const { data } = state;
   const holdingsAvailable = data.holdings.availability.availability === "available";
   const allocationAvailable = data.allocation.availability.availability === "available";
   const equityAvailable = data.portfolio_summary.availability.availability === "available" && data.portfolio_summary.portfolio_value !== null;
   const allocation = data.allocation.items.map((item, index) => ({ ...item, value: Number(item.weight_percent), colour: colours[index % colours.length] }));
+  const tableRows: TablePosition[] = data.holdings.items.map((row) => ({ ...row, cost_basis: costBasis(row), allocation: data.portfolio_summary.holdings_market_value && Number(data.portfolio_summary.holdings_market_value) !== 0 ? (Number(row.market_value) / Number(data.portfolio_summary.holdings_market_value)) * 100 : null }));
   const equityMetric = equityAvailable
     ? { label: "Total equity", value: money(data.portfolio_summary.portfolio_value!), helper: `Portfolio data as of ${timestamp(data.portfolio_summary.as_of_utc)}`, tone: "neutral" as const }
     : { label: "Total equity", value: "Unavailable", helper: data.portfolio_summary.availability.reason, tone: "warning" as const };
@@ -77,7 +84,7 @@ export function PortfolioIntegration({ fallback }: { fallback: ReactNode }) {
         </ChartCard>
         <ChartCard title="Contribution to return" subtitle="Requires a complete comparable holdings snapshot"><p className="text-[15px] text-slate-300">Contribution is available only when a comparable holdings source is supplied.</p></ChartCard>
       </div>
-      <ChartCard title="Holdings" subtitle={`Complete snapshot as of ${timestamp(data.holdings.as_of_utc)}`}><DataTable data={data.holdings.items} columns={positionColumns} /></ChartCard>
+      <ChartCard title="Holdings" subtitle={`Complete snapshot as of ${timestamp(data.holdings.as_of_utc)}`}>{tableRows.length ? <DataTable data={tableRows} columns={positionColumns} /> : <EmptyState title="No holdings in snapshot" description="The latest complete portfolio snapshot contains no positions." />}</ChartCard>
     </>}
   </div>;
 }
