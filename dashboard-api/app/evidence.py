@@ -203,7 +203,7 @@ def risk_health(generated_at: datetime | None = None, config_root: Path = CONFIG
 
 
 def audit(generated_at: datetime | None = None, manifest_path: Path = MANIFEST_PATH, repository_root: Path | None = None) -> ReadOnlyEvidenceResponse:
-    provenance = ["baseline_evidence_manifest.json", "SHA-256 is recomputed read-only; immutable and mutable classifications retain distinct drift semantics."]
+    provenance = ["baseline_evidence_manifest.json (explicit read-only mount)", "SHA-256 is recomputed read-only; immutable and mutable classifications retain distinct drift semantics.", "Validation and governance run outcomes are not inferred from documentation or artifact existence; absent mounted result artifacts remain unavailable."]
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         artifacts = manifest.get("artifacts")
@@ -223,9 +223,23 @@ def audit(generated_at: datetime | None = None, manifest_path: Path = MANIFEST_P
                 source = Path("/nonexistent")
             actual = hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() else None
             status = "verified" if actual == expected else ("drift" if actual and mutability == "mutable_runtime_state" else "unavailable" if actual is None else "mismatch")
-            records.append(EvidenceRecord(identity=relative, status=status, fields={"classification": str(item.get("artifact_category", "unclassified")), "mutability": mutability, "expected_sha256": expected, "actual_sha256": actual, "modified_timestamp_utc": str(item.get("modified_timestamp_utc")) if item.get("modified_timestamp_utc") else None}))
+            records.append(EvidenceRecord(identity=relative, as_of_utc=_iso_datetime(str(item["modified_timestamp_utc"])) if item.get("modified_timestamp_utc") else None, status=status, fields={"classification": str(item.get("artifact_category", "unclassified")), "ownership": str(item.get("writer_authority", "unavailable")), "mutability": mutability, "source_path": relative, "expected_sha256": expected, "actual_sha256": actual, "severity": "info" if status == "verified" else "high", "definition": "Read-only SHA-256 comparison against the point-in-time baseline manifest.", "operator_action": "No action; retain immutable evidence." if status == "verified" else "Operator must restore or re-verify the artifact before relying on it.", "modified_timestamp_utc": str(item.get("modified_timestamp_utc")) if item.get("modified_timestamp_utc") else None}))
         if any(item.status in {"mismatch", "unavailable"} for item in records): warnings.append("One or more immutable or mounted artifact checks could not be verified.")
         if any(item.status == "drift" for item in records): warnings.append("Mutable runtime drift is reported separately and is not treated as immutable corruption.")
+        required_domains = {
+            "validation-run": "Mount a validation run result with workflow name, main branch, conclusion, commit, and completed timestamp.",
+            "runtime-state-ownership": "Run the repository ownership validator and mount its result; do not infer ownership from file presence.",
+            "source-runtime-separation": "Mount a validated source/runtime ownership result and review any drift.",
+            "accounting-reconciliation": "Mount the read-only reconciliation report and verify its source timestamp and contract.",
+            "evidence-pack": "Mount the frozen evidence-pack result and verify its hashes and cut-off.",
+            "migration-governance": "Mount the migration approval/governance result and complete independent operator review.",
+            "operator-review": "Mount the operator-review result with reviewer, timestamp, rationale, and supporting reference.",
+            "frozen-evidence": "Mount the frozen-evidence validation result and verify the immutable bundle.",
+            "acquisition-reconciliation": "Mount the acquisition/reconciliation result and resolve missing or conflicting evidence.",
+        }
+        for identity, action in required_domains.items():
+            records.append(EvidenceRecord(identity=identity, status="unavailable", fields={"classification": "audit_result", "ownership": "unavailable", "mutability": "unavailable", "source_path": "not mounted", "severity": "high", "definition": "A validated result artifact for this audit domain is required; documentation or source code is not a result.", "operator_action": action}))
+        warnings.append("Validation, ownership, reconciliation, evidence-pack, governance, and review result artifacts are not mounted; these domains are unavailable and not inferred.")
         return response("audit.v1", records, provenance, warnings, generated_at)
     except (OSError, ValueError, json.JSONDecodeError, TypeError) as exc:
         return response("audit.v1", [], provenance, [f"Audit manifest is unavailable: {exc}."], generated_at)
