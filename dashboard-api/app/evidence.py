@@ -240,7 +240,7 @@ def risk_health(generated_at: datetime | None = None, config_root: Path = CONFIG
         if status_path:
             status = json.loads(status_path.read_text(encoding="utf-8"))
         def add(identity: str, value: str | None, stamp: datetime | None, severity: str, source: str, definition: str, action: str) -> None:
-            records.append(EvidenceRecord(identity=identity, as_of_utc=stamp, status=severity, fields={"value": value, "severity": severity, "source_file": source, "definition": definition, "operator_action": action}))
+            records.append(EvidenceRecord(identity=identity, as_of_utc=stamp, status=severity, fields={"value": None if severity == "stale" else value, "severity": severity, "source_file": source, "definition": definition, "operator_action": action}))
         if not isinstance(status, dict):
             warnings.append("Runtime status is missing; heartbeat, scheduler, failures, and validation outcomes are unavailable. Operator action: mount a validated read-only runtime status artifact.")
         else:
@@ -283,6 +283,7 @@ def risk_health(generated_at: datetime | None = None, config_root: Path = CONFIG
 
 def audit(generated_at: datetime | None = None, manifest_path: Path = MANIFEST_PATH, repository_root: Path | None = None) -> ReadOnlyEvidenceResponse:
     provenance = ["baseline_evidence_manifest.json (explicit read-only mount)", "SHA-256 is recomputed read-only; immutable and mutable classifications retain distinct drift semantics.", "Validation and governance run outcomes are not inferred from documentation or artifact existence; absent mounted result artifacts remain unavailable."]
+    generated_at = (generated_at or datetime.now(UTC)).astimezone(UTC)
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         artifacts = manifest.get("artifacts")
@@ -301,8 +302,10 @@ def audit(generated_at: datetime | None = None, manifest_path: Path = MANIFEST_P
             else:
                 source = Path("/nonexistent")
             actual = hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() else None
-            status = "verified" if actual == expected else ("drift" if actual and mutability == "mutable_runtime_state" else "unavailable" if actual is None else "mismatch")
-            records.append(EvidenceRecord(identity=relative, as_of_utc=_iso_datetime(str(item["modified_timestamp_utc"])) if item.get("modified_timestamp_utc") else None, status=status, fields={"classification": str(item.get("artifact_category", "unclassified")), "ownership": str(item.get("writer_authority", "unavailable")), "mutability": mutability, "source_path": relative, "expected_sha256": expected, "actual_sha256": actual, "severity": "info" if status == "verified" else "high", "definition": "Read-only SHA-256 comparison against the point-in-time baseline manifest.", "operator_action": "No action; retain immutable evidence." if status == "verified" else "Operator must restore or re-verify the artifact before relying on it.", "modified_timestamp_utc": str(item.get("modified_timestamp_utc")) if item.get("modified_timestamp_utc") else None}))
+            modified = _iso_datetime(str(item["modified_timestamp_utc"])) if item.get("modified_timestamp_utc") else None
+            is_stale = modified is not None and generated_at is not None and ((generated_at.astimezone(UTC) - modified).total_seconds() > FRESHNESS_SECONDS or modified > generated_at.astimezone(UTC))
+            status = "stale" if actual == expected and is_stale else ("verified" if actual == expected else ("drift" if actual and mutability == "mutable_runtime_state" else "unavailable" if actual is None else "mismatch"))
+            records.append(EvidenceRecord(identity=relative, as_of_utc=modified, status=status, fields={"classification": str(item.get("artifact_category", "unclassified")), "ownership": str(item.get("writer_authority", "unavailable")), "mutability": mutability, "source_path": relative, "expected_sha256": expected, "actual_sha256": actual, "severity": "info" if status == "verified" else "high", "definition": "Read-only SHA-256 comparison against the point-in-time baseline manifest; freshness is required for verification.", "operator_action": "No action; retain immutable evidence." if status == "verified" else "Operator must refresh and re-verify the artifact before relying on it." if status == "stale" else "Operator must restore or re-verify the artifact before relying on it.", "modified_timestamp_utc": str(item.get("modified_timestamp_utc")) if item.get("modified_timestamp_utc") else None}))
         if any(item.status in {"mismatch", "unavailable"} for item in records): warnings.append("One or more immutable or mounted artifact checks could not be verified.")
         if any(item.status == "drift" for item in records): warnings.append("Mutable runtime drift is reported separately and is not treated as immutable corruption.")
         required_domains = {

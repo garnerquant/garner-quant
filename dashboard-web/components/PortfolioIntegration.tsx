@@ -17,6 +17,7 @@ const colours = ["#5fb8b1", "#72c59a", "#cda96b", "#8496a3", "#6689a8"];
 const money = (value: string) => `GBP ${Number(value).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const timestamp = (value: string | null) => value ? new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(value)) + " UTC" : "Unavailable";
 const costBasis = (row: Position) => Number(row.quantity) * Number(row.entry_price);
+const evidence = (source: string, asOf: string | null, definition: string, severity: string, action: string) => `Source: ${source}; UTC: ${timestamp(asOf)}; Definition: ${definition}; Severity: ${severity}; Operator action: ${action}`;
 
 const positionColumns: TableColumn<TablePosition>[] = [
   { key: "instrument", label: "Instrument", sortable: true },
@@ -44,18 +45,19 @@ export function PortfolioIntegration() {
   if (state.kind === "error") return <ErrorState title="Portfolio data unavailable" description="The read-only portfolio source could not be loaded. No demo values are shown." />;
 
   const { data } = state;
-  const holdingsAvailable = data.holdings.availability.availability === "available";
-  const allocationAvailable = data.allocation.availability.availability === "available";
-  const equityAvailable = data.portfolio_summary.availability.availability === "available" && data.portfolio_summary.portfolio_value !== null;
+  const fresh = data.freshness.status === "fresh";
+  const holdingsAvailable = fresh && data.holdings.availability.availability === "available";
+  const allocationAvailable = fresh && data.allocation.availability.availability === "available";
+  const equityAvailable = fresh && data.portfolio_summary.availability.availability === "available" && data.portfolio_summary.portfolio_value !== null;
   const allocation = data.allocation.items.map((item, index) => ({ ...item, value: Number(item.weight_percent), colour: colours[index % colours.length] }));
   const tableRows: TablePosition[] = data.holdings.items.map((row) => ({ ...row, cost_basis: costBasis(row), allocation: data.portfolio_summary.holdings_market_value && Number(data.portfolio_summary.holdings_market_value) !== 0 ? (Number(row.market_value) / Number(data.portfolio_summary.holdings_market_value)) * 100 : null }));
   const equityMetric = equityAvailable
-    ? { label: "Total equity", value: money(data.portfolio_summary.portfolio_value!), helper: `Portfolio data as of ${timestamp(data.portfolio_summary.as_of_utc)}`, tone: "neutral" as const }
-    : { label: "Total equity", value: "Unavailable", helper: data.portfolio_summary.availability.reason, tone: "warning" as const };
+    ? { label: "Total equity", value: money(data.portfolio_summary.portfolio_value!), helper: evidence("portfolio_v2.csv", data.portfolio_summary.as_of_utc, "latest observed portfolio equity", "observed", "no action required while the timestamp and source remain current"), tone: "neutral" as const }
+    : { label: "Total equity", value: "Unavailable", helper: evidence("portfolio_v2.csv", data.portfolio_summary.as_of_utc, "latest observed portfolio equity", "stale/unavailable", "refresh and validate the mounted portfolio snapshot"), tone: "warning" as const };
 
   return <div className="space-y-6">
     <div className="space-y-1 text-[15px] text-slate-300">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1"><span className="font-medium text-slate-100">Local snapshot</span><span>·</span><span>{data.source_classification === "local_snapshot" ? "Complete" : "Partial"}</span><span>·</span><span>Portfolio data as of {timestamp(data.portfolio_summary.as_of_utc)}</span></div>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1"><span className="font-medium text-slate-100">Local snapshot</span><span>·</span><span>{data.source_classification === "local_snapshot" ? "Evidence present" : "Partial evidence"}</span><span>·</span><span>Portfolio data as of {timestamp(data.portfolio_summary.as_of_utc)}</span></div>
       <div>Loaded {timestamp(data.generated_at_utc)}</div>
     </div>
     {data.freshness.status === "stale" ? <p className="rounded-lg border border-amber/25 bg-amber/10 px-4 py-3 text-[15px] text-amber">Stale snapshot — portfolio data is older than the local freshness threshold.</p> : null}
@@ -74,17 +76,17 @@ export function PortfolioIntegration() {
     </> : <>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard item={equityMetric} />
-        <MetricCard item={{ label: "Holdings value", value: money(data.portfolio_summary.holdings_market_value!), helper: `Holdings as of ${timestamp(data.holdings.as_of_utc)}`, tone: "neutral" }} />
-        <MetricCard item={{ label: "Cash", value: data.cash.value ? money(data.cash.value) : "Unavailable", helper: data.cash.availability.reason, tone: "warning" }} />
-        <MetricCard item={{ label: "Reconciliation", value: data.portfolio_summary.reconciliation.availability === "available" ? "Matched" : "Unavailable", helper: data.portfolio_summary.reconciliation.reason, tone: data.portfolio_summary.reconciliation.availability === "available" ? "positive" : "warning" }} />
+        <MetricCard item={{ label: "Holdings value", value: money(data.portfolio_summary.holdings_market_value!), helper: evidence("holdings_report.csv", data.holdings.as_of_utc, "sum of observed holdings market values", "observed", "no action required while the timestamp and source remain current"), tone: "neutral" }} />
+        <MetricCard item={{ label: "Cash", value: "Unavailable", helper: evidence("no explicit cash artifact", null, "cash balance", "unavailable", "mount a timestamp-matched cash source"), tone: "warning" }} />
+        <MetricCard item={{ label: "Reconciliation", value: data.portfolio_summary.reconciliation.availability === "available" ? "Matched" : "Unavailable", helper: evidence("portfolio_v2.csv + holdings_report.csv", data.portfolio_summary.as_of_utc, "equality of portfolio equity and holdings total at one timestamp", data.portfolio_summary.reconciliation.availability === "available" ? "observed" : "unavailable", data.portfolio_summary.reconciliation.availability === "available" ? "no action required; retain matching source timestamps" : (data.portfolio_summary.reconciliation.reason ?? "review source timestamps")), tone: data.portfolio_summary.reconciliation.availability === "available" ? "positive" : "warning" }} />
       </div>
       <div className="grid gap-5 xl:grid-cols-2">
-        <ChartCard title="Allocation" subtitle="Complete single-timestamp holdings snapshot">
+        <ChartCard title="Allocation" subtitle="Single-timestamp holdings snapshot required">
           {allocationAvailable ? <div className="grid items-center gap-2 sm:grid-cols-[1fr_190px]"><div className="h-[330px]"><ResponsiveContainer><PieChart><Pie data={allocation} dataKey="value" nameKey="instrument" innerRadius={75} outerRadius={112}>{allocation.map((item) => <Cell key={item.instrument} fill={item.colour} />)}</Pie><Tooltip formatter={(value: number) => `${value.toFixed(2)}%`} /></PieChart></ResponsiveContainer></div><div className="space-y-3 text-[15px]">{allocation.map((item) => <div key={item.instrument} className="flex items-center justify-between gap-2 text-slate-300"><span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.colour }} />{item.instrument}</span><b className="tabular-nums text-slate-100">{item.value.toFixed(2)}%</b></div>)}</div></div> : null}
         </ChartCard>
         <ChartCard title="Contribution to return" subtitle="Requires a complete comparable holdings snapshot"><p className="text-[15px] text-slate-300">Contribution is available only when a comparable holdings source is supplied.</p></ChartCard>
       </div>
-      <ChartCard title="Holdings" subtitle={`Complete snapshot as of ${timestamp(data.holdings.as_of_utc)}`}>{tableRows.length ? <DataTable data={tableRows} columns={positionColumns} /> : <EmptyState title="No holdings in snapshot" description="The latest complete portfolio snapshot contains no positions." />}</ChartCard>
+      <ChartCard title="Holdings" subtitle={`Observed snapshot as of ${timestamp(data.holdings.as_of_utc)}`}>{tableRows.length ? <DataTable data={tableRows} columns={positionColumns} /> : <EmptyState title="No holdings in snapshot" description="The latest available portfolio snapshot contains no positions." />}</ChartCard>
     </>}
   </div>;
 }

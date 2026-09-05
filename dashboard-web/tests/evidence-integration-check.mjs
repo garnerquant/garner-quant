@@ -9,13 +9,14 @@ for (const resource of resources) {
   assert.match(route, /export async function GET/);
   assert.doesNotMatch(route, /POST|PUT|PATCH|DELETE/);
   assert.match(route, new RegExp(`/api/v1/${resource}`));
-  assert.match(client, new RegExp(`resource="${resource}"`));
+  if (resource === "markets") assert.match(client, /Markets: <MarketsIntegration \/>/);
+  else assert.match(client, new RegExp(`resource="${resource}"`));
 }
 assert.match(integration, /No trustworthy evidence/);
 assert.match(integration, /source_classification/);
 assert.doesNotMatch(integration, /mockData|provider|export results/);
 assert.doesNotMatch(client, /UploadCloud|Add a mock input file|mock_input|type=["']file|Advanced export settings|exportOn|attached/);
-assert.match(client, /Manual comparison is unavailable in this read-only preview/);
+assert.match(client, /No verified shadow evaluation evidence is available/);
 assert.match(integration, /EVIDENCE UNAVAILABLE/);
 assert.match(integration, /Overall health/);
 assert.match(integration, /Evidence unavailable/);
