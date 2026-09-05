@@ -231,8 +231,9 @@ def risk_health(generated_at: datetime | None = None, config_root: Path = CONFIG
         now = (generated_at or datetime.now(UTC)).astimezone(UTC)
         as_of = datetime.fromtimestamp(max(runtime_path.stat().st_mtime, risk_path.stat().st_mtime), UTC)
         fields = {key: str(value).lower() if isinstance(value, bool) else str(value) for key, value in actual.items()}
-        fields.update({"heartbeat": None, "data_quality": None, "source_file": f"{runtime_path.name} + {risk_path.name}", "definition": "Configured safety controls; not an execution result.", "operator_action": "No action for controls; continue manual review before any mode change."})
-        records = [EvidenceRecord(identity="safety-defaults", as_of_utc=as_of, status="observed", fields=fields)]
+        controls_stale = (now - as_of).total_seconds() > FRESHNESS_SECONDS
+        fields.update({"heartbeat": None, "data_quality": None, "source_file": f"{runtime_path.name} + {risk_path.name}", "definition": "Observed configured safety controls; stale evidence is not a current verification or execution result.", "operator_action": "Refresh and revalidate the control artifacts before treating these values as current." if controls_stale else "No action required for these observed controls; continue manual review before any mode change."})
+        records = [EvidenceRecord(identity="safety-defaults", as_of_utc=as_of, status="stale" if controls_stale else "observed", fields=fields)]
         warnings: list[str] = []
         runtime_candidates = [config_root / "live_runtime_status.json", RUNTIME_STATUS_PATH]
         status_path = next((path for path in runtime_candidates if path.is_file()), None)
