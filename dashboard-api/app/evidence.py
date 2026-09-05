@@ -31,10 +31,10 @@ def _freshness(generated: datetime, source: datetime | None) -> SnapshotFreshnes
     return SnapshotFreshness(source_as_of_utc=source, snapshot_age_seconds=age, freshness_threshold_seconds=FRESHNESS_SECONDS, status="stale" if age > FRESHNESS_SECONDS else "fresh")
 
 
-def response(version: str, records: list[EvidenceRecord], provenance: list[str], warnings: list[str], generated_at: datetime | None = None) -> ReadOnlyEvidenceResponse:
+def response(version: str, records: list[EvidenceRecord], provenance: list[str], warnings: list[str], generated_at: datetime | None = None, source_override: datetime | None = None) -> ReadOnlyEvidenceResponse:
     generated = (generated_at or datetime.now(UTC)).astimezone(UTC)
     dates = [item.as_of_utc for item in records if item.as_of_utc is not None]
-    source = max(dates) if dates else None
+    source = source_override if source_override is not None else (max(dates) if dates else None)
     classification = "unavailable" if not records else ("partial" if warnings else "local_snapshot")
     return ReadOnlyEvidenceResponse(schema_version=version, generated_at_utc=generated, source_as_of_utc=source, source_classification=classification, freshness=_freshness(generated, source), provenance=provenance, warnings=warnings, records=records)
 
@@ -276,7 +276,7 @@ def risk_health(generated_at: datetime | None = None, config_root: Path = CONFIG
         add("data-source-integrity", None, None, "unavailable", "not mounted", "No independent data-source integrity evidence is mounted for runtime health.", "Operator must verify source completeness, provenance, and timestamp consistency." )
         add("evidence-integrity", None, None, "unavailable", "not mounted", "No independent audit result is mounted for runtime health.", "Operator must review the audit evidence before treating runtime values as verified." )
         warnings.extend(["Safety controls are observed configuration values, not proof that execution is possible or desirable.", "Data-source, lock, accounting activation, and independent audit evidence remain unavailable unless explicitly mounted."])
-        return response("risk-health.v1", records, provenance, warnings, generated_at)
+        return response("risk-health.v1", records, provenance, warnings, generated_at, source_override=as_of)
     except (OSError, ValueError, json.JSONDecodeError, TypeError) as exc:
         return response("risk-health.v1", [], provenance, [f"Safety status is unavailable: {exc}. Operator action: mount and validate the runtime and risk configuration artifacts."], generated_at)
 
