@@ -15,6 +15,7 @@ services:
       - ./data/universes/current_assets.csv:/data/instruments/current_assets.csv:ro
       - ./data/live_monitor_snapshot.json:/data/snapshots/live_monitor_snapshot.json:ro
       - ./data/live_runtime_status.json:/data/runtime/live_runtime_status.json:ro
+      - ./data/runtime_decision_trace.json:/data/runtime/runtime_decision_trace.json:ro
       - ./docs/baseline_evidence_manifest.json:/data/audit/baseline_evidence_manifest.json:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3)\""]
