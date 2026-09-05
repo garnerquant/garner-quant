@@ -14,6 +14,8 @@ CONFIG_ROOT = Path("/data/config")
 RESEARCH_ROOT = Path("/data/research")
 MANIFEST_PATH = Path("/data/audit/baseline_evidence_manifest.json")
 FRESHNESS_SECONDS = 36 * 60 * 60
+INSTRUMENTS_PATH = Path("/data/instruments/current_assets.csv")
+RUNTIME_STATUS_PATH = Path("/data/runtime/live_runtime_status.json")
 
 
 def _iso_datetime(value: str) -> datetime:
@@ -57,8 +59,60 @@ def signals(generated_at: datetime | None = None, data_root: Path = DATA_ROOT) -
 
 
 def markets(generated_at: datetime | None = None, data_root: Path = DATA_ROOT) -> ReadOnlyEvidenceResponse:
-    """Market bars remain unavailable until a mounted, timestamped snapshot has a defined schema."""
-    return response("markets.v1", [], ["No validated market-bar snapshot is mounted.", "Currency, price unit, and completed-bar evidence are mandatory."], ["Validated market data is unavailable; the candlestick preview is not presented as API evidence."], generated_at)
+    """Read the mounted monitor snapshot without making provider or runtime calls."""
+    provenance = ["current_assets.csv + live_monitor_snapshot.json + live_runtime_status.json (explicit read-only mounts)", "Prices are displayed only when the per-instrument timestamp, provider, currency, and unit are present and valid.", "Freshness thresholds: exchange-traded 15 minutes; crypto 24 hours; future, missing, or stale values fail closed."]
+    try:
+        instruments_path = INSTRUMENTS_PATH
+        snapshot_path = data_root / "live_monitor_snapshot.json"
+        runtime_path = RUNTIME_STATUS_PATH
+        if not instruments_path.is_file() or not snapshot_path.is_file():
+            raise ValueError("instrument metadata or monitor snapshot is not mounted")
+        with instruments_path.open(encoding="utf-8", newline="") as handle:
+            instruments = list(csv.DictReader(handle))
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        prices = snapshot.get("latest_prices")
+        if not isinstance(prices, dict):
+            raise ValueError("latest_prices is missing")
+        now = (generated_at or datetime.now(UTC)).astimezone(UTC)
+        records: list[EvidenceRecord] = []
+        warnings: list[str] = []
+        for item in instruments:
+            symbol = (item.get("yahoo_ticker") or "").strip()
+            if not symbol:
+                warnings.append("Instrument without provider symbol was excluded.")
+                continue
+            quote = prices.get(symbol)
+            fields = {"name": item.get("name") or None, "asset_class": item.get("asset_class") or None, "exchange": item.get("exchange") or None, "currency": item.get("currency") or None, "price_unit": "per share" if item.get("asset_class") != "Crypto" else "per coin", "provider": "Yahoo Finance monitor snapshot", "price": None, "market_status": "unavailable", "freshness_threshold_seconds": "86400" if item.get("asset_class") == "Crypto" else "900"}
+            status = "unavailable"
+            as_of = None
+            if isinstance(quote, dict) and quote.get("price") is not None and quote.get("timestamp"):
+                try:
+                    as_of = _iso_datetime(str(quote["timestamp"]))
+                    threshold = 86400 if item.get("asset_class") == "Crypto" else 900
+                    age = (now - as_of).total_seconds()
+                    if as_of > now:
+                        status = "unavailable"; warnings.append(f"{symbol} quote timestamp is in the future and was rejected.")
+                    elif age > threshold:
+                        status = "stale"; warnings.append(f"{symbol} quote is older than its {threshold}-second threshold.")
+                    else:
+                        status = "available"
+                        fields["price"] = str(quote["price"])
+                        fields["market_status"] = "available"
+                except (TypeError, ValueError):
+                    warnings.append(f"{symbol} quote timestamp is malformed and was rejected.")
+            records.append(EvidenceRecord(identity=symbol, as_of_utc=as_of, status=status, fields=fields))
+        if runtime_path.is_file():
+            runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+            open_markets = runtime.get("markets_open")
+            if isinstance(open_markets, list):
+                market_aliases = {"LSE": "LSE", "NASDAQ": "US", "NYSE": "US"}
+                for record in records:
+                    venue = market_aliases.get(record.fields.get("exchange") or "", record.fields.get("exchange"))
+                    if venue not in open_markets and record.fields.get("asset_class") != "Crypto" and record.status == "available":
+                        record.fields["market_status"] = "holiday/weekend"
+        return response("markets.v1", records, provenance, warnings, generated_at)
+    except (OSError, ValueError, json.JSONDecodeError, TypeError, csv.Error) as exc:
+        return response("markets.v1", [], provenance, [f"Validated market data is unavailable; values were not inferred ({exc})."], generated_at)
 
 
 def research(generated_at: datetime | None = None, research_root: Path = RESEARCH_ROOT) -> ReadOnlyEvidenceResponse:

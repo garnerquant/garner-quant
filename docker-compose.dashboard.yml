@@ -12,6 +12,9 @@ services:
       - ./runtime/live_runtime_config.json:/data/config/live_runtime_config.json:ro
       - ./risk_engine/risk_config.json:/data/config/risk_config.json:ro
       - ./data/continuous_research/morning_reports:/data/research:ro
+      - ./data/universes/current_assets.csv:/data/instruments/current_assets.csv:ro
+      - ./data/live_monitor_snapshot.json:/data/snapshots/live_monitor_snapshot.json:ro
+      - ./data/live_runtime_status.json:/data/runtime/live_runtime_status.json:ro
       - ./docs/baseline_evidence_manifest.json:/data/audit/baseline_evidence_manifest.json:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3)\""]
