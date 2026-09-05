@@ -41,7 +41,7 @@ def response(version: str, records: list[EvidenceRecord], provenance: list[str],
 
 def signals(generated_at: datetime | None = None, data_root: Path = DATA_ROOT) -> ReadOnlyEvidenceResponse:
     path = data_root / "signal_report_v2.csv"
-    provenance = ["signal_report_v2.csv", "Rows must share one latest timestamp; required fields: timestamp, ticker, status, signal_code, target_weight."]
+    provenance = ["signal_report_v2.csv (explicit read-only mount)", "Observed signal rows are not trades; risk, eligibility, execution, bar identity, and market evidence are unavailable unless explicitly present in mounted artifacts.", "Freshness threshold: 36 hours; missing, malformed, future, stale, duplicate, or conflicting snapshots fail closed."]
     if not path.is_file():
         return response("signals.v1", [], provenance, ["Signal snapshot is unavailable; no values are inferred."], generated_at)
     try:
@@ -50,9 +50,12 @@ def signals(generated_at: datetime | None = None, data_root: Path = DATA_ROOT) -
         aliases = {"timestamp": ("timestamp", "date", "as_of_utc"), "ticker": ("ticker", "instrument"), "status": ("status",), "signal_code": ("signal_code", "signal"), "target_weight": ("target_weight",)}
         def value(row: dict[str, str], key: str) -> str:
             return next((row[name].strip() for name in aliases[key] if row.get(name, "").strip()), "")
-        parsed = [(_iso_datetime(value(row, "timestamp")), row) for row in rows]
+        parsed = [(_iso_datetime(value(row, "timestamp") + ("T00:00:00+00:00" if len(value(row, "timestamp")) == 10 else "")), row) for row in rows]
         latest = max(item[0] for item in parsed)
-        selected = [EvidenceRecord(identity=value(row, "ticker"), as_of_utc=stamp, status=value(row, "status"), fields={"signal_code": value(row, "signal_code"), "target_weight": value(row, "target_weight")}) for stamp, row in parsed if stamp == latest and all(value(row, key) for key in aliases)]
+        now = (generated_at or datetime.now(UTC)).astimezone(UTC)
+        if latest > now or (now - latest).total_seconds() > FRESHNESS_SECONDS:
+            raise ValueError("latest signal snapshot is stale or future-dated")
+        selected = [EvidenceRecord(identity=value(row, "ticker"), as_of_utc=stamp, status="observed", fields={"signal_code": value(row, "signal_code"), "signal_status": value(row, "status"), "target_weight": value(row, "target_weight"), "strategy": "unavailable", "strategy_version": "unavailable", "rationale": "unavailable", "market_source": "unavailable", "bar_identity": "unavailable", "data_quality": "signal snapshot only; market evidence unavailable", "risk_decision": "unavailable", "risk_reason": "No mounted risk decision evidence", "execution_eligibility": "unavailable", "execution_status": "not executed", "retryable_state": "unavailable", "duplicate_state": "unavailable", "source_path": path.name, "source_timestamp_utc": stamp.isoformat(), "severity": "high", "definition": "Observed signal row from the mounted signal snapshot; target weight and signal direction are not authorization to trade.", "operator_action": "Mount and validate matching market, risk, and runtime evidence before relying on this candidate."}) for stamp, row in parsed if stamp == latest and all(value(row, key) for key in aliases)]
         if not selected or len({item.identity for item in selected}) != len(selected):
             raise ValueError("latest snapshot is incomplete or contains duplicate instruments")
         return response("signals.v1", sorted(selected, key=lambda item: item.identity), provenance, [], generated_at)
