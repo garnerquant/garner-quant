@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 import os
 import sys
+import threading
 import time
 from uuid import uuid4
 
@@ -87,6 +88,7 @@ def process_is_running(pid):
 def lock_metadata(context=None):
     return {
         "pid": os.getpid(),
+        "thread_id": threading.get_ident(),
         "created_at": iso_timestamp(),
         "command": " ".join(sys.argv),
         "context": context or "main_v2.main",
@@ -125,7 +127,10 @@ class ExecutionLock(AbstractContextManager):
 
         try:
             current = read_lock(self.path)
-            if int(current.get("pid", -1)) == os.getpid():
+            if (
+                int(current.get("pid", -1)) == os.getpid()
+                and int(current.get("thread_id", -1)) == threading.get_ident()
+            ):
                 self.path.unlink(missing_ok=True)
         finally:
             self._released = True
@@ -150,7 +155,10 @@ class RuntimeWriteLock(AbstractContextManager):
 def current_process_owns_lock(path=DEFAULT_EXECUTION_LOCK):
     metadata = read_lock(path)
     try:
-        return int(metadata.get("pid", -1)) == os.getpid()
+        return (
+            int(metadata.get("pid", -1)) == os.getpid()
+            and int(metadata.get("thread_id", -1)) == threading.get_ident()
+        )
     except (TypeError, ValueError):
         return False
 
