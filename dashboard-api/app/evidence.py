@@ -121,7 +121,7 @@ def markets(generated_at: datetime | None = None, data_root: Path = DATA_ROOT) -
 
 
 def research(generated_at: datetime | None = None, research_root: Path = RESEARCH_ROOT) -> ReadOnlyEvidenceResponse:
-    provenance = ["continuous_research/morning_reports/*/manifest.json", "Manifest metadata only; no performance or benchmark values are exposed."]
+    provenance = ["continuous_research/morning_reports/*/manifest.json (explicit read-only mount)", "Manifest metadata only; report conclusions, confidence, performance, rankings, recommendations, and investment signals are not reconstructed.", "Freshness threshold: 36 hours; missing, stale, future, malformed, duplicate, or conflicting evidence fails closed."]
     records: list[EvidenceRecord] = []
     warnings: list[str] = []
     for path in sorted(research_root.glob("*/manifest.json")):
@@ -130,14 +130,18 @@ def research(generated_at: datetime | None = None, research_root: Path = RESEARC
             required = ("report_id", "created_at", "schema_version", "content_hash", "evidence_snapshot_id")
             if not all(isinstance(item.get(key), str) and item[key] for key in required):
                 raise ValueError("required provenance is missing")
-            created = _iso_datetime(item["created_at"])
-            records.append(EvidenceRecord(identity=item["report_id"], as_of_utc=created, status="unverified", fields={"dataset": item["evidence_snapshot_id"], "schema_version": item["schema_version"], "content_hash": item["content_hash"], "strategy": None, "parameters": None, "execution_model": None, "cost_model": None, "information_cutoff": None, "code_version": None}))
+            created_value = item["created_at"]
+            created = _iso_datetime(created_value)
+            now = (generated_at or datetime.now(UTC)).astimezone(UTC)
+            if created > now or (now - created).total_seconds() > FRESHNESS_SECONDS:
+                raise ValueError("report timestamp is stale or future-dated")
+            records.append(EvidenceRecord(identity=f"research-report-{len(records) + 1}", as_of_utc=created, status="unverified", fields={"title": None, "research_type": item.get("artifact_type"), "coverage": None, "source_path": str(path.relative_to(research_root)), "source_provider": None, "report_generated_timestamp_utc": created.isoformat(), "coverage_period": None, "instruments_topics": None, "methodology": None, "dataset": item["evidence_snapshot_id"], "schema_version": item["schema_version"], "content_hash": item["content_hash"], "evidence_status": "unverified", "confidence": None, "provenance_status": "incomplete", "evidence_gaps": "Report body and source documents are not independently mounted/validated.", "severity": "high", "definition": "Validated manifest metadata only; no analyst conclusion or investment signal is represented.", "operator_action": "Mount and validate the report body, source documents, coverage, and evidence pack before relying on this research.", "strategy": None, "parameters": None, "execution_model": None, "cost_model": None, "information_cutoff": None, "code_version": None}))
         except (OSError, ValueError, json.JSONDecodeError, TypeError) as exc:
             warnings.append(f"Rejected {path.name}: {exc}.")
     if not records:
         warnings.append("No reproducible research manifests are available.")
-    elif any(value is None for item in records for value in item.fields.values()):
-        warnings.append("Runs are unverified because reproducibility metadata is incomplete.")
+    elif any(item.status != "verified" for item in records):
+        warnings.append("Research remains unverified because manifest metadata does not validate report content or source evidence.")
     return response("research.v1", records, provenance, warnings, generated_at)
 
 

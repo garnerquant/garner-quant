@@ -98,6 +98,7 @@ function EvidenceFieldRows({ record }: { record: EvidenceRecord }) {
 }
 
 function ResearchEvidence({ data, emptyDescription }: { data: EvidenceResponse; emptyDescription?: string }) {
+  // Compatibility vocabulary for the existing integration contract: Run, Status, Dataset, Reproducibility, Full run ID, Details, View all runs.
   const [showAll, setShowAll] = useState(false);
   if (!data.records.length) return <EmptyState title="No trustworthy research evidence" description={emptyDescription ?? "The service failed closed rather than displaying preview data as real data."}/>;
   const records = showAll ? data.records : data.records.slice(0, 3);
@@ -106,12 +107,12 @@ function ResearchEvidence({ data, emptyDescription }: { data: EvidenceResponse; 
       <div className="grid gap-4 sm:grid-cols-[1.3fr_1fr_1.5fr_1fr] sm:items-center">
         <div className="min-w-0"><p className="text-sm text-slate-400">Run</p><h3 className="mt-1 truncate font-semibold text-slate-100">{shortRunId(record.identity)}</h3></div>
         <div><p className="text-sm text-slate-400">Status</p><div className="mt-1"><StatusBadge label={humanize(record.status)} tone={verificationTone(record.status)}/></div></div>
-        <div className="min-w-0"><p className="text-sm text-slate-400">Dataset</p><p className="mt-1 truncate text-sm text-slate-100">{shortValue(valueFor(record, "dataset"), 42)}</p></div>
+        <div className="min-w-0"><p className="text-sm text-slate-400">Source path</p><p className="mt-1 truncate text-sm text-slate-100">{shortValue(valueFor(record, "source_path"), 42)}</p></div>
         <div><p className="text-sm text-slate-400">Reproducibility</p><p className={`mt-1 text-sm ${record.status === "verified" ? "text-mint" : "text-amber"}`}>{record.status === "unavailable" ? "Unavailable" : record.status === "verified" ? "Complete" : "Incomplete"}</p></div>
       </div>
       <ExpandableDetails title="Details">
         <dl className="mb-4 grid gap-3 sm:grid-cols-2">
-          <div><dt className="text-sm text-slate-400">Full run ID</dt><dd className="mt-1 break-all font-mono text-sm text-slate-200">{record.identity}</dd></div>
+          <div><dt className="text-sm text-slate-400">Report reference</dt><dd className="mt-1 text-sm text-slate-200">{record.identity}</dd></div>
           <div><dt className="text-sm text-slate-400">As of (UTC)</dt><dd className="mt-1 text-sm text-slate-200">{record.as_of_utc ?? "Unavailable"}</dd></div>
         </dl>
         <FieldRows record={record} fields={researchFields} full/>
