@@ -232,6 +232,8 @@ jobs:
           IMAGE_TRANSFER_TIMEOUT="20m"
           APT_TIMEOUT="15m"
           COMPOSE_UP_TIMEOUT="10m"
+          RUNTIME_HEALTH_INTERVAL_SECONDS=10
+          RUNTIME_HEALTH_TIMEOUT_SECONDS=180
           DEPLOY_COMMIT="${DEPLOY_COMMIT:?DEPLOY_COMMIT is required}"
           COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-garner-quant}"
           DASHBOARD_IMAGE_ARCHIVE="${DASHBOARD_IMAGE_ARCHIVE:-/tmp/garner-quant-dashboard-images.tar.gz}"
@@ -619,8 +621,35 @@ jobs:
             exit 7
           fi
 
-          echo "Checking runtime health..."
-          .venv/bin/python runtime/health_check.py
+          echo "Checking runtime readiness (fresh heartbeat and completed cycle required)..."
+          RUNTIME_HEALTH_READY=false
+          RUNTIME_HEALTH_ATTEMPTS=$((RUNTIME_HEALTH_TIMEOUT_SECONDS / RUNTIME_HEALTH_INTERVAL_SECONDS))
+          RUNTIME_HEALTH_LAST_OUTPUT=""
+          for attempt in $(seq 1 "$RUNTIME_HEALTH_ATTEMPTS"); do
+            set +e
+            RUNTIME_HEALTH_OUTPUT="$(.venv/bin/python runtime/health_check.py 2>&1)"
+            RUNTIME_HEALTH_STATUS=$?
+            set -e
+            RUNTIME_HEALTH_LAST_OUTPUT="$RUNTIME_HEALTH_OUTPUT"
+            echo "Runtime readiness attempt ${attempt}/${RUNTIME_HEALTH_ATTEMPTS} (exit ${RUNTIME_HEALTH_STATUS}):"
+            printf '%s\n' "$RUNTIME_HEALTH_OUTPUT"
+            if [ "$RUNTIME_HEALTH_STATUS" -eq 0 ]; then
+              RUNTIME_HEALTH_READY=true
+              break
+            fi
+            if [ "$attempt" -lt "$RUNTIME_HEALTH_ATTEMPTS" ]; then
+              sleep "$RUNTIME_HEALTH_INTERVAL_SECONDS"
+            fi
+          done
+
+          if [ "$RUNTIME_HEALTH_READY" != true ]; then
+            echo "Runtime did not report a fresh heartbeat and completed cycle within ${RUNTIME_HEALTH_TIMEOUT_SECONDS}s. Final health output:"
+            printf '%s\n' "$RUNTIME_HEALTH_LAST_OUTPUT"
+            sudo -n systemctl status "$RUNTIME_SERVICE" --no-pager || true
+            sudo -n journalctl -u "$RUNTIME_SERVICE" -n 80 --no-pager || true
+            exit 8
+          fi
+          echo "Runtime health gate passed after a fresh heartbeat and completed cycle."
 
           echo "Service status:"
           timeout --foreground --kill-after=15s "$SERVICE_TIMEOUT" sudo -n systemctl status "$DASHBOARD_SERVICE" --no-pager
