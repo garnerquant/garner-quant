@@ -16,6 +16,8 @@ MANIFEST_PATH = Path("/data/audit/baseline_evidence_manifest.json")
 FRESHNESS_SECONDS = 36 * 60 * 60
 INSTRUMENTS_PATH = Path("/data/instruments/current_assets.csv")
 RUNTIME_STATUS_PATH = Path("/data/runtime/live_runtime_status.json")
+SHADOW_TRACE_PATH = Path("/data/runtime/runtime_decision_trace.json")
+SHADOW_FRESHNESS_SECONDS = 15 * 60
 
 
 def _iso_datetime(value: str) -> datetime:
@@ -136,8 +138,78 @@ def research(generated_at: datetime | None = None, research_root: Path = RESEARC
     return response("research.v1", records, provenance, warnings, generated_at)
 
 
-def shadow_runs(generated_at: datetime | None = None) -> ReadOnlyEvidenceResponse:
-    return response("shadow-runs.v1", [], ["Manual decoder and runner outputs are not mounted in the dashboard API.", "The API cannot accept input, access browser files, run comparisons, or export results."], ["No immutable shadow comparison result is available for read-only display."], generated_at)
+def shadow_runs(generated_at: datetime | None = None, runtime_path: Path = RUNTIME_STATUS_PATH, trace_path: Path = SHADOW_TRACE_PATH, config_root: Path = CONFIG_ROOT) -> ReadOnlyEvidenceResponse:
+    """Read explicit runtime decision artifacts; never execute or derive missing decisions."""
+    provenance = [
+        "runtime_decision_trace.json and live_runtime_status.json (explicit read-only mounts)",
+        "Only records with an explicit evaluation timestamp, source artifact, bar identity, strategy/configuration versions, signal, risk, eligibility, and execution result are displayed.",
+        "Freshness threshold: 900 seconds from generated_at_utc; missing, malformed, future, duplicate, conflicting, or stale evidence fails closed.",
+    ]
+    if not trace_path.is_file() and not runtime_path.is_file():
+        return response("shadow-runs.v1", [], provenance + ["The API cannot accept input, access browser files, run comparisons, or export results."], ["Shadow decision trace and runtime decision evidence are unavailable; operator action: mount validated evidence read-only before relying on run evidence."], generated_at)
+    try:
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8")) if runtime_path.is_file() else {}
+        health = runtime.get("strategy_scheduler", {}).get("health", {}).get("instruments", {}) if isinstance(runtime, dict) else {}
+        if isinstance(health, dict) and health:
+            now = (generated_at or datetime.now(UTC)).astimezone(UTC)
+            records = []
+            for symbol, item in sorted(health.items()):
+                identity = item.get("identity") if isinstance(item, dict) else None
+                if not isinstance(identity, dict) or not all(isinstance(identity.get(k), str) and identity.get(k) for k in ("symbol", "timeframe", "bar_close_utc", "strategy_version", "configuration_version", "data_source")):
+                    raise ValueError(f"{symbol} bar identity is incomplete")
+                stamp = _iso_datetime(str(item.get("decision_timestamp")))
+                if stamp > now or (now - stamp).total_seconds() > SHADOW_FRESHNESS_SECONDS:
+                    raise ValueError(f"{symbol} evaluation is stale or future-dated")
+                fields = {"instrument": symbol, "strategy": "Garner Quant strategy", "strategy_version": identity["strategy_version"], "configuration_version": identity["configuration_version"], "evaluation_timestamp_utc": stamp.isoformat(), "source_path": runtime_path.name, "source_timestamp_utc": stamp.isoformat(), "bar_identity": f"{identity['timeframe']} bar closing {identity['bar_close_utc']} ({identity['data_source']})", "signal_result": item.get("signal_result"), "risk_decision": item.get("status"), "execution_eligibility": "eligible" if item.get("status") == "VALIDATED" else "not eligible", "execution_status": item.get("execution_result") or "not_executed (execution evidence unavailable)", "retryable_state": str(item.get("retry_eligible")) if item.get("retry_eligible") is not None else "unavailable", "duplicate_bar_state": "not reported", "definition": "Observed scheduler evaluation and explicitly recorded decision; eligibility is not execution.", "operator_action": "Review stale or failed bar evidence before relying on this evaluation; no execution action is permitted."}
+                status = "observed" if item.get("status") in ("VALIDATED", "NO_ACTION") else "failed"
+                records.append(EvidenceRecord(identity=symbol, as_of_utc=stamp, status=status, fields=fields))
+            return response("shadow-runs.v1", records, provenance, [], generated_at)
+        trace = json.loads(trace_path.read_text(encoding="utf-8"))
+        if not isinstance(trace, dict) or not isinstance(trace.get("decisions"), list) or not isinstance(trace.get("generated_at"), str):
+            raise ValueError("trace schema is incomplete")
+        now = (generated_at or datetime.now(UTC)).astimezone(UTC)
+        run_stamp = _iso_datetime(trace["generated_at"])
+        if run_stamp > now:
+            raise ValueError("trace timestamp is future-dated")
+        config_path = config_root / "live_runtime_config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
+        records: list[EvidenceRecord] = []
+        seen: set[str] = set()
+        for decision in trace["decisions"]:
+            if not isinstance(decision, dict):
+                raise ValueError("decision is malformed")
+            symbol = decision.get("ticker")
+            stamp_value = decision.get("timestamp")
+            details = decision.get("details") if isinstance(decision.get("details"), dict) else {}
+            required = (symbol, stamp_value, decision.get("signal"), decision.get("portfolio_decision"), decision.get("reason"))
+            if not all(isinstance(value, str) and value for value in required):
+                raise ValueError("decision is missing required evidence")
+            stamp = _iso_datetime(stamp_value)
+            if stamp > now or (now - stamp).total_seconds() > SHADOW_FRESHNESS_SECONDS:
+                raise ValueError("decision is stale or future-dated")
+            bar_identity = details.get("bar_identity")
+            key = f"{symbol}|{stamp_value}|{bar_identity or 'unavailable'}"
+            if key in seen:
+                raise ValueError("duplicate decision evidence")
+            seen.add(key)
+            risk = details.get("risk_status")
+            execution = "not_executed" if decision.get("trade_recorded") is False else decision.get("execution_status")
+            fields = {
+                "instrument": symbol, "strategy": details.get("strategy"), "strategy_version": details.get("strategy_version"),
+                "configuration_version": details.get("configuration_version"), "evaluation_timestamp_utc": stamp_value,
+                "source_path": trace_path.name, "source_timestamp_utc": trace["generated_at"], "bar_identity": bar_identity,
+                "signal_result": decision.get("signal"), "risk_decision": risk, "execution_eligibility": decision.get("trade_action"),
+                "execution_status": execution, "retryable_state": details.get("retryable") if details.get("retryable") is not None else "unavailable",
+                "duplicate_bar_state": details.get("duplicate_bar") if details.get("duplicate_bar") is not None else "unavailable",
+                "mode": config.get("mode") if config else "unavailable", "definition": "Observed shadow evaluation and explicitly recorded decision; eligibility is not execution.",
+                "operator_action": "No execution action is permitted; investigate missing risk/bar evidence before relying on this evaluation.",
+            }
+            if not all(fields[key] not in (None, "") for key in ("strategy_version", "configuration_version", "bar_identity", "risk_decision")):
+                raise ValueError("decision lacks complete provenance or risk evidence")
+            records.append(EvidenceRecord(identity=f"{symbol} | {stamp_value}", as_of_utc=stamp, status="observed", fields=fields))
+        return response("shadow-runs.v1", records, provenance, [], generated_at)
+    except (OSError, ValueError, json.JSONDecodeError, TypeError) as exc:
+        return response("shadow-runs.v1", [], provenance, [f"Shadow evidence rejected and unavailable: {exc}. Operator action: validate the trace and mount it read-only."], generated_at)
 
 
 def risk_health(generated_at: datetime | None = None, config_root: Path = CONFIG_ROOT) -> ReadOnlyEvidenceResponse:

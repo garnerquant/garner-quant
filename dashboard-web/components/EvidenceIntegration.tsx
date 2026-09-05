@@ -9,7 +9,7 @@ import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { EvidenceResponse, EvidenceRecord, isEvidenceResponse } from "@/lib/evidenceApi";
 
-type EvidenceVariant = "default" | "risk-health" | "audit" | "research";
+type EvidenceVariant = "default" | "risk-health" | "audit" | "research" | "shadow-runs";
 
 type EvidenceIntegrationProps = {
   resource: string;
@@ -145,6 +145,10 @@ function AuditEvidence({ data }: { data: EvidenceResponse }) {
   </div>;
 }
 
+function ShadowRunsEvidence({ data }: { data: EvidenceResponse }) {
+  return <div className="space-y-6"><p className="max-w-3xl text-sm leading-6 text-slate-300">Observed evaluations, risk decisions, eligible actions, and actual execution are separate evidence domains. Eligibility never implies execution.</p>{data.records.length ? <div className="grid gap-4 lg:grid-cols-2">{data.records.map(record => <article key={record.identity} className="rounded-xl border border-slate-700/70 bg-white/[.02] p-4"><div className="flex items-start justify-between gap-3"><h3 className="font-medium text-slate-100">{record.fields.instrument ?? record.identity}</h3><StatusBadge label={humanize(record.status)} tone={verificationTone(record.status)}/></div><dl className="mt-4 grid gap-3 sm:grid-cols-2">{[["Evaluation (UTC)", record.fields.evaluation_timestamp_utc ?? record.as_of_utc], ["Strategy", record.fields.strategy], ["Strategy version", record.fields.strategy_version], ["Configuration version", record.fields.configuration_version], ["Bar identity", record.fields.bar_identity], ["Signal / observed result", record.fields.signal_result], ["Risk decision", record.fields.risk_decision], ["Eligible action", record.fields.execution_eligibility], ["Execution status", record.fields.execution_status], ["Retryable state", record.fields.retryable_state], ["Duplicate-bar state", record.fields.duplicate_bar_state], ["Source / timestamp", `${record.fields.source_path ?? "Unavailable"} | ${record.fields.source_timestamp_utc ?? "no timestamp"}`]].map(([label, value]) => <div key={label}><dt className="text-xs text-slate-400">{label}</dt><dd className="mt-1 break-words text-sm text-slate-200">{value ?? "Evidence unavailable"}</dd></div>)}</dl><p className="mt-4 border-t border-slate-700/70 pt-3 text-xs text-slate-400">Definition: {record.fields.definition ?? "Unavailable"}</p><p className="mt-2 text-xs text-amber">Operator action: {record.fields.operator_action ?? "Review unavailable evidence before relying on this record."}</p></article>)}</div> : <EmptyState title="Shadow-run evidence unavailable" description="No verified run records are displayed. Operator action: mount and validate the runtime decision artifact before relying on this page."/>}</div>;
+}
+
 function RiskHealthEvidence({ data }: { data: EvidenceResponse }) {
   const control = data.records.find(record => record.identity === "safety-defaults");
   const rows = data.records.filter(record => record.identity !== "safety-defaults");
@@ -180,6 +184,7 @@ export function EvidenceIntegration({ resource, version, title, emptyDescription
   if (!data) return <LoadingSkeleton/>;
   if (variant === "audit") return <div className="space-y-6"><ClassificationBanner text={`${data.source_classification} | ${data.freshness.status}`}/>{data.warnings.map(warning => <p key={warning} className="rounded-lg border border-amber/25 bg-amber/10 px-4 py-3 text-amber">{warning}</p>)}<ChartCard title={title} subtitle="Read-only audit evidence; observations and operator interpretation remain separate"><AuditReviewEvidence data={data}/><div className="mt-5 border-t border-slate-700 pt-4 text-sm text-slate-400">{data.provenance.join(" | ")}</div></ChartCard></div>;
   if (variant === "risk-health") return <div className="space-y-6"><ClassificationBanner text={`${data.source_classification} | ${data.freshness.status}`}/>{data.warnings.map(warning => <p key={warning} className="rounded-lg border border-amber/25 bg-amber/10 px-4 py-3 text-amber">{warning}</p>)}<ChartCard title={title} subtitle="Read-only risk and runtime evidence"><RiskHealthEvidence data={data}/><div className="mt-5 border-t border-slate-700 pt-4 text-sm text-slate-400">{data.provenance.join(" | ")}</div></ChartCard></div>;
+  if (variant === "shadow-runs") return <div className="space-y-6"><ClassificationBanner text={`${data.source_classification} | ${data.freshness.status}`}/>{data.warnings.map(warning => <p key={warning} className="rounded-lg border border-amber/25 bg-amber/10 px-4 py-3 text-amber">{warning}</p>)}<ChartCard title={title} subtitle="Read-only verified shadow evaluation evidence"><ShadowRunsEvidence data={data}/><div className="mt-5 border-t border-slate-700 pt-4 text-sm text-slate-400">{data.provenance.join(" | ")}</div></ChartCard></div>;
 
   const safety = data.records.find(record => record.identity === "safety-defaults");
   const heartbeat = safety?.fields.heartbeat;
