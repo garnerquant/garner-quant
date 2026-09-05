@@ -1,9 +1,19 @@
 name: Deploy to AWS Lightsail
 
 on:
+  workflow_run:
+    workflows: ["Daily Garner Quant Validation"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      validation_run_id:
+        description: "Successful Daily Garner Quant Validation run ID to deploy"
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -19,10 +29,59 @@ jobs:
       DASHBOARD_IMAGE_CHECKSUM: /tmp/garner-quant-dashboard-images.tar.gz.sha256
 
     steps:
+      - name: Validate successful main validation run
+        id: validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATION_RUN_ID_INPUT: ${{ inputs.validation_run_id }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+            validation_run_id="${{ github.event.workflow_run.id }}"
+            validation_name="${{ github.event.workflow_run.name }}"
+            validation_conclusion="${{ github.event.workflow_run.conclusion }}"
+            validation_branch="${{ github.event.workflow_run.head_branch }}"
+            validation_commit="${{ github.event.workflow_run.head_sha }}"
+          else
+            validation_run_id="$VALIDATION_RUN_ID_INPUT"
+            if [ -z "$validation_run_id" ]; then
+              echo "A successful validation_run_id is required for manual deployment."
+              exit 1
+            fi
+            validation_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${validation_run_id}")"
+            validation_name="$(printf '%s' "$validation_json" | jq -r '.name // empty')"
+            validation_conclusion="$(printf '%s' "$validation_json" | jq -r '.conclusion // empty')"
+            validation_branch="$(printf '%s' "$validation_json" | jq -r '.head_branch // empty')"
+            validation_commit="$(printf '%s' "$validation_json" | jq -r '.head_sha // empty')"
+          fi
+
+          if [ "$validation_name" != "Daily Garner Quant Validation" ]; then
+            echo "Refusing deployment: validation run is not the Daily Garner Quant Validation workflow."
+            exit 1
+          fi
+          if [ "$validation_conclusion" != "success" ]; then
+            echo "Refusing deployment: validation conclusion is '$validation_conclusion', not success."
+            exit 1
+          fi
+          if [ "$validation_branch" != "main" ]; then
+            echo "Refusing deployment: validation branch is '$validation_branch', not main."
+            exit 1
+          fi
+          if ! printf '%s' "$validation_commit" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Refusing deployment: validation run did not provide a full commit SHA."
+            exit 1
+          fi
+          echo "Validated successful main run $validation_run_id at exact commit $validation_commit."
+          {
+            echo "run_id=$validation_run_id"
+            echo "commit=$validation_commit"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ steps.validation.outputs.commit }}
 
       - name: Configure SSH key
         env:
@@ -150,7 +209,7 @@ jobs:
             -o ServerAliveInterval=30 \
             -o ServerAliveCountMax=60 \
             "${{ secrets.AWS_USER }}@${{ secrets.AWS_HOST }}" \
-            "DEPLOY_COMMIT='${{ github.sha }}' COMPOSE_PROJECT_NAME='${COMPOSE_PROJECT_NAME}' DASHBOARD_IMAGE_ARCHIVE='${DASHBOARD_IMAGE_ARCHIVE}' DASHBOARD_IMAGE_CHECKSUM='${DASHBOARD_IMAGE_CHECKSUM}' bash -s" <<'REMOTE_DEPLOY'
+            "DEPLOY_COMMIT='${{ steps.validation.outputs.commit }}' COMPOSE_PROJECT_NAME='${COMPOSE_PROJECT_NAME}' DASHBOARD_IMAGE_ARCHIVE='${DASHBOARD_IMAGE_ARCHIVE}' DASHBOARD_IMAGE_CHECKSUM='${DASHBOARD_IMAGE_CHECKSUM}' bash -s" <<'REMOTE_DEPLOY'
           set -euo pipefail
 
           APP_DIR="/home/ubuntu/garner-quant"
