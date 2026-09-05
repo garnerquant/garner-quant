@@ -150,7 +150,7 @@ def shadow_runs(generated_at: datetime | None = None, runtime_path: Path = RUNTI
     provenance = [
         "runtime_decision_trace.json and live_runtime_status.json (explicit read-only mounts)",
         "Only records with an explicit evaluation timestamp, source artifact, bar identity, strategy/configuration versions, signal, risk, eligibility, and execution result are displayed.",
-        "Freshness threshold: 900 seconds from generated_at_utc; missing, malformed, future, duplicate, conflicting, or stale evidence fails closed.",
+        "Freshness threshold: 900 seconds for open/continuous sessions; explicitly closed, weekend, or holiday scheduler evaluations may be shown as historical only when next_eligible_at is valid. Missing, malformed, future, duplicate, conflicting, or invalid evidence fails closed.",
     ]
     if not trace_path.is_file() and not runtime_path.is_file():
         return response("shadow-runs.v1", [], provenance + ["The API cannot accept input, access browser files, run comparisons, or export results."], ["Shadow decision trace and runtime decision evidence are unavailable; operator action: mount validated evidence read-only before relying on run evidence."], generated_at)
@@ -165,10 +165,18 @@ def shadow_runs(generated_at: datetime | None = None, runtime_path: Path = RUNTI
                 if not isinstance(identity, dict) or not all(isinstance(identity.get(k), str) and identity.get(k) for k in ("symbol", "timeframe", "bar_close_utc", "strategy_version", "configuration_version", "data_source")):
                     raise ValueError(f"{symbol} bar identity is incomplete")
                 stamp = _iso_datetime(str(item.get("decision_timestamp")))
-                if stamp > now or (now - stamp).total_seconds() > SHADOW_FRESHNESS_SECONDS:
-                    raise ValueError(f"{symbol} evaluation is stale or future-dated")
-                fields = {"instrument": symbol, "strategy": "Garner Quant strategy", "strategy_version": identity["strategy_version"], "configuration_version": identity["configuration_version"], "evaluation_timestamp_utc": stamp.isoformat(), "source_path": runtime_path.name, "source_timestamp_utc": stamp.isoformat(), "bar_identity": f"{identity['timeframe']} bar closing {identity['bar_close_utc']} ({identity['data_source']})", "signal_result": item.get("signal_result"), "risk_decision": item.get("status"), "execution_eligibility": "eligible" if item.get("status") == "VALIDATED" else "not eligible", "execution_status": item.get("execution_result") or "not_executed (execution evidence unavailable)", "retryable_state": str(item.get("retry_eligible")) if item.get("retry_eligible") is not None else "unavailable", "duplicate_bar_state": "not reported", "definition": "Observed scheduler evaluation and explicitly recorded decision; eligibility is not execution.", "operator_action": "Review stale or failed bar evidence before relying on this evaluation; no execution action is permitted."}
-                status = "observed" if item.get("status") in ("VALIDATED", "NO_ACTION") else "failed"
+                market_state = str(item.get("market_state") or "").strip().lower()
+                next_eligible = item.get("next_eligible_at")
+                next_eligible_stamp = _iso_datetime(str(next_eligible)) if next_eligible else None
+                if stamp > now or (next_eligible_stamp and next_eligible_stamp <= stamp):
+                    raise ValueError(f"{symbol} scheduler timestamps are invalid or future-dated")
+                closed_state = market_state in {"session_closed", "weekend", "holiday", "market_closed"}
+                is_fresh = (now - stamp).total_seconds() <= SHADOW_FRESHNESS_SECONDS
+                if not is_fresh and not (closed_state and next_eligible_stamp and next_eligible_stamp > now):
+                    raise ValueError(f"{symbol} evaluation is stale or invalid for its market state")
+                historical = not is_fresh
+                fields = {"instrument": symbol, "strategy": "Garner Quant strategy", "strategy_version": identity["strategy_version"], "configuration_version": identity["configuration_version"], "evaluation_timestamp_utc": stamp.isoformat(), "bar_close_timestamp_utc": identity["bar_close_utc"], "market_state": market_state or "unavailable", "next_eligible_at_utc": next_eligible_stamp.isoformat() if next_eligible_stamp else None, "evaluation_status": "historical — market closed" if historical else "fresh evaluation", "source_path": runtime_path.name, "source_timestamp_utc": stamp.isoformat(), "bar_identity": f"{identity['timeframe']} bar closing {identity['bar_close_utc']} ({identity['data_source']}); market state: {market_state or 'unavailable'}; next eligible (UTC): {next_eligible_stamp.isoformat() if next_eligible_stamp else 'unavailable'}", "signal_result": item.get("signal_result"), "risk_decision": item.get("status"), "execution_eligibility": "eligible" if item.get("status") == "VALIDATED" else "not eligible", "execution_status": item.get("execution_result") or "not_executed (execution evidence unavailable)", "retryable_state": str(item.get("retry_eligible")) if item.get("retry_eligible") is not None else "unavailable", "duplicate_bar_state": "not reported", "severity": "historical" if historical else "observed", "definition": "Observed scheduler evaluation and explicitly recorded decision; historical market-closed evidence is not live/current and eligibility is not execution.", "operator_action": "Refresh/revalidate after the next eligible market window; no execution action is permitted." if historical else "Review the evaluation evidence; no execution action is permitted."}
+                status = "historical" if historical else ("observed" if item.get("status") in ("VALIDATED", "NO_ACTION") else "failed")
                 records.append(EvidenceRecord(identity=symbol, as_of_utc=stamp, status=status, fields=fields))
             return response("shadow-runs.v1", records, provenance, [], generated_at)
         trace = json.loads(trace_path.read_text(encoding="utf-8"))
