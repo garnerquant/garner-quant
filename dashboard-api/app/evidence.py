@@ -141,28 +141,65 @@ def shadow_runs(generated_at: datetime | None = None) -> ReadOnlyEvidenceRespons
 
 
 def risk_health(generated_at: datetime | None = None, config_root: Path = CONFIG_ROOT) -> ReadOnlyEvidenceResponse:
-    provenance = ["live_runtime_config.json and risk_config.json (explicit read-only mounts)", "Only safety defaults are exposed; risk limits and mutation controls are excluded."]
-    health_warnings = [
-        "Quote freshness is stale or unavailable; current quotes cannot be confirmed.",
-        "Research evidence remains unverified or unavailable.",
-        "Source provenance is unavailable for one or more dashboard datasets.",
-    ]
+    provenance = ["live_runtime_config.json, risk_config.json, and live_runtime_status.json (explicit read-only mounts)", "Runtime values are observations from the status artifact; counts are derived only from that artifact and are not execution outcomes.", "Heartbeat freshness threshold: 10 minutes; scheduler freshness threshold: 15 minutes. Missing lock, accounting, validation, or audit evidence is unavailable and requires operator review."]
     try:
         runtime_path, risk_path = config_root / "live_runtime_config.json", config_root / "risk_config.json"
         runtime = json.loads(runtime_path.read_text(encoding="utf-8")); risk = json.loads(risk_path.read_text(encoding="utf-8"))
         expected = {"mode": "monitor_only", "paper_execution_enabled": False, "trading_enabled": False, "limits_approved": False}
         actual = {"mode": runtime.get("mode"), "paper_execution_enabled": runtime.get("paper_execution_enabled"), "trading_enabled": risk.get("trading_enabled"), "limits_approved": risk.get("limits_approved")}
         if actual != expected:
-            return response("risk-health.v1", [], provenance, ["Safety evidence differs from required fail-closed defaults.", *health_warnings], generated_at)
+            return response("risk-health.v1", [], provenance, ["Safety evidence differs from required fail-closed defaults. Operator action: stop and review configuration before relying on dashboard evidence."], generated_at)
+        now = (generated_at or datetime.now(UTC)).astimezone(UTC)
         as_of = datetime.fromtimestamp(max(runtime_path.stat().st_mtime, risk_path.stat().st_mtime), UTC)
         fields = {key: str(value).lower() if isinstance(value, bool) else str(value) for key, value in actual.items()}
-        fields.update({"heartbeat": None, "data_quality": None})
-        return response("risk-health.v1", [EvidenceRecord(identity="safety-defaults", as_of_utc=as_of, status="monitor_only", fields=fields)], provenance, [
-            "Heartbeat and data-quality evidence are unavailable; health fails closed.",
-            *health_warnings,
-        ], generated_at)
+        fields.update({"heartbeat": None, "data_quality": None, "source_file": f"{runtime_path.name} + {risk_path.name}", "definition": "Configured safety controls; not an execution result.", "operator_action": "No action for controls; continue manual review before any mode change."})
+        records = [EvidenceRecord(identity="safety-defaults", as_of_utc=as_of, status="observed", fields=fields)]
+        warnings: list[str] = []
+        runtime_candidates = [config_root / "live_runtime_status.json", RUNTIME_STATUS_PATH]
+        status_path = next((path for path in runtime_candidates if path.is_file()), None)
+        status = None
+        if status_path:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+        def add(identity: str, value: str | None, stamp: datetime | None, severity: str, source: str, definition: str, action: str) -> None:
+            records.append(EvidenceRecord(identity=identity, as_of_utc=stamp, status=severity, fields={"value": value, "severity": severity, "source_file": source, "definition": definition, "operator_action": action}))
+        if not isinstance(status, dict):
+            warnings.append("Runtime status is missing; heartbeat, scheduler, failures, and validation outcomes are unavailable. Operator action: mount a validated read-only runtime status artifact.")
+        else:
+            def parsed(key: str) -> datetime | None:
+                value = status.get(key)
+                if not isinstance(value, str) or not value:
+                    return None
+                stamp = _iso_datetime(value)
+                return stamp if stamp.tzinfo is not None and stamp <= now else None
+            heartbeat = parsed("last_cycle_at")
+            heartbeat_age = int((now - heartbeat).total_seconds()) if heartbeat else None
+            hb_severity = "observed" if heartbeat_age is not None and heartbeat_age <= 600 else "stale" if heartbeat_age is not None else "unavailable"
+            add("runtime-heartbeat", str(heartbeat_age) if heartbeat_age is not None else None, heartbeat, hb_severity, status_path.name, "Seconds since the last recorded runtime cycle; derived from generated_at and last_cycle_at.", "Investigate runtime status and scheduler logs before relying on the monitor." )
+            add("last-successful-cycle", status.get("last_cycle_at") if heartbeat else None, heartbeat, "observed" if heartbeat else "unavailable", status_path.name, "Last cycle timestamp recorded by the runtime status artifact; success is not independently audited.", "Confirm a successful cycle in the runtime evidence before relying on freshness." )
+            scheduler = status.get("strategy_scheduler") if isinstance(status.get("strategy_scheduler"), dict) else {}
+            scheduler_stamp = heartbeat
+            scheduler_health = scheduler.get("health") if isinstance(scheduler.get("health"), dict) else {}
+            scheduler_value = scheduler_health.get("status") or ("failures present" if scheduler.get("decisions") and any(d.get("status", "").startswith("FAILED") for d in scheduler.get("decisions", []) if isinstance(d, dict)) else "unavailable")
+            scheduler_age = int((now - scheduler_stamp).total_seconds()) if scheduler_stamp else None
+            scheduler_severity = "observed" if scheduler_age is not None and scheduler_age <= 900 and not str(scheduler_value).startswith("fail") else "stale" if scheduler_age is not None and scheduler_age > 900 else "unavailable"
+            add("scheduler-status", str(scheduler_value), scheduler_stamp, scheduler_severity, status_path.name, "Scheduler status recorded in the runtime status artifact; no scheduling is performed by the dashboard.", "Review scheduler failures and completed-bar evidence before relying on decisions." )
+            add("scheduler-failures", str(sum(1 for d in scheduler.get("decisions", []) if isinstance(d, dict) and str(d.get("status", "")).startswith("FAILED"))), scheduler_stamp, "observed" if scheduler_stamp else "unavailable", status_path.name, "Count of FAILED decisions in the latest recorded scheduler output.", "Review each failed decision and its underlying market-data evidence." )
+            add("lock-state", None, None, "unavailable", "not mounted", "Runtime lock state is not exposed to the read-only dashboard.", "Operator must inspect the runtime lock using the controlled operations procedure." )
+            add("accounting-activation", None, None, "unavailable", "not mounted", "No accounting activation evidence is mounted; valuation fields do not prove accounting activation.", "Operator must verify canonical accounting activation separately; do not activate from the dashboard." )
+            add("latest-validation", str(scheduler_health.get("status")) if scheduler_health.get("status") is not None else None, scheduler_stamp, "observed" if scheduler_stamp and scheduler_health else "unavailable", status_path.name, "Latest validation outcome recorded by the scheduler status; not an independent audit.", "Review validation evidence and rejected instruments before relying on outputs." )
+            add("runtime-failure", status.get("last_error") or "none recorded", heartbeat, "warning" if status.get("last_error") else "observed", status_path.name, "Last runtime error field; absence means none was recorded, not that runtime health is proven.", "Investigate the recorded failure before continuing if a message is present." )
+        if status_path:
+            artifact_stamp = datetime.fromtimestamp(status_path.stat().st_mtime, UTC)
+            artifact_age = int((now - artifact_stamp).total_seconds()) if artifact_stamp <= now else None
+            add("runtime-artifact-freshness", str(artifact_age) if artifact_age is not None else None, artifact_stamp if artifact_age is not None else None, "observed" if artifact_age is not None and artifact_age <= 900 else "stale" if artifact_age is not None else "unavailable", status_path.name, "Seconds since the runtime status file was modified; file age does not prove the contents are current.", "Refresh and validate the mounted runtime artifact before relying on it." )
+        else:
+            add("runtime-artifact-freshness", None, None, "unavailable", "not mounted", "Runtime status file age cannot be established.", "Operator must mount the validated runtime status artifact." )
+        add("data-source-integrity", None, None, "unavailable", "not mounted", "No independent data-source integrity evidence is mounted for runtime health.", "Operator must verify source completeness, provenance, and timestamp consistency." )
+        add("evidence-integrity", None, None, "unavailable", "not mounted", "No independent audit result is mounted for runtime health.", "Operator must review the audit evidence before treating runtime values as verified." )
+        warnings.extend(["Safety controls are observed configuration values, not proof that execution is possible or desirable.", "Data-source, lock, accounting activation, and independent audit evidence remain unavailable unless explicitly mounted."])
+        return response("risk-health.v1", records, provenance, warnings, generated_at)
     except (OSError, ValueError, json.JSONDecodeError, TypeError) as exc:
-        return response("risk-health.v1", [], provenance, [f"Safety status is unavailable: {exc}.", *health_warnings], generated_at)
+        return response("risk-health.v1", [], provenance, [f"Safety status is unavailable: {exc}. Operator action: mount and validate the runtime and risk configuration artifacts."], generated_at)
 
 
 def audit(generated_at: datetime | None = None, manifest_path: Path = MANIFEST_PATH, repository_root: Path | None = None) -> ReadOnlyEvidenceResponse:
